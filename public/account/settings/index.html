@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Account settings — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div class="panel">
+            <div class="sectionHead"><h2>Account</h2></div>
+
+            <div class="profileInfo" style="border:none;padding:0;">
+              <div class="profileRow">
+                <span class="profileRowLabel">Account name</span>
+                <span class="profileRowValue profileVerifyValue">
+                  <span id="account-name">…</span>
+                  <button type="button" class="iconButton" id="edit-name" aria-label="Edit account name" style="display:none;"></button>
+                </span>
+              </div>
+              <form class="form" id="edit-name-form" style="display:none;gap:0.6rem;max-width:360px;">
+                <label class="field" style="margin:0;"><span class="fieldRequired">Account name</span>
+                  <input id="name-input" type="text" placeholder="Account name" />
+                </label>
+                <p id="name-msg" class="form-status"></p>
+                <div class="profileEditActions">
+                  <button type="button" class="button buttonSecondary buttonSmall" id="name-cancel">Cancel</button>
+                  <button type="submit" class="button buttonPrimary buttonSmall" id="name-save">Save</button>
+                </div>
+              </form>
+
+              <div class="profileRow">
+                <span class="profileRowLabel">Account key</span>
+                <span class="profileRowValue"><code id="account-key"></code></span>
+              </div>
+              <div class="profileRow">
+                <span class="profileRowLabel">Your role</span>
+                <span class="profileRowValue" id="account-role"></span>
+              </div>
+              <div class="profileRow">
+                <span class="profileRowLabel">Created</span>
+                <span class="profileRowValue" id="account-created"></span>
+              </div>
+            </div>
+            <p class="muted" id="settings-note" style="margin-top:1rem;display:none;">Only admins can rename the account.</p>
+          </div>
+
+          <div class="panel">
+            <div class="sectionHead"><h2>Publishing</h2></div>
+            <div class="profileInfo" style="border:none;padding:0;">
+              <div class="profileRow">
+                <span class="profileRowLabel">Personal publishing
+                  <span class="muted" style="display:block;font-weight:400;font-size:0.85rem;margin-top:0.15rem;max-width:48ch;">
+                    Let members publish their own benchmarks attributed to themselves (name + avatar),
+                    without an organization identity. Admins can always publish under a verified identity.
+                  </span>
+                </span>
+                <span class="profileRowValue">
+                  <label class="switchRow">
+                    <input type="checkbox" id="allow-personal" disabled />
+                    <span class="switchState" id="allow-personal-state">…</span>
+                  </label>
+                </span>
+              </div>
+              <p id="personal-msg" class="form-status"></p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "settings", breadcrumbs: [{ label: "Settings" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-settings.js"></script>
+</body>
+</html>

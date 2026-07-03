@@ -1,0 +1,34 @@
+{
+  "name": "smplmark-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "smplmark app — the console SPA, auth, and JSON:API on Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "cf-typegen": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply smplmark --local",
+    "db:seed:local": "wrangler d1 execute smplmark --local --file scripts/seed.sql"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "hono": "^4.12.27",
+    "jose": "^5.10.0",
+    "json-logic-js": "^2.0.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.17.0",
+    "@types/json-logic-js": "^2.0.8",
+    "@types/node": "^26.1.0",
+    "@vitest/coverage-istanbul": "^4.1.9",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.106.0"
+  }
+}

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Publishers — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div id="load-error"></div>
+
+          <p class="muted" style="margin:0 0 1rem;max-width:60ch;">
+            Publisher identities are the organization brands you can publish benchmarks under. Verify a
+            domain by DNS to prove you own the brand — only identities with a verified domain can be used
+            to publish.
+          </p>
+
+          <div id="publishers-host">
+            <div class="muted">Loading…</div>
+          </div>
+          <div id="publishers-msg" class="form-status"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Create / edit identity modal -->
+  <div id="identity-modal" class="modalOverlay" style="display:none;">
+    <div class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="identity-title">
+      <div class="modalHeader">
+        <h2 class="modalTitle" id="identity-title">New publisher identity</h2>
+        <p class="modalDescription">A brand you publish under. The key is a stable, human-readable handle.</p>
+      </div>
+      <form class="form" id="identity-form">
+        <label class="field"><span class="fieldRequired">Key</span>
+          <input name="key" type="text" placeholder="acme-labs" required />
+        </label>
+        <label class="field"><span class="fieldRequired">Name</span>
+          <input name="name" type="text" placeholder="Acme Labs" required />
+        </label>
+        <label class="field"><span>Logo URL</span>
+          <input name="logo_url" type="url" placeholder="https://acme.example/logo.png" />
+        </label>
+        <p id="identity-msg" class="form-status"></p>
+        <div class="modalActions">
+          <button type="button" class="button buttonSecondary buttonSmall" id="identity-cancel">Cancel</button>
+          <button type="submit" class="button buttonPrimary buttonSmall" id="identity-save">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "publishers", breadcrumbs: [{ label: "Publishers" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-publishers.js"></script>
+</body>
+</html>

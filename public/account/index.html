@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div class="pageHead">
+            <h1 id="dash-greeting">Dashboard</h1>
+            <p class="lede" id="dash-sub">Host and publish your benchmarks.</p>
+          </div>
+
+          <div id="verify-banner" class="noticeBanner" style="display:none;">
+            <span class="grow">Verify your email address to publish benchmarks and create API keys.</span>
+            <button type="button" id="resend-verification" class="button buttonSecondary buttonSmall">Resend verification</button>
+            <span id="verify-msg" class="form-status"></span>
+          </div>
+
+          <div class="statGrid" id="stat-grid">
+            <div class="statCard"><span class="statLabel">Benchmarks</span><span class="statValue" id="stat-benchmarks">—</span><span class="statHint">total</span></div>
+            <div class="statCard"><span class="statLabel">Published</span><span class="statValue" id="stat-published">—</span><span class="statHint">world-visible</span></div>
+            <div class="statCard"><span class="statLabel">API keys</span><span class="statValue" id="stat-keys">—</span><span class="statHint">active</span></div>
+          </div>
+
+          <div class="panel">
+            <div class="sectionHead">
+              <h2>Quick actions</h2>
+            </div>
+            <div class="quickActions">
+              <a class="button buttonPrimary buttonSmall" href="/account/benchmarks">Create benchmark</a>
+              <a class="button buttonSecondary buttonSmall" href="/account/api-keys">Create API key</a>
+              <a class="button buttonSecondary buttonSmall" href="/benchmarks">Browse public benchmarks</a>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="sectionHead">
+              <h2>Recent benchmarks</h2>
+              <a class="buttonLink" href="/account/benchmarks">View all</a>
+            </div>
+            <div class="tableWrap">
+              <table class="dataTable">
+                <thead>
+                  <tr><th>Key</th><th>Name</th><th>Status</th><th class="actions"></th></tr>
+                </thead>
+                <tbody id="recent-body">
+                  <tr><td colspan="4" class="dataTableEmpty">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "dashboard", breadcrumbs: [{ label: "Dashboard" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-dashboard.js"></script>
+</body>
+</html>

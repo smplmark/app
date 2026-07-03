@@ -1,0 +1,17 @@
+{
+  // Node-context config files (vitest.config.ts). Kept separate from the Worker tsconfig so
+  // @types/node globals (Request/Response/fetch) don't collide with the Workers runtime types.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["vitest.config.ts"]
+}

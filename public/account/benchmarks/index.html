@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Benchmarks — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div id="load-error"></div>
+
+          <div class="panel isFlush">
+            <div class="tableWrap">
+              <table class="dataTable">
+                <thead>
+                  <tr><th>Key</th><th>Name</th><th>Status</th><th class="actions"></th></tr>
+                </thead>
+                <tbody id="benchmarks-body">
+                  <tr><td colspan="4" class="dataTableEmpty">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div id="benchmarks-msg" class="form-status"></div>
+
+          <!-- Inline manage panel (targets + runs) renders here -->
+          <div id="manage-panel"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Create-benchmark modal -->
+  <div id="create-modal" class="modalOverlay" style="display:none;">
+    <div class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <div class="modalHeader">
+        <h2 class="modalTitle" id="create-title">Create benchmark</h2>
+        <p class="modalDescription">Start a private workspace. Publish it when the data is ready.</p>
+      </div>
+      <form class="form" id="create-benchmark-form">
+        <label class="field"><span class="fieldRequired">Key</span>
+          <input name="key" type="text" placeholder="my-benchmark" required />
+        </label>
+        <label class="field"><span class="fieldRequired">Name</span>
+          <input name="name" type="text" placeholder="My Benchmark" required />
+        </label>
+        <label class="field"><span>Description</span>
+          <input name="description" type="text" placeholder="One-line summary" />
+        </label>
+        <p id="create-benchmark-msg" class="form-status"></p>
+        <div class="modalActions">
+          <button type="button" class="button buttonSecondary buttonSmall" id="create-cancel">Cancel</button>
+          <button type="submit" class="button buttonPrimary buttonSmall">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "benchmarks", breadcrumbs: [{ label: "Benchmarks" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-benchmarks.js"></script>
+</body>
+</html>

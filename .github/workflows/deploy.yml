@@ -1,0 +1,71 @@
+name: Deploy
+
+# Deploy the app Worker (app.smplmark.org) on every push to main. Gated on typecheck + the full test
+# suite so a broken push never ships. Forward D1 migrations are applied before the Worker deploy so
+# code and schema stay in sync. Requires one repo secret: CLOUDFLARE_API_TOKEN (the account id is
+# pinned in wrangler.jsonc). Until that secret is set (pre-cutover), the deploy job no-ops so CI stays
+# green — see the cutover steps in README.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      # wrangler reads this for auth; runs non-interactively because GitHub Actions sets CI=true.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Pre-cutover: until CLOUDFLARE_API_TOKEN is set on this repo, skip the deploy so CI stays green.
+      - name: Skip deploy (no CLOUDFLARE_API_TOKEN yet)
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        run: echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping deploy (pre-cutover). See README.md."
+      # Both commands are idempotent (migrations are tracked in d1_migrations; a deploy re-uploads the
+      # same version), so a bounded retry safely absorbs transient Cloudflare API 5xx blips (e.g. the
+      # D1 query endpoint's intermittent "internal error [code: 7500]") without risking partial state.
+      - name: Apply D1 migrations (forward-only)
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          n=0
+          until [ "$n" -ge 5 ]; do
+            npx wrangler d1 migrations apply smplmark --remote && break
+            n=$((n + 1))
+            echo "::warning::migration apply attempt $n failed (transient Cloudflare API error?); retrying in 20s"
+            sleep 20
+          done
+          [ "$n" -lt 5 ]
+      - name: Deploy Worker
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          n=0
+          until [ "$n" -ge 5 ]; do
+            npx wrangler deploy && break
+            n=$((n + 1))
+            echo "::warning::deploy attempt $n failed (transient Cloudflare API error?); retrying in 20s"
+            sleep 20
+          done
+          [ "$n" -lt 5 ]

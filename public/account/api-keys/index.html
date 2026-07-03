@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Keys — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div id="load-error"></div>
+
+          <div id="verify-banner" class="noticeBanner" style="display:none;">
+            <span class="grow">Verify your email address to create API keys.</span>
+            <button type="button" id="resend-verification" class="button buttonSecondary buttonSmall">Resend verification</button>
+            <span id="verify-msg" class="form-status"></span>
+          </div>
+
+          <div class="panel isFlush">
+            <div class="tableWrap">
+              <table class="dataTable">
+                <thead>
+                  <tr><th>Name</th><th>Key</th><th>Scope</th><th>Status</th><th class="actions"></th></tr>
+                </thead>
+                <tbody id="apikeys-body">
+                  <tr><td colspan="5" class="dataTableEmpty">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div id="apikeys-msg" class="form-status"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Create / reveal modal -->
+  <div id="key-modal" class="modalOverlay" style="display:none;">
+    <div class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="key-modal-title">
+      <div class="modalHeader">
+        <h2 class="modalTitle" id="key-modal-title">Create API key</h2>
+        <p class="modalDescription" id="key-modal-desc">Generate a new key for uploading observations or managing your account.</p>
+      </div>
+
+      <!-- form state -->
+      <form class="form" id="create-apikey-form">
+        <label class="field"><span class="fieldRequired">Name</span>
+          <input name="name" type="text" placeholder="CI upload key" required />
+        </label>
+        <label class="field"><span>Scope type</span>
+          <select name="scope_type">
+            <option value="ACCOUNT">Account — full access to your account</option>
+            <option value="BENCHMARK">Benchmark — one benchmark</option>
+            <option value="RUN">Run — one run (beacon uploads)</option>
+          </select>
+        </label>
+        <label class="field"><span>Scope reference</span>
+          <input name="scope_ref" type="text" placeholder="benchmark / run id (optional)" />
+        </label>
+        <p id="create-apikey-msg" class="form-status"></p>
+        <div class="modalActions">
+          <button type="button" class="button buttonSecondary buttonSmall" id="key-cancel">Cancel</button>
+          <button type="submit" class="button buttonPrimary buttonSmall">Create key</button>
+        </div>
+      </form>
+
+      <!-- reveal state -->
+      <div id="key-reveal-state" style="display:none;">
+        <p style="margin:0 0 0.75rem;">Copy this key now — it won't be shown again.</p>
+        <div class="keyReveal"><code id="reveal-code"></code>
+          <button type="button" class="button buttonSecondary buttonSmall" id="reveal-copy">Copy</button>
+        </div>
+        <div class="modalActions" style="margin-top:1rem;">
+          <button type="button" class="button buttonPrimary buttonSmall" id="reveal-done">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "apikeys", breadcrumbs: [{ label: "API Keys" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-apikeys.js"></script>
+</body>
+</html>

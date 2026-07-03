@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Members — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page">
+          <div id="load-error"></div>
+
+          <div class="toolbar">
+            <div class="segmented" id="member-tabs">
+              <button type="button" class="segBtn isActive" data-tab="members">Active</button>
+              <button type="button" class="segBtn" data-tab="invites">Invited</button>
+            </div>
+          </div>
+
+          <!-- Active members -->
+          <div id="tab-members">
+            <div class="panel isFlush">
+              <div class="tableWrap">
+                <table class="dataTable">
+                  <thead>
+                    <tr><th>Name</th><th>Email</th><th>Role</th><th class="actions"></th></tr>
+                  </thead>
+                  <tbody id="members-body">
+                    <tr><td colspan="4" class="dataTableEmpty">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div id="members-msg" class="form-status"></div>
+          </div>
+
+          <!-- Pending invitations -->
+          <div id="tab-invites" style="display:none;">
+            <div class="panel isFlush">
+              <div class="tableWrap">
+                <table class="dataTable">
+                  <thead>
+                    <tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th class="actions"></th></tr>
+                  </thead>
+                  <tbody id="invites-body">
+                    <tr><td colspan="5" class="dataTableEmpty">Loading…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div id="invites-msg" class="form-status"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Invite modal -->
+  <div id="invite-modal" class="modalOverlay" style="display:none;">
+    <div class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="invite-title">
+      <div class="modalHeader">
+        <h2 class="modalTitle" id="invite-title">Invite a member</h2>
+        <p class="modalDescription">They'll get an email with a link to join this account.</p>
+      </div>
+      <form class="form" id="invite-form">
+        <label class="field"><span class="fieldRequired">Email</span>
+          <input name="email" type="email" placeholder="teammate@example.com" required />
+        </label>
+        <label class="field"><span>Role</span>
+          <select name="role">
+            <option value="ADMIN">Admin — manage members, keys, settings</option>
+            <option value="MEMBER" selected>Member — create &amp; edit benchmarks</option>
+            <option value="VIEWER">Viewer — read-only</option>
+          </select>
+        </label>
+        <p id="invite-msg" class="form-status"></p>
+        <div class="modalActions">
+          <button type="button" class="button buttonSecondary buttonSmall" id="invite-cancel">Cancel</button>
+          <button type="submit" class="button buttonPrimary buttonSmall">Send invitation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "members", breadcrumbs: [{ label: "Members" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-users.js"></script>
+</body>
+</html>

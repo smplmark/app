@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Accept invitation — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <main class="authViewport">
+    <section class="authCard" id="accept-root">
+      <div class="authCardHeader">
+        <a class="authLogo" href="/" aria-label="smplmark home"><picture>
+          <source srcset="/img/logo-light.png" media="(prefers-color-scheme: light)" />
+          <img src="/img/logo-dark.png" alt="smplmark" />
+        </picture></a>
+      </div>
+      <div class="authCopy">
+        <h1 id="accept-title">Joining the account…</h1>
+        <p id="accept-body">One moment.</p>
+      </div>
+      <a class="button buttonPrimary authSubmit" id="accept-cta" href="/account" style="display:none;">Go to dashboard</a>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/auth-pages.js"></script>
+</body>
+</html>

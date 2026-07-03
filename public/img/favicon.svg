@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <style>
+    .s { fill: #e6edf3; } .m { fill: #4f8cff; }
+    @media (prefers-color-scheme: light) { .s { fill: #0e1116; } .m { fill: #2f6fe0; } }
+  </style>
+  <text x="256" y="348" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="344" font-weight="700" letter-spacing="-10">
+    <tspan class="s">s</tspan><tspan class="m">m</tspan>
+  </text>
+</svg>

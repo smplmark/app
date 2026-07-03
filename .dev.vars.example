@@ -1,0 +1,20 @@
+# Copy to `.dev.vars` (gitignored) for local `wrangler dev`. Tests supply their own via
+# vitest.config.ts; production uses `wrangler secret put <NAME>`. Unset secrets disable their
+# feature gracefully (OIDC begin → 503, email → best-effort no-op).
+
+# Session-JWT signing secret (any long random string).
+APP_AUTH_SECRET=dev-app-auth-secret-change-me
+# base64 of a 32-byte key. Generate: openssl rand -base64 32
+KEY_ENCRYPTION_SECRET=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+# Public origin for OIDC redirect + email links (defaults to the request origin if unset).
+APP_URL=http://localhost:8787
+
+# Optional — sign-in providers (unset → that provider returns 503).
+# GOOGLE_OIDC_CLIENT_ID=
+# GOOGLE_OIDC_CLIENT_SECRET=
+# MICROSOFT_OIDC_CLIENT_ID=
+# MICROSOFT_OIDC_CLIENT_SECRET=
+
+# Optional — verification email (unset → send is a no-op; signup still succeeds).
+# RESEND_API_KEY=
+# RESEND_FROM=smplmark <noreply@smplmark.org>

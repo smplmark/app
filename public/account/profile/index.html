@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Profile — smplmark</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/console.css" />
+</head>
+<body>
+  <div class="appShell">
+    <aside class="sidebar" id="sm-sidebar"></aside>
+    <div class="appMain">
+      <header class="topBar" id="sm-topbar"></header>
+      <main class="appContent">
+        <div class="page profilePage">
+          <div class="panel profileLayout">
+            <div class="profileMain">
+              <span class="smAvatar" id="profile-avatar" style="width:80px;height:80px;font-size:29px;"></span>
+              <div class="profileMainText">
+                <!-- view / edit swap -->
+                <div class="profileNameRow" id="profile-name-view">
+                  <h2 class="profileName" id="profile-name">…</h2>
+                  <button type="button" class="iconButton" id="profile-edit" aria-label="Edit display name"></button>
+                </div>
+                <form class="form" id="profile-edit-form" style="display:none; gap:0.6rem;">
+                  <label class="field" style="margin:0;"><span class="fieldRequired">Display name</span>
+                    <input id="profile-name-input" type="text" placeholder="Your name" />
+                  </label>
+                  <p id="profile-edit-msg" class="form-status"></p>
+                  <div class="profileEditActions">
+                    <button type="button" class="button buttonSecondary buttonSmall" id="profile-cancel">Cancel</button>
+                    <button type="submit" class="button buttonPrimary buttonSmall" id="profile-save">Save</button>
+                  </div>
+                </form>
+                <p class="profilePicHelp">Your avatar comes from <a class="authTextLink" href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>, matched on your email address. Set one there and it appears here automatically.</p>
+              </div>
+            </div>
+
+            <div class="profileInfo">
+              <div class="profileRow">
+                <span class="profileRowLabel">Email</span>
+                <span class="profileRowValue" id="profile-email"></span>
+              </div>
+              <div class="profileRow">
+                <span class="profileRowLabel">Email Verified</span>
+                <span class="profileRowValue profileVerifyValue">
+                  <span id="profile-verified">—</span>
+                  <button type="button" class="buttonLink" id="profile-resend" style="display:none;">Send verification link</button>
+                </span>
+              </div>
+              <div class="profileRow">
+                <span class="profileRowLabel">Member Since</span>
+                <span class="profileRowValue" id="profile-since"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>window.SM_PAGE = { active: "", breadcrumbs: [{ label: "Profile" }] };</script>
+  <script src="/js/api.js"></script>
+  <script src="/js/shell.js"></script>
+  <script src="/js/console-profile.js"></script>
+</body>
+</html>

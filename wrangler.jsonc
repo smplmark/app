@@ -1,0 +1,68 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "smplmark-app",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  // Account id is pinned (non-sensitive) so CI can deploy with only a CLOUDFLARE_API_TOKEN secret.
+  "account_id": "f625d39b265af6ab514726f5f512d85e",
+
+  // The app (console + auth + JSON:API) is served on app.smplmark.org. The marketing site and the
+  // published-benchmark viewer are a separate Worker (the website repo) on www + apex. Cloudflare
+  // provisions DNS + TLS for the custom domain automatically (smplmark.org must be an active zone).
+  // NOTE: app.smplmark.org must be released from the old combined `smplmark` Worker before this Worker
+  // can claim it — see the cutover steps in README.md.
+  "routes": [
+    { "pattern": "app.smplmark.org", "custom_domain": true }
+  ],
+
+  // IP-based rate limiting (Cloudflare Workers rate-limiting binding). Keyed on CF-Connecting-IP by
+  // src/http/ratelimit.ts. namespace_id is an arbitrary per-Worker bucket id; period must be 10 or 60.
+  //   RL_AUTH      — login + OIDC begin (10 / 60s)
+  //   RL_SENSITIVE — register, resend-verification, invite, resend-invite, contact (5 / 60s)
+  "unsafe": {
+    "bindings": [
+      { "name": "RL_AUTH", "type": "ratelimit", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+      { "name": "RL_SENSITIVE", "type": "ratelimit", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } }
+    ]
+  },
+
+  // Static Assets: the ./public dir is served directly for every path EXCEPT /api/*.
+  // For /api/* the Worker runs first (Hono handles the JSON:API); the Worker also falls
+  // back to env.ASSETS.fetch() as a safety net for any non-API path that reaches it.
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS",
+    // The Worker runs first for every request so it can normalize paths (console root, redirect
+    // marketing/benchmark paths to the website) and answer the JSON:API. Non-matching paths fall
+    // through to the console static assets via env.ASSETS.fetch().
+    "run_worker_first": true,
+    "not_found_handling": "404-page"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "smplmark",
+      "database_id": "25d003c3-9b72-4181-b1ea-55bf37872877",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // The periodic re-check of TXT-verified publisher domains is driven externally by Smpl Jobs (the
+  // smplkit scheduler), which POSTs /api/v1/jobs/domain-recheck on a schedule with a shared-secret
+  // bearer (JOBS_TRIGGER_SECRET). No Workers cron trigger — so the deploy needs no cron-schedule
+  // permission on the API token, and the schedule is owned/observed in Smpl Jobs.
+
+  // Runtime secrets are NOT committed vars. Set them with `wrangler secret put <NAME>` in prod and
+  // `.dev.vars` locally (tests supply their own via vitest.config.ts). Required for full function:
+  //   APP_AUTH_SECRET        — session-JWT signing (HS256)
+  //   KEY_ENCRYPTION_SECRET  — base64 32-byte AES-GCM key encrypting API keys at rest
+  //   APP_URL                — public origin of the app (https://app.smplmark.org) for OIDC + email links
+  // Optional (unset → feature disabled gracefully): GOOGLE_OIDC_CLIENT_ID/SECRET,
+  //   MICROSOFT_OIDC_CLIENT_ID/SECRET (OIDC begin → 503), RESEND_API_KEY, RESEND_FROM (email no-op),
+  //   JOBS_TRIGGER_SECRET (Smpl Jobs system triggers → 503 when unset; set it + configure Smpl Jobs).
+
+  "observability": {
+    "enabled": true
+  }
+}
