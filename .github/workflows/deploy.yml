@@ -40,10 +40,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Pre-cutover: until CLOUDFLARE_API_TOKEN is set on this repo, skip the deploy so CI stays green.
-      - name: Skip deploy (no CLOUDFLARE_API_TOKEN yet)
+      # Safety net: if CLOUDFLARE_API_TOKEN is ever unavailable, skip the deploy so CI stays green
+      # rather than failing on auth. It's normally present (an org-level secret on smplmark/*).
+      - name: Skip deploy (no CLOUDFLARE_API_TOKEN)
         if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
-        run: echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping deploy (pre-cutover). See README.md."
+        run: echo "::notice::CLOUDFLARE_API_TOKEN not available — skipping deploy."
       # Both commands are idempotent (migrations are tracked in d1_migrations; a deploy re-uploads the
       # same version), so a bounded retry safely absorbs transient Cloudflare API 5xx blips (e.g. the
       # D1 query endpoint's intermittent "internal error [code: 7500]") without risking partial state.
@@ -69,3 +70,27 @@ jobs:
             sleep 20
           done
           [ "$n" -lt 5 ]
+      # Source of truth for the Worker's runtime secrets is GitHub Actions repo secrets — CI pushes
+      # them to the Worker on every deploy (smplkit standard). Only secrets that are actually set are
+      # pushed: an unset repo secret is omitted, so it can never clobber a live value on the Worker.
+      # (APP_URL is intentionally NOT here — it's derived from the request origin; see config.ts.)
+      - name: Sync Worker secrets from repo secrets
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          APP_AUTH_SECRET: ${{ secrets.APP_AUTH_SECRET }}
+          KEY_ENCRYPTION_SECRET: ${{ secrets.KEY_ENCRYPTION_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          GOOGLE_OIDC_CLIENT_ID: ${{ secrets.GOOGLE_OIDC_CLIENT_ID }}
+          GOOGLE_OIDC_CLIENT_SECRET: ${{ secrets.GOOGLE_OIDC_CLIENT_SECRET }}
+          MICROSOFT_OIDC_CLIENT_ID: ${{ secrets.MICROSOFT_OIDC_CLIENT_ID }}
+          MICROSOFT_OIDC_CLIENT_SECRET: ${{ secrets.MICROSOFT_OIDC_CLIENT_SECRET }}
+          JOBS_TRIGGER_SECRET: ${{ secrets.JOBS_TRIGGER_SECRET }}
+        run: |
+          node -e 'const n=["APP_AUTH_SECRET","KEY_ENCRYPTION_SECRET","RESEND_API_KEY","RESEND_FROM","GOOGLE_OIDC_CLIENT_ID","GOOGLE_OIDC_CLIENT_SECRET","MICROSOFT_OIDC_CLIENT_ID","MICROSOFT_OIDC_CLIENT_SECRET","JOBS_TRIGGER_SECRET"];const o={};for(const k of n)if(process.env[k])o[k]=process.env[k];process.stdout.write(JSON.stringify(o))' > "$RUNNER_TEMP/secrets.json"
+          if [ "$(cat "$RUNNER_TEMP/secrets.json")" = "{}" ]; then
+            echo "::notice::no app repo secrets set yet — skipping secret sync (Worker keeps its current secrets)"
+          else
+            npx wrangler secret bulk "$RUNNER_TEMP/secrets.json"
+          fi
+          rm -f "$RUNNER_TEMP/secrets.json"

@@ -53,14 +53,18 @@
   // bearer (JOBS_TRIGGER_SECRET). No Workers cron trigger — so the deploy needs no cron-schedule
   // permission on the API token, and the schedule is owned/observed in Smpl Jobs.
 
-  // Runtime secrets are NOT committed vars. Set them with `wrangler secret put <NAME>` in prod and
-  // `.dev.vars` locally (tests supply their own via vitest.config.ts). Required for full function:
+  // Runtime secrets: the source of truth is GitHub Actions **repo** secrets on smplmark/app; CI pushes
+  // them to the Worker on every deploy (the "Sync Worker secrets" step in .github/workflows/deploy.yml,
+  // via `wrangler secret bulk`). Never set them by hand with `wrangler secret put` — that creates an
+  // unmanaged copy with no source of truth. Locally, `.dev.vars` supplies them (tests use
+  // vitest.config.ts). Required for full function:
   //   APP_AUTH_SECRET        — session-JWT signing (HS256)
   //   KEY_ENCRYPTION_SECRET  — base64 32-byte AES-GCM key encrypting API keys at rest
-  //   APP_URL                — public origin of the app (https://app.smplmark.org) for OIDC + email links
   // Optional (unset → feature disabled gracefully): GOOGLE_OIDC_CLIENT_ID/SECRET,
   //   MICROSOFT_OIDC_CLIENT_ID/SECRET (OIDC begin → 503), RESEND_API_KEY, RESEND_FROM (email no-op),
   //   JOBS_TRIGGER_SECRET (Smpl Jobs system triggers → 503 when unset; set it + configure Smpl Jobs).
+  // APP_URL is intentionally absent — the app origin is derived from the request (config.ts appUrl()),
+  // which is correct on the app.smplmark.org custom domain.
 
   "observability": {
     "enabled": true
