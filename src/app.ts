@@ -55,12 +55,13 @@ export function createApp() {
   app.use("*", async (c, next) => {
     const url = new URL(c.req.url);
     const p = url.pathname;
-    // The front door is the login page, served directly at the root (no redirect gymnastics). A
-    // logged-in visitor is bounced to /account by the login page's own auth check (auth-pages.js).
+    // The root serves the console (like smplkit): a logged-in visitor's hard-refresh renders the
+    // dashboard in place — URL unchanged, no login flash. The console page's early auth gate
+    // (account/index.html <head>) sends a logged-out visitor straight to /login before anything paints.
     if (p === "/") {
-      const loginUrl = new URL(url);
-      loginUrl.pathname = "/login";
-      return c.env.ASSETS.fetch(new Request(loginUrl, { method: "GET", headers: c.req.raw.headers }));
+      const consoleUrl = new URL(url);
+      consoleUrl.pathname = "/account";
+      return c.env.ASSETS.fetch(new Request(consoleUrl, { method: "GET", headers: c.req.raw.headers }));
     }
     // Marketing + published benchmarks live on the website; send stragglers there.
     if (isPublicPage(p)) {

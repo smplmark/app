@@ -12,12 +12,12 @@ function fetchNoFollow(url: string, init?: RequestInit) {
 const WWW = "https://www.smplmark.org";
 
 describe("app routing", () => {
-  it("serves the login page at the root (no redirect)", async () => {
+  it("serves the console at the root (no redirect; logged-in renders in place)", async () => {
     const res = await fetchNoFollow("http://smplmark.test/");
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain('id="login-form"');
-    expect(body).toContain("Sign in to smplmark");
+    expect(body).toContain('id="sm-sidebar"'); // the console shell, not the login page
+    expect(body).toContain("smplmark_token"); // the early auth gate that bounces logged-out visitors
   });
 
   it("redirects marketing pages to the website (301)", async () => {
