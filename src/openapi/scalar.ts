@@ -48,6 +48,11 @@ export function scalarHtml(specUrl: string, wwwOrigin = "https://www.smplmark.or
     }
     header.site nav a:hover { color: #e6edf3; }
     header.site nav a.active { color: #4f8cff; font-weight: 600; }
+    header.site nav a.nav-cta {
+      background: #4f8cff; color: #fff; font-weight: 600;
+      padding: 5px 14px; border-radius: 999px;
+    }
+    header.site nav a.nav-cta:hover { color: #fff; filter: brightness(1.12); }
     /* Constrain the reference to the site's narrow centered column (matches .wrap / --maxw). */
     .reference-wrap { max-width: 1040px; margin: 0 auto; }
     .reference-wrap .scalar-app { min-width: 0; }
@@ -62,7 +67,7 @@ export function scalarHtml(specUrl: string, wwwOrigin = "https://www.smplmark.or
         <a href="${wwwOrigin}/about">About</a>
         <a href="/api-reference" class="active">API Reference</a>
         <a href="/login">Sign in</a>
-        <a href="/signup">Sign up</a>
+        <a href="/signup" class="nav-cta">Sign up</a>
       </nav>
     </div>
   </header>
