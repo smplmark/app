@@ -1,28 +1,19 @@
-// Generate scripts/seed.sql for local dev. Recomputes the crypto-derived columns (password hash,
-// API-key hash + AES-GCM ciphertext) so they match src/auth/crypto.ts exactly, then emits INSERTs
-// for a full published scheduler-latency benchmark you can log into and post beacons to locally.
+// Generate scripts/seed.sql for local dev: a clean slate with a working login and the built-in
+// system account — and deliberately NO benchmarks. Creating a benchmark (draft → ready → publish →
+// ingest keys → beacons) is exactly the flow to exercise by hand through the console/API, so the
+// seed never fabricates one on anyone's behalf. Ingested reference data comes from the importer
+// (`node ingestion/import.mjs`), never from this seed.
 //
 //   node scripts/gen-seed.mjs > scripts/seed.sql
 //
-// Dev credentials (LOCAL ONLY — never real): login dev@smplkit.test / smplmark-dev-password;
-// ingest with the RUN-scoped API key printed as a comment in the generated file.
+// Dev credentials (LOCAL ONLY — never real): login dev@smplkit.test / smplmark-dev-password.
 
 import { webcrypto as crypto } from "node:crypto";
 
-// Must match .dev.vars / vitest KEY_ENCRYPTION_SECRET (base64 of 32 zero bytes).
-const KEY_ENCRYPTION_SECRET = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const DEV_PASSWORD = "smplmark-dev-password";
-const DEV_API_KEY = "sm_api_devlocalkeyDEADBEEF00000000000000000000";
-const API_KEY_PREFIX = "sm_api_";
 const enc = new TextEncoder();
 
-const b64 = (bytes) => Buffer.from(bytes).toString("base64");
 const b64url = (bytes) => Buffer.from(bytes).toString("base64url");
-
-async function sha256Hex(input) {
-  const d = await crypto.subtle.digest("SHA-256", enc.encode(input));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 async function hashPassword(password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -31,83 +22,23 @@ async function hashPassword(password) {
   return `pbkdf2$sha256$210000$${b64url(salt)}$${b64url(new Uint8Array(bits))}`;
 }
 
-async function encryptSecret(plaintext, secretBase64) {
-  const key = await crypto.subtle.importKey("raw", Buffer.from(secretBase64, "base64"), { name: "AES-GCM" }, false, ["encrypt"]);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plaintext)));
-  const packed = new Uint8Array(iv.length + ct.length);
-  packed.set(iv, 0);
-  packed.set(ct, iv.length);
-  return b64(packed);
-}
-
 const q = (s) => (s === null || s === undefined ? "NULL" : `'${String(s).replace(/'/g, "''")}'`);
 const uuid = () => crypto.randomUUID();
 
-// ── stable ids + timestamps ──
 const T0 = Date.UTC(2026, 6, 1, 0, 0, 0); // seed epoch
-const RUN_START = Date.UTC(2026, 6, 1, 10, 0, 0);
 const userId = "usr-dev";
 const acctId = "acct-smplkit";
-const benchId = "bench-scheduler-latency";
-const tgtA = "tgt-scheduler-a";
-const tgtB = "tgt-scheduler-b";
-const runA = "run-scheduler-a";
-const runB = "run-scheduler-b";
-
-const SAMPLE_SCHEMA = JSON.stringify({
-  metrics: [],
-  derived: [
-    {
-      name: "skew_ms",
-      unit: "ms",
-      description:
-        "Milliseconds past the top of the minute the beacon arrived. Lower is more punctual; 0 means the job fired exactly on the minute boundary.",
-      expr: { minute_offset_ms: [{ var: "created_at" }] },
-    },
-  ],
-  chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
-});
-
-const ABOUT =
-  "Scheduler Latency measures how close to the top of each minute a scheduled job actually fires.\n\nEvery target is a scheduler set to run once a minute. When it fires, it sends a bare-timestamp beacon to smplmark — no payload, just the fact that it ran. The skew (milliseconds past the minute the beacon landed) is derived from that arrival time when the data is read.";
-const METHODOLOGY =
-  "Each target POSTs an empty beacon to /api/v1/observations on a one-minute cron, authenticated by a run-scoped API key. The server stamps the UTC arrival time and stores nothing else.\n\nskew_ms is computed on read as arrival − floor(arrival ÷ 60000) × 60000. Because it is computed on read, the definition can be refined without migrating a single row.";
-
-// Beacon timestamps: one per minute for ~2 hours per run, with a small drift.
-function beacons(runId, base, jitter) {
-  const rows = [];
-  for (let i = 0; i < 120; i++) {
-    const drift = Math.round(20 + jitter * Math.sin(i / 9) * 700 + jitter * (i % 7) * 3);
-    rows.push(`  (${q(runId)}, ${base + i * 60_000 + drift}, NULL, NULL, NULL)`);
-  }
-  return rows.join(",\n");
-}
 
 const passwordHash = await hashPassword(DEV_PASSWORD);
-const keyHash = await sha256Hex(DEV_API_KEY);
-const keyEncrypted = await encryptSecret(DEV_API_KEY, KEY_ENCRYPTION_SECRET);
-const keyPrefix = API_KEY_PREFIX + DEV_API_KEY.slice(API_KEY_PREFIX.length, API_KEY_PREFIX.length + 8);
-
-// Frozen PERSONAL attribution for the seeded publish — matches what actions/publish would write.
-const ATTRIBUTION = JSON.stringify({
-  display_name: "smplkit dev",
-  email_sha256: await sha256Hex("dev@smplkit.test"),
-});
-
-// Tags for the seeded benchmark (tag rows + benchmark_tag links, 0004).
-const TAGS = ["scheduler", "latency"];
 
 const out = `-- smplmark local dev seed (generated by scripts/gen-seed.mjs — do not edit by hand).
 -- Apply: wrangler d1 execute smplmark --local --file scripts/seed.sql
 --
 -- DEV CREDENTIALS (local only — never real):
 --   Web login:  dev@smplkit.test  /  ${DEV_PASSWORD}
---   Ingest key (RUN-scoped, run-scheduler-a): ${DEV_API_KEY}
---     curl -X POST http://localhost:8788/api/v1/observations \\
---       -H "Authorization: Bearer ${DEV_API_KEY}" \\
---       -H "Content-Type: application/vnd.api+json" \\
---       -d '{"data":{"type":"observation","attributes":{"run":"${runA}"}}}'
+--
+-- No benchmarks are seeded — create them through the console (that IS the product test drive).
+-- Ingested reference data: node ingestion/import.mjs
 
 DELETE FROM observation; DELETE FROM run; DELETE FROM target;
 DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark_view_day; DELETE FROM benchmark;
@@ -123,44 +54,11 @@ INSERT INTO user_identity (id, user_id, provider, provider_subject, password_has
 INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
   ('acct-system', 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, ${T0}, 0);
 
+-- The dev workspace: personal publish pre-enabled so the whole publish flow is exercisable.
 INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
-  (${q(acctId)}, 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services. Scheduler Latency is smplkit dogfooding smplmark to keep its own schedulers honest.', 'https://smplkit.com', ${T0}, 1);
+  (${q(acctId)}, 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services.', 'https://smplkit.com', ${T0}, 1);
 INSERT INTO account_user (account_id, user_id, role, created_at) VALUES
   (${q(acctId)}, ${q(userId)}, 'OWNER', ${T0});
-
-INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category) VALUES
-  (${q(benchId)}, ${q(acctId)}, 'scheduler-latency', 'Scheduler Latency', 'How punctual are scheduled jobs, really?', ${q(ABOUT)}, ${q(METHODOLOGY)}, 'PUBLISHED', ${T0}, NULL, NULL, ${q(SAMPLE_SCHEMA)}, ${T0}, ${T0}, ${q(userId)}, 0, ${q(userId)}, 'PERSONAL', NULL, ${q(ATTRIBUTION)}, 'OTHER');
-
-INSERT INTO tag (id, key, created_at) VALUES
-${TAGS.map((t) => `  (${q(uuid())}, ${q(t)}, ${T0})`).join(",\n")};
-INSERT INTO benchmark_tag (benchmark_id, tag_id, created_at)
-  SELECT ${q(benchId)}, id, ${T0} FROM tag;
-
-INSERT INTO target (id, benchmark_id, key, name, details, created_at, updated_at) VALUES
-  (${q(tgtA)}, ${q(benchId)}, 'scheduler-a', 'Scheduler A', NULL, ${T0}, ${T0}),
-  (${q(tgtB)}, ${q(benchId)}, 'scheduler-b', 'Scheduler B', NULL, ${T0}, ${T0});
-
-INSERT INTO run (id, target_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES
-  (${q(runA)}, ${q(tgtA)}, 'default', 'default', NULL, ${RUN_START}, NULL, NULL, NULL, NULL, ${T0}, ${T0}),
-  (${q(runB)}, ${q(tgtB)}, 'default', 'default', NULL, ${RUN_START}, NULL, NULL, NULL, NULL, ${T0}, ${T0});
-
-INSERT INTO api_key (id, account_id, name, scope_type, scope_ref, key_hash, key_encrypted, prefix, expires_at, created_by_user_id, revoked_at, last_used_at, created_at) VALUES
-  (${q(uuid())}, ${q(acctId)}, 'scheduler-a ingest', 'RUN', ${q(runA)}, ${q(keyHash)}, ${q(keyEncrypted)}, ${q(keyPrefix)}, NULL, ${q(userId)}, NULL, NULL, ${T0});
-
-INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES
-${beacons(runA, RUN_START, 0.4)};
-
-INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES
-${beacons(runB, RUN_START, 1.0)};
-
--- Rebuild the search index (same expression as migration 0005 / src/data/benchmarks.ts).
-UPDATE benchmark SET search_text = lower(
-  coalesce(key, '') || ' ' || coalesce(name, '') || ' ' || coalesce(description, '') || ' ' ||
-  coalesce(about, '') || ' ' || coalesce(methodology, '') || ' ' || coalesce(category, '') || ' ' ||
-  coalesce((SELECT group_concat(t.key, ' ') FROM benchmark_tag bt JOIN tag t ON t.id = bt.tag_id
-            WHERE bt.benchmark_id = benchmark.id), '') || ' ' ||
-  coalesce(json_extract(attribution_snapshot, '$.source_name'), '')
-);
 `;
 
 process.stdout.write(out);

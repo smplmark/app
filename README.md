@@ -52,7 +52,7 @@ npm run cf-typegen                 # (re)generate worker-configuration.d.ts
 
 npm run db:migrate:local           # apply migrations to the local D1
 node scripts/gen-seed.mjs > scripts/seed.sql   # (re)generate the seed (crypto-derived columns)
-npm run db:seed:local              # seed smplkit + scheduler-latency (published) + demo data
+npm run db:seed:local              # seed the dev login + accounts (no benchmarks — see below)
 node ingestion/import.mjs          # optional: the full ingested dataset (offline, from ingestion/archive/)
 
 npm run dev                        # wrangler dev — http://localhost:8788
@@ -75,16 +75,11 @@ origin (GET only; every write is same-origin from the console). Non-production h
 previews) behave the same. IP-based rate limiting (Cloudflare `ratelimit` bindings) guards login /
 register / invite / contact.
 
-**Dev credentials** (local only — printed at the top of the generated `scripts/seed.sql`): log in at
-`/login` with `dev@smplkit.test` / `smplmark-dev-password`, or POST a beacon with the seeded
-run-scoped API key:
-
-```bash
-curl -X POST http://localhost:8788/api/v1/observations \
-  -H "Authorization: Bearer sm_api_devlocalkeyDEADBEEF00000000000000000000" \
-  -H "Content-Type: application/vnd.api+json" \
-  -d '{"data":{"type":"observation","attributes":{"run":"run-scheduler-a"}}}'
-```
+**Dev credentials** (local only): log in at `/login` with `dev@smplkit.test` /
+`smplmark-dev-password`. The seed deliberately creates no benchmarks — build one through the
+console (create → mark ready → publish → mint a run-scoped key → POST beacons to
+`/api/v1/observations`); that end-to-end flow is the product test drive. Ingested reference data
+comes from `node ingestion/import.mjs`.
 
 ## API
 
