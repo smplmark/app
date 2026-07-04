@@ -28,12 +28,16 @@ function clearInviteToken() {
   try { localStorage.removeItem(INVITE_KEY); } catch (_e) {}
 }
 
-// After auth, go complete a pending invitation, else the dashboard.
+// After auth, go complete a pending invitation, else the app home — the root, which renders the console.
 function postAuthDest() {
   const t = getInviteToken();
-  return t ? "/accept-invitation?token=" + encodeURIComponent(t) : "/account";
+  return t ? "/accept-invitation?token=" + encodeURIComponent(t) : "/";
 }
 function goDashboard() {
+  // Re-affirm the sm_authed cookie so the root serves the console, covering a signed-in visitor whose
+  // cookie lapsed while the token persisted (otherwise "/" would serve login, which bounces back here).
+  const t = getToken();
+  if (t) setToken(t);
   location.href = postAuthDest();
 }
 
@@ -190,7 +194,7 @@ function handleCallback() {
     setToken(token);
     location.href = postAuthDest();
   } else {
-    location.href = "/login";
+    signOutToRoot();
   }
 }
 
@@ -211,13 +215,13 @@ async function handleVerifyEmail() {
     await authFetch("/api/v1/auth/verify-email", { token });
     title.textContent = "Email verified";
     body.textContent = "Thanks — your email is confirmed. You can now publish benchmarks.";
-    cta.href = getToken() ? "/account" : "/login";
+    cta.href = "/"; // the root renders the console when signed in, the login page when not
     cta.textContent = getToken() ? "Go to dashboard" : "Sign in";
     cta.style.display = "";
   } catch (err) {
     title.textContent = "Verification failed";
     body.textContent = err.message || "This link is invalid or has expired. Request a new one from your dashboard.";
-    cta.href = "/account";
+    cta.href = "/";
     cta.textContent = "Go to dashboard";
     cta.style.display = getToken() ? "" : "none";
   }

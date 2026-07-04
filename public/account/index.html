@@ -6,11 +6,18 @@
   <title>Dashboard — smplmark</title>
   <meta name="robots" content="noindex" />
   <script>
-    // Safety gate (runs before paint): no session token → go to /login before anything renders. This
-    // covers a direct hit on /account while signed out, and a stale sm_authed cookie that routed the
-    // root here without a real token. The root itself is routed by the Worker from that cookie, so a
-    // signed-out visitor to "/" gets the login page in place — never this.
-    (function () { try { if (!localStorage.getItem("smplmark_token")) location.replace("/login"); } catch (e) {} })();
+    // Safety gate (runs before paint): no session token → clear any stale sm_authed cookie and return
+    // to the root, which then serves the login page in place. Covers a direct hit on /account while
+    // signed out, and a stale cookie that routed the root here without a real token. Clearing the
+    // cookie first is what stops the root from routing straight back to this console page.
+    (function () {
+      try {
+        if (!localStorage.getItem("smplmark_token")) {
+          document.cookie = "sm_authed=; path=/; max-age=0; SameSite=Lax";
+          location.replace("/");
+        }
+      } catch (e) {}
+    })();
   </script>
   <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />

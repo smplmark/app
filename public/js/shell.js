@@ -50,7 +50,7 @@
 
   // Base nav (everyone) + admin-only items appended once the role is known.
   const BASE_NAV = [
-    { key: "dashboard", label: "Dashboard", href: "/account", icon: "dashboard", exact: true },
+    { key: "dashboard", label: "Dashboard", href: "/", icon: "dashboard", exact: true },
     { divider: true },
     { key: "benchmarks", label: "Benchmarks", href: "/account/benchmarks", icon: "benchmarks" },
     { key: "apikeys", label: "API Keys", href: "/account/api-keys", icon: "apikeys" },
@@ -120,7 +120,7 @@
   function renderSidebar() {
     const brand = collapsed
       ? '<button class="sidebarLogoCompact" id="sm-expand" type="button" aria-label="Expand sidebar" title="Expand sidebar"><img src="/img/favicon-120.png" alt="smplmark" /></button>'
-      : '<div class="sidebarBrand"><a class="sidebarLogo" href="/account" aria-label="smplmark home"><picture>' +
+      : '<div class="sidebarBrand"><a class="sidebarLogo" href="/" aria-label="smplmark home"><picture>' +
         '<source srcset="/img/logo-light.png" media="(prefers-color-scheme: light)" />' +
         '<img src="/img/logo-dark.png" alt="smplmark" /></picture></a></div>' +
         '<button class="sidebarToggle" id="sm-collapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">' + icon("chevronLeft", 18) + "</button>";
@@ -237,14 +237,13 @@
 
   async function signOut() {
     try { await authFetch("/api/v1/auth/logout", undefined, { method: "POST" }); } catch (_e) {}
-    clearToken();
-    location.href = "/login";
+    signOutToRoot();
   }
 
   async function switchAccount(accountId) {
     try {
       const doc = await authFetch("/api/v1/auth/switch", { account_id: accountId });
-      if (doc && doc.token) { setToken(doc.token); location.href = "/account"; }
+      if (doc && doc.token) { setToken(doc.token); location.href = "/"; }
     } catch (err) {
       alert("Couldn't switch account: " + err.message);
     }

@@ -48,6 +48,15 @@ function writeAuthedCookie(on) {
   }
 }
 
+// Clear the session and return to the sign-in view, which lives at the root: the Worker serves login
+// at "/" when there's no sm_authed cookie. Used for logout, 401s, the missing-token guard, and auth
+// errors, so the URL stays app.smplmark.org with no /login path. Clearing the token + cookie first is
+// what keeps "/" showing login instead of bouncing back to the console with a stale cookie.
+function signOutToRoot() {
+  clearToken();
+  location.href = "/";
+}
+
 // Escape a value for safe insertion into innerHTML. Use everywhere API/user
 // data is rendered as HTML.
 function esc(s) {
@@ -107,8 +116,7 @@ async function apiFetch(path, options) {
   const res = await fetch(path, init);
 
   if (res.status === 401) {
-    clearToken();
-    location.href = "/login";
+    signOutToRoot();
     throw new Error("Your session has expired. Please sign in again.");
   }
 
@@ -142,11 +150,11 @@ function authFetch(path, body, opts) {
   });
 }
 
-// Redirect to /login if there is no stored token. Returns the token when present.
+// Return the stored token, or send the visitor to the root sign-in view when there is none.
 function requireAuth() {
   const token = getToken();
   if (!token) {
-    location.href = "/login";
+    signOutToRoot();
     return null;
   }
   return token;
