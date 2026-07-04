@@ -23,9 +23,29 @@ export function scalarHtml(specUrl: string): string {
       --scalar-font-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
     html, body { margin: 0; background: #0e1116; }
+    /* Branded header above the Scalar app (which renders as a normal block below it). */
+    header.brand {
+      display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 20px;
+      background: color-mix(in srgb, #0e1116 85%, transparent);
+      border-bottom: 1px solid #2a3140;
+      font: 14px system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    header.brand img { height: 20px; width: auto; display: block; }
+    header.brand .page { color: #9aa7b4; }
+    header.brand nav { margin-left: auto; display: flex; gap: 18px; }
+    header.brand a { color: #9aa7b4; text-decoration: none; }
+    header.brand a:hover { color: #e6edf3; }
   </style>
 </head>
 <body>
+  <header class="brand">
+    <a href="https://www.smplmark.org" title="smplmark home"><img src="/img/logo-dark.png" alt="smplmark" /></a>
+    <span class="page">API reference</span>
+    <nav>
+      <a href="https://www.smplmark.org/benchmarks">Benchmarks</a>
+      <a href="https://www.smplmark.org/about">About</a>
+    </nav>
+  </header>
   <script id="api-reference" data-url="${specUrl}"></script>
   <script>
     // Force the dark palette above (Scalar's own themes disabled).
