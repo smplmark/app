@@ -45,6 +45,9 @@ export function scalarHtml(specUrl: string): string {
     }
     header.site nav a:hover { color: #e6edf3; }
     header.site nav a.active { color: #4f8cff; font-weight: 600; }
+    /* Constrain the reference to the site's narrow centered column (matches .wrap / --maxw). */
+    .reference-wrap { max-width: 1040px; margin: 0 auto; }
+    .reference-wrap .scalar-app { min-width: 0; }
   </style>
 </head>
 <body>
@@ -60,7 +63,9 @@ export function scalarHtml(specUrl: string): string {
       </nav>
     </div>
   </header>
-  <script id="api-reference" data-url="${specUrl}"></script>
+  <div class="reference-wrap">
+    <script id="api-reference" data-url="${specUrl}"></script>
+  </div>
   <script>
     // Force the dark palette above (Scalar's own themes disabled).
     document.getElementById('api-reference').dataset.configuration = JSON.stringify({

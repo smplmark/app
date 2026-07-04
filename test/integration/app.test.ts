@@ -36,5 +36,6 @@ describe("app routing", () => {
     expect(body).toContain('header class="site"');
     expect(body).toContain("/img/logo-dark.png");
     expect(body).toContain('<a href="/api-reference" class="active">API Reference</a>');
+    expect(body).toContain('class="reference-wrap"');
   });
 });
