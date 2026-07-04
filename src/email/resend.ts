@@ -178,3 +178,40 @@ export async function sendContactAutoresponse(
     replyTo: SUPPORT_EMAIL,
   });
 }
+
+// ── New-account notification (ops alert to support) ──────────────────────────
+
+/** Notify the support inbox whenever a new account is provisioned (password signup or OIDC first
+ *  login). Best-effort like every other send: a failure never blocks account creation. */
+export async function sendNewAccountNotification(
+  env: Env,
+  input: {
+    userEmail: string;
+    userName: string | null;
+    accountName: string;
+    accountKey: string;
+    signupMethod: string;
+  },
+): Promise<boolean> {
+  const rows = [
+    ["User", `${input.userName ?? "(no name)"} <${input.userEmail}>`],
+    ["Account", `${input.accountName} (@${input.accountKey})`],
+    ["Signed up via", input.signupMethod],
+  ]
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:4px 12px 4px 0;color:${MUTED}">${esc(k)}</td><td style="padding:4px 0">${esc(v)}</td></tr>`,
+    )
+    .join("");
+  const html = scaffold(
+    `<p><strong>New account created</strong></p>
+<table style="font-size:14px;border-collapse:collapse">${rows}</table>`,
+  );
+  const text = `New smplmark account created\n\nUser: ${input.userName ?? "(no name)"} <${input.userEmail}>\nAccount: ${input.accountName} (@${input.accountKey})\nSigned up via: ${input.signupMethod}`;
+  return sendEmail(env, {
+    to: SUPPORT_EMAIL,
+    subject: `New account: ${input.accountName}`,
+    html,
+    text,
+  });
+}

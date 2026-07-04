@@ -33,7 +33,7 @@ import {
   setEmailVerified,
 } from "../data/users";
 import { createVerification, consumeVerification } from "../data/verifications";
-import { sendVerificationEmail } from "../email/resend";
+import { sendNewAccountNotification, sendVerificationEmail } from "../email/resend";
 import { BadRequestError, NotFoundError, ServiceUnavailableError, UnauthorizedError } from "../errors";
 import { getAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { rateLimit } from "../http/ratelimit";
@@ -121,6 +121,13 @@ auth.post("/register", rateLimit((e) => e.RL_SENSITIVE), async (c) => {
   });
   const account = await provisionAccountForUser(c.env.DB, user);
   await issueVerification(c.env, c.env.DB, user, appUrl(c.env, c.req.url));
+  await sendNewAccountNotification(c.env, {
+    userEmail: user.email,
+    userName: user.display_name,
+    accountName: account.name,
+    accountKey: account.key,
+    signupMethod: "Email + password",
+  });
 
   const session = await startSession(
     c.env,
@@ -340,7 +347,14 @@ auth.get("/callback/:provider", async (c) => {
         provider_subject: profile.subject,
         password_hash: null,
       });
-      await provisionAccountForUser(c.env.DB, created);
+      const newAccount = await provisionAccountForUser(c.env.DB, created);
+      await sendNewAccountNotification(c.env, {
+        userEmail: created.email,
+        userName: created.display_name,
+        accountName: newAccount.name,
+        accountKey: newAccount.key,
+        signupMethod: provider === "GOOGLE" ? "Google" : "Microsoft",
+      });
       user = created;
     }
   }

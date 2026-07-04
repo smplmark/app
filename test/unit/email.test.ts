@@ -3,6 +3,7 @@ import {
   sendContactAutoresponse,
   sendContactSupportEmail,
   sendInvitationEmail,
+  sendNewAccountNotification,
   sendVerificationEmail,
 } from "../../src/email/resend";
 
@@ -89,5 +90,36 @@ describe("resend email", () => {
   it("returns false when Resend responds non-2xx", async () => {
     stubFetch(false);
     expect(await sendVerificationEmail(CONFIGURED, { to: "a@b.com", verifyUrl: "https://x", displayName: null })).toBe(false);
+  });
+
+  it("notifies support when a new account is created (to support@, escaped)", async () => {
+    const calls = stubFetch(true);
+    const ok = await sendNewAccountNotification(CONFIGURED, {
+      userEmail: "new@user.com",
+      userName: "New <script> User",
+      accountName: "New's workspace",
+      accountKey: "new-user",
+      signupMethod: "Google",
+    });
+    expect(ok).toBe(true);
+    expect(calls[0].body.to).toBe("support@smplmark.org");
+    expect(String(calls[0].body.subject)).toContain("New account");
+    expect(String(calls[0].body.html)).toContain("new@user.com");
+    expect(String(calls[0].body.html)).toContain("Google");
+    expect(String(calls[0].body.html)).not.toContain("<script>"); // escaped
+  });
+
+  it("new-account notification no-ops (false) when unconfigured", async () => {
+    const calls = stubFetch(true);
+    expect(
+      await sendNewAccountNotification(UNCONFIGURED, {
+        userEmail: "a@b.com",
+        userName: null,
+        accountName: "A",
+        accountKey: "a",
+        signupMethod: "Email + password",
+      }),
+    ).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
