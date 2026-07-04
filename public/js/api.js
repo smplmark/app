@@ -20,6 +20,7 @@ function setToken(token) {
   } catch (_e) {
     /* ignore storage errors */
   }
+  writeAuthedCookie(true);
 }
 
 function clearToken() {
@@ -27,6 +28,23 @@ function clearToken() {
     localStorage.removeItem(TOKEN_KEY);
   } catch (_e) {
     /* ignore storage errors */
+  }
+  writeAuthedCookie(false);
+}
+
+// A non-sensitive "signed in" hint so the Worker can serve the console (not login) at the root with no
+// client-side redirect — the URL stays app.smplmark.org for both signed-in and signed-out visitors.
+// The real credential is the localStorage token sent as a Bearer header; this cookie grants nothing on
+// its own. A forged cookie only yields the console page, which then finds no valid token and falls
+// back to login. Kept in sync with the token here so login/OIDC/logout/401 all update both at once.
+function writeAuthedCookie(on) {
+  try {
+    var secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = on
+      ? "sm_authed=1; path=/; max-age=604800; SameSite=Lax" + secure
+      : "sm_authed=; path=/; max-age=0; SameSite=Lax" + secure;
+  } catch (_e) {
+    /* ignore cookie errors */
   }
 }
 

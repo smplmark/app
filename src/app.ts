@@ -55,13 +55,23 @@ export function createApp() {
   app.use("*", async (c, next) => {
     const url = new URL(c.req.url);
     const p = url.pathname;
-    // The root serves the console (like smplkit): a logged-in visitor's hard-refresh renders the
-    // dashboard in place — URL unchanged, no login flash. The console page's early auth gate
-    // (account/index.html <head>) sends a logged-out visitor straight to /login before anything paints.
+    // The root renders in place with no redirect, like smplkit: a signed-in visitor sees the console
+    // at "/", a signed-out visitor sees the login page at "/" — the URL stays app.smplmark.org either
+    // way. The Worker picks which page to serve from the non-sensitive `sm_authed` cookie (set by
+    // api.js alongside the real localStorage token). The cookie grants nothing: the console page still
+    // requires a valid token, so a forged/stale cookie just falls back to login.
     if (p === "/") {
-      const consoleUrl = new URL(url);
-      consoleUrl.pathname = "/account";
-      return c.env.ASSETS.fetch(new Request(consoleUrl, { method: "GET", headers: c.req.raw.headers }));
+      const authed = /(?:^|;\s*)sm_authed=1(?:\s*;|\s*$)/.test(c.req.header("Cookie") ?? "");
+      const target = new URL(url);
+      target.pathname = authed ? "/account" : "/login";
+      const asset = await c.env.ASSETS.fetch(
+        new Request(target, { method: "GET", headers: c.req.raw.headers }),
+      );
+      // Same URL, two possible bodies → never let a shared cache serve one visitor's page to another.
+      const res = new Response(asset.body, asset);
+      res.headers.set("Cache-Control", "no-store");
+      res.headers.append("Vary", "Cookie");
+      return res;
     }
     // Marketing + published benchmarks live on the website; send stragglers there.
     if (isPublicPage(p)) {

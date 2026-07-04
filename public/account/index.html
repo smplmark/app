@@ -6,8 +6,10 @@
   <title>Dashboard — smplmark</title>
   <meta name="robots" content="noindex" />
   <script>
-    // Auth gate (runs before paint): no session → straight to /login, so a logged-out visitor to the
-    // root or /account never sees a console/blank flash. A logged-in visitor renders the console.
+    // Safety gate (runs before paint): no session token → go to /login before anything renders. This
+    // covers a direct hit on /account while signed out, and a stale sm_authed cookie that routed the
+    // root here without a real token. The root itself is routed by the Worker from that cookie, so a
+    // signed-out visitor to "/" gets the login page in place — never this.
     (function () { try { if (!localStorage.getItem("smplmark_token")) location.replace("/login"); } catch (e) {} })();
   </script>
   <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
