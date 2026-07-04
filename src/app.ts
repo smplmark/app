@@ -55,10 +55,12 @@ export function createApp() {
   app.use("*", async (c, next) => {
     const url = new URL(c.req.url);
     const p = url.pathname;
-    // The app has no marketing home; the console is the root.
+    // The front door is the login page, served directly at the root (no redirect gymnastics). A
+    // logged-in visitor is bounced to /account by the login page's own auth check (auth-pages.js).
     if (p === "/") {
-      url.pathname = "/account";
-      return c.redirect(url.toString(), 302);
+      const loginUrl = new URL(url);
+      loginUrl.pathname = "/login";
+      return c.env.ASSETS.fetch(new Request(loginUrl, { method: "GET", headers: c.req.raw.headers }));
     }
     // Marketing + published benchmarks live on the website; send stragglers there.
     if (isPublicPage(p)) {

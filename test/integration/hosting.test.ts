@@ -12,10 +12,12 @@ function fetchNoFollow(url: string, init?: RequestInit) {
 const WWW = "https://www.smplmark.org";
 
 describe("app routing", () => {
-  it("redirects the root into the console", async () => {
+  it("serves the login page at the root (no redirect)", async () => {
     const res = await fetchNoFollow("http://smplmark.test/");
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("http://smplmark.test/account");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="login-form"');
+    expect(body).toContain("Sign in to smplmark");
   });
 
   it("redirects marketing pages to the website (301)", async () => {

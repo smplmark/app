@@ -32,11 +32,13 @@
   "assets": {
     "directory": "./public/",
     "binding": "ASSETS",
-    // The Worker runs first for every request so it can normalize paths (console root, redirect
-    // marketing/benchmark paths to the website) and answer the JSON:API. Non-matching paths fall
-    // through to the console static assets via env.ASSETS.fetch().
+    // The Worker runs first for every request so it can normalize paths (serve login at the root,
+    // redirect marketing/benchmark paths to the website) and answer the JSON:API. Non-matching paths
+    // fall through to the console static assets via env.ASSETS.fetch().
     "run_worker_first": true,
-    "not_found_handling": "404-page"
+    "not_found_handling": "404-page",
+    // Canonical URLs carry no trailing slash: /account, /login (not /account/, /login/).
+    "html_handling": "drop-trailing-slash"
   },
 
   "d1_databases": [
