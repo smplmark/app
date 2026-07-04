@@ -26,7 +26,11 @@ UPDATE benchmark SET search_text = lower(
 );
 
 CREATE TABLE benchmark_view_day (
-  benchmark_id TEXT    NOT NULL REFERENCES benchmark (id),
+  -- Deliberately a SOFT pointer (no foreign key), like benchmark.published_identity_id: view
+  -- history must OUTLIVE its benchmark row across the ingestion importer's wipe-and-rebuild
+  -- (D1 enforces FKs, so a real reference would abort the wipe). The importer prunes buckets
+  -- whose ingested benchmark is gone for good.
+  benchmark_id TEXT    NOT NULL,
   -- UTC day, 'YYYY-MM-DD'.
   day          TEXT    NOT NULL,
   views        INTEGER NOT NULL DEFAULT 0,

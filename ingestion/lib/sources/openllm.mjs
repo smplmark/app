@@ -152,10 +152,10 @@ const SCHEMA = {
   chart: { x: null, y: "average", x_kind: "CATEGORY" },
 };
 
+// Factual citation only — what the numbers are, per the source's own definitions. No smplmark
+// voice, and no methodology authored here (a source's methodology is theirs to publish).
 const ABOUT =
-  "The Open LLM Leaderboard was Hugging Face's community leaderboard for open large language models. Between June 2024 and its retirement in March 2025 it evaluated thousands of open-weight models on six benchmarks — IFEval, BBH, MATH level 5, GPQA, MuSR, and MMLU-Pro — using one standardized evaluation harness on Hugging Face's compute cluster. smplmark ingests the final leaderboard table published by Hugging Face, frozen when the leaderboard was retired.";
-const METHODOLOGY =
-  "Each target is one evaluated model configuration (model + precision) from the leaderboard's final published dataset, with a single run dated by its submission date. Scores are the leaderboard's normalized values on a 0–100 scale — 0 is random-baseline performance, 100 a perfect score — and the average is the mean of the six benchmark scores; higher is better. Submissions flagged by the community are excluded, mirroring the leaderboard's own default view. Source: Hugging Face Open LLM Leaderboard (public dataset, license unspecified), https://huggingface.co/datasets/open-llm-leaderboard/contents.";
+  "The final leaderboard table of Hugging Face's Open LLM Leaderboard, which evaluated open-weight language models on six benchmarks (IFEval, BBH, MATH level 5, GPQA, MuSR, MMLU-Pro) with one standardized harness until its retirement in March 2025. Scores are the leaderboard's published normalized values on a 0-100 scale (higher is better); the average is the mean of the six. Community-flagged submissions are excluded, mirroring the leaderboard's own default view.";
 
 /**
  * @typedef {Object} ParsedRow
@@ -341,7 +341,7 @@ export function adapt(archive, options = {}) {
       description:
         "Final scores from the retired Hugging Face Open LLM Leaderboard: open-weight language models on six standardized benchmarks.",
       about: ABOUT,
-      methodology: METHODOLOGY,
+      methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "open-weights", "huggingface"],
       sampleSchema: SCHEMA,

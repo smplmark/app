@@ -124,10 +124,10 @@ const SCHEMA = {
   chart: { x: null, y: "median_score", x_kind: "CATEGORY" },
 };
 
+// Factual citation only — what the numbers are, per the source's own definitions. No smplmark
+// voice, and no methodology authored here (a source's methodology is theirs to publish).
 const ABOUT_COMMON =
-  "Blender Open Data is a community platform where anyone can run the Blender Benchmark and share how their hardware performs in Cycles rendering. smplmark ingests the aggregated per-device leaderboard (median score per device per Blender version) — not individual submissions.";
-const METHODOLOGY =
-  "Data comes from the Blender Open Data aggregation endpoint, grouped by device name. The score is the median across community submissions of samples-per-minute, summed over the benchmark scenes. Each run on a target corresponds to one Blender version (GPU targets: one run per version and compute API), so scores are only compared within a run's version. Source: Blender Open Data (CC0), opendata.blender.org.";
+  "Aggregated per-device results from Blender Open Data (opendata.blender.org), where the community runs the Blender Benchmark and shares hardware results for Cycles rendering. Each value is the source's median score for a device on a given Blender version; scores are comparable within one version.";
 
 /**
  * @param {import("../model.mjs").Archive} archive
@@ -211,7 +211,7 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     name,
     description,
     about: ABOUT_COMMON,
-    methodology: METHODOLOGY,
+    methodology: null,
     category: "HARDWARE",
     tags,
     sampleSchema: SCHEMA,

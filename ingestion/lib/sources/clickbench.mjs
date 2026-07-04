@@ -111,10 +111,10 @@ const SCHEMA = {
   chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" },
 };
 
+// Factual citation only — what the numbers are, per the source's own definitions. No smplmark
+// voice, and no methodology authored here (a source's methodology is theirs to publish).
 const ABOUT =
-  "ClickBench is an open benchmark by the ClickHouse team that measures analytical database systems on a fixed set of 43 SQL queries over a web-analytics dataset of roughly 100 million rows. Results are community-submitted and cover cloud warehouses, embedded engines, and self-managed databases. smplmark ingests the aggregated leaderboard — the latest result per system and machine — not the full per-run history.";
-const METHODOLOGY =
-  "Data comes from the ClickBench repository's aggregated dataset (data.generated.js), the same file that powers benchmark.clickhouse.com; it keeps the latest dated result for each system + machine combination. A target is one system on one machine; its run is that dated benchmark execution. Each of the 43 queries is executed three times: cold_total_s sums the first (cold) runs and hot_total_s sums the best of the second and third (hot) runs — lower is better for both. Queries a system failed to run are excluded from the sums and counted as missing_queries; the full per-query timing matrix is preserved in each observation. Load time, loaded data size, and concurrent queries per second (where measured) are reported as-is. ClickBench's official \"relative\" leaderboard score requires a cross-system baseline and is deliberately not reproduced. Source: ClickBench (CC-BY-NC-SA-4.0), https://github.com/ClickHouse/ClickBench.";
+  "The latest published result per system and machine from ClickBench (github.com/ClickHouse/ClickBench), a benchmark of analytical databases over 43 fixed queries on a ~100M-row web-analytics dataset. Load time, data size, and total cold/hot query times are shown as recorded in the source's result files; lower is faster.";
 
 /**
  * @typedef {Object} ParsedEntry
@@ -159,7 +159,7 @@ export function adapt(archive, options = {}) {
       description:
         "Analytical-database runtimes for 43 SQL queries over a ~100M-row web-analytics dataset.",
       about: ABOUT,
-      methodology: METHODOLOGY,
+      methodology: null,
       category: "DATABASE",
       tags: ["olap", "sql", "analytics", "databases"],
       sampleSchema: SCHEMA,

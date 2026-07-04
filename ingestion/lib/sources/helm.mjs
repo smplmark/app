@@ -130,10 +130,10 @@ const SCHEMA = {
   chart: { x: null, y: "mean_score", x_kind: "CATEGORY" },
 };
 
+// Factual citation only — what the numbers are, per the source's own definitions. No smplmark
+// voice, and no methodology authored here (a source's methodology is theirs to publish).
 const ABOUT =
-  "HELM (Holistic Evaluation of Language Models) is an open benchmarking project from Stanford's Center for Research on Foundation Models. Its Capabilities leaderboard evaluates leading language models on five demanding scenarios: MMLU-Pro (graduate-level knowledge), GPQA (search-resistant science questions), IFEval (instruction following), WildBench (real-world user queries), and Omni-MATH (Olympiad-level math). Every score is on a 0-1 scale where higher is better. HELM entered maintenance mode in June 2026, so this leaderboard is a frozen, final dataset.";
-const METHODOLOGY =
-  "smplmark ingests the aggregated leaderboard table published with each HELM Capabilities release — one row per model with its mean score and per-scenario scores — exactly as shown on the HELM website. Per-instance model outputs are not ingested. Each target is an evaluated model; its single run corresponds to the leaderboard release, and the observation carries that row's scores (higher is better for every metric). Scores come from Stanford HELM (open access, publicly released results): https://crfm.stanford.edu/helm/capabilities/latest/.";
+  "Aggregated scores from the HELM Capabilities leaderboard, published by Stanford's Center for Research on Foundation Models (crfm.stanford.edu/helm). Each model row carries the release's mean score and per-scenario scores for MMLU-Pro, GPQA, IFEval, WildBench, and Omni-MATH on a 0-1 scale (higher is better), exactly as published. HELM entered maintenance mode in June 2026, so these results are final.";
 
 /**
  * Stage B: one benchmark from the release's core-scenarios accuracy table. Targets are models
@@ -197,9 +197,9 @@ export function adapt(archive, options = {}) {
     {
       key: "helm-capabilities",
       name: "HELM Capabilities",
-      description: "Frontier language models scored on five demanding scenarios by Stanford HELM.",
+      description: "Language models scored on five scenarios by the Stanford HELM Capabilities leaderboard.",
       about: ABOUT,
-      methodology: METHODOLOGY,
+      methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "helm", "language-models"],
       sampleSchema: SCHEMA,

@@ -261,9 +261,8 @@ function cc18Benchmark(task, topFlows, retrievedAt, benchmarkSeen) {
     name: `OpenML-CC18: ${task.dataName}`,
     description: `Best predictive accuracy per machine-learning flow on the ${task.dataName} classification task from the OpenML-CC18 suite.`,
     about:
-      `OpenML is an open platform for sharing machine-learning datasets, algorithms, and experiment results. OpenML-CC18 is its curated suite of 72 classification tasks; this benchmark covers the ${task.dataName} task. Each target is a "flow" — a specific algorithm or pipeline (for example a scikit-learn, mlr, or Weka setup) — shown with the best predictive accuracy the community achieved with it on this task. Scores come from OpenML (CC-BY 4.0): https://www.openml.org/t/${task.taskId}`,
-    methodology:
-      "Results come from OpenML's public evaluation listing for this task, sorted by predictive accuracy, keeping each flow's single best-scoring run. Predictive accuracy is the fraction of test instances classified correctly (0 to 1, higher is better), computed by OpenML under the task's fixed estimation procedure (typically 10-fold cross-validation), so scores are comparable across flows within the benchmark. Only the top of the leaderboard is retrieved, so each value is a flow's best known result, not an average. Source: OpenML (CC-BY-4.0), https://www.openml.org.",
+      `Community results for the ${task.dataName} classification task from OpenML-CC18, OpenML's curated suite of 72 classification tasks (www.openml.org/t/${task.taskId}). Each target is a flow — a specific algorithm or pipeline — shown with the best predictive accuracy recorded for it on this task in OpenML's public evaluation listing, under the task's fixed estimation procedure.`,
+    methodology: null,
     category: "ML_AI",
     tags: ["openml", "cc18", "classification"],
     sampleSchema: CC18_SCHEMA,
@@ -374,9 +373,8 @@ function amlbBenchmark(archive, retrievedAt) {
     description:
       "AutoML frameworks compared on classification accuracy and ROC AUC across a shared set of OpenML tasks.",
     about:
-      "The AutoML Benchmark (AMLB) compares automated machine-learning frameworks — systems that build and tune models without manual intervention — on a shared set of classification tasks, with the results published on OpenML as study 226. Each target is one framework (or baseline learner); each run is one dataset, showing the accuracy and ROC AUC that framework achieved on it. Scores come from OpenML (CC-BY 4.0): https://www.openml.org/s/226",
-    methodology:
-      "Each framework was executed by the AutoML Benchmark project on every dataset under a shared protocol, and the resulting evaluations were uploaded to OpenML (study 226, published 2019). For each framework-dataset run, one observation merges both published measures: predictive accuracy (fraction of test instances classified correctly) and area under the ROC curve — both range 0 to 1, higher is better. Source: OpenML (CC-BY-4.0), https://www.openml.org.",
+      "Results of the AutoML Benchmark (AMLB), which ran automated machine-learning frameworks on a shared set of classification tasks and published the evaluations on OpenML as study 226 (www.openml.org/s/226, 2019). Each target is one framework; each run is one dataset, with the predictive accuracy and ROC AUC recorded there (0-1, higher is better).",
+    methodology: null,
     category: "ML_AI",
     tags: ["openml", "automl"],
     sampleSchema: AMLB_SCHEMA,

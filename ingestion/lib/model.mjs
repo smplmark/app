@@ -28,7 +28,7 @@
  * @property {string} name
  * @property {string} description one-line tagline
  * @property {string} about
- * @property {string} methodology
+ * @property {string | null} methodology null — sources' methodology is theirs to publish, never paraphrased here
  * @property {"HARDWARE"|"DATABASE"|"ML_AI"|"STORAGE"|"NETWORK"|"OTHER"} category
  * @property {string[]} tags lowercase slugs
  * @property {object} sampleSchema the benchmark's sample_schema (metrics/derived/chart)
