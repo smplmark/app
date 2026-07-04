@@ -57,6 +57,18 @@ export async function createRun(
   return row;
 }
 
+/** Serves the runs-per-target ceiling check on create. */
+export async function countRunsForTarget(
+  db: D1Database,
+  targetId: string,
+): Promise<number> {
+  const r = await db
+    .prepare("SELECT COUNT(*) AS n FROM run WHERE target_id = ?")
+    .bind(targetId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 export async function getRunById(
   db: D1Database,
   id: string,
@@ -67,7 +79,9 @@ export async function getRunById(
 }
 
 export interface ListRunsInput {
-  targetId: string;
+  /** Exactly one of targetId / benchmarkId — the route enforces the exactly-one-of contract. */
+  targetId?: string;
+  benchmarkId?: string;
   filterKey?: string;
   sort: Sort;
   limit: number;
@@ -86,8 +100,16 @@ export async function listRuns(
   db: D1Database,
   input: ListRunsInput,
 ): Promise<{ rows: RunRow[]; total?: number }> {
-  const clauses = ["target_id = ?"];
-  const binds: unknown[] = [input.targetId];
+  const clauses: string[] = [];
+  const binds: unknown[] = [];
+  if (input.targetId !== undefined) {
+    clauses.push("target_id = ?");
+    binds.push(input.targetId);
+  } else {
+    // Benchmark-wide listing (one request for a whole leaderboard instead of one per target).
+    clauses.push("target_id IN (SELECT id FROM target WHERE benchmark_id = ?)");
+    binds.push(input.benchmarkId);
+  }
   if (input.filterKey !== undefined) {
     clauses.push("key = ?");
     binds.push(input.filterKey);

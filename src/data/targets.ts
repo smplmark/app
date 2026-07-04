@@ -42,6 +42,18 @@ export async function createTarget(
   return row;
 }
 
+/** Serves the targets-per-benchmark ceiling check on create. */
+export async function countTargetsForBenchmark(
+  db: D1Database,
+  benchmarkId: string,
+): Promise<number> {
+  const r = await db
+    .prepare("SELECT COUNT(*) AS n FROM target WHERE benchmark_id = ?")
+    .bind(benchmarkId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 export async function getTargetById(
   db: D1Database,
   id: string,

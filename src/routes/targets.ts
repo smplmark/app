@@ -1,7 +1,9 @@
 import { Hono, type Context } from "hono";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
+import { LIMITS } from "../limits";
 import {
+  countTargetsForBenchmark,
   createTarget,
   deleteTargetCascade,
   getTargetById,
@@ -63,9 +65,14 @@ targets.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  const key = requireString(attrs, "key");
-  const name = requireString(attrs, "name");
+  const key = requireString(attrs, "key", LIMITS.keyLength);
+  const name = requireString(attrs, "name", LIMITS.nameLength);
   const details = "details" in attrs ? attrs.details : null;
+  if ((await countTargetsForBenchmark(c.env.DB, benchmark.id)) >= LIMITS.targetsPerBenchmark) {
+    throw new ConflictError(
+      `This benchmark has reached the limit of ${LIMITS.targetsPerBenchmark} targets.`,
+    );
+  }
   const row = await createTarget(c.env.DB, {
     benchmark_id: benchmark.id,
     key,
@@ -128,7 +135,7 @@ targets.put("/:id", requireAuth, async (c) => {
   const { target, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
   const attrs = await readAttributes(c);
-  const name = requireString(attrs, "name");
+  const name = requireString(attrs, "name", LIMITS.nameLength);
   const details = "details" in attrs ? attrs.details : null;
   const row = await updateTarget(c.env.DB, target.id, { name, details });
   return resourceResponse(serializeTarget(row as TargetRow));

@@ -83,6 +83,18 @@ export async function createBenchmark(
   return row;
 }
 
+/** Serves the benchmarks-per-account ceiling check on create. */
+export async function countBenchmarksForAccount(
+  db: D1Database,
+  accountId: string,
+): Promise<number> {
+  const r = await db
+    .prepare("SELECT COUNT(*) AS n FROM benchmark WHERE account_id = ?")
+    .bind(accountId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 export async function getBenchmarkById(
   db: D1Database,
   id: string,

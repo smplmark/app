@@ -422,11 +422,11 @@ const benchmark = registerEntity(
     updated_at: dateTime("When the benchmark was last updated."),
   }),
   z.object({
-    key: z.string().openapi({ description: "The benchmark's human-readable, URL-safe identifier." }),
-    name: z.string().openapi({ description: "The benchmark's display name." }),
-    description: z.string().optional().openapi({ description: "A one-line summary of the benchmark." }),
-    about: z.string().optional().openapi({ description: "A longer description of the benchmark." }),
-    methodology: z.string().optional().openapi({ description: "How the benchmark is run and measured." }),
+    key: z.string().max(100).openapi({ description: "The benchmark's human-readable, URL-safe identifier. At most 100 characters." }),
+    name: z.string().max(200).openapi({ description: "The benchmark's display name. At most 200 characters." }),
+    description: z.string().max(500).optional().openapi({ description: "A one-line summary of the benchmark. At most 500 characters." }),
+    about: z.string().max(20000).optional().openapi({ description: "A longer description of the benchmark. At most 20,000 characters." }),
+    methodology: z.string().max(20000).optional().openapi({ description: "How the benchmark is run and measured. At most 20,000 characters." }),
     sample_schema: SampleSchema.optional(),
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
@@ -452,8 +452,8 @@ const target = registerEntity(
   }),
   z.object({
     benchmark: idRef("The benchmark to attach the target to."),
-    key: z.string().openapi({ description: "The target's human-readable identifier." }),
-    name: z.string().openapi({ description: "The target's display name." }),
+    key: z.string().max(100).openapi({ description: "The target's human-readable identifier. At most 100 characters." }),
+    name: z.string().max(200).openapi({ description: "The target's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the target.", type: "object" }),
   }),
 );
@@ -478,8 +478,8 @@ const run = registerEntity(
   }),
   z.object({
     target: idRef("The target to attach the run to."),
-    key: z.string().openapi({ description: "The run's human-readable identifier." }),
-    name: z.string().optional().openapi({ description: "The run's display name." }),
+    key: z.string().max(100).openapi({ description: "The run's human-readable identifier. At most 100 characters." }),
+    name: z.string().max(200).optional().openapi({ description: "The run's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the run.", type: "object" }),
     started_at: dateTime("When the run started. Defaults to the time of creation.").optional(),
   }),
@@ -1129,7 +1129,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(benchmark.Response, "The created benchmark."),
     ...commonErrors,
-    "409": errorJson("A benchmark with that key already exists in the account."),
+    "409": errorJson("A benchmark with that key already exists in the account, or the account has reached its limit of 100 benchmarks."),
   },
 });
 
@@ -1304,7 +1304,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(target.Response, "The created target."),
     ...commonErrors,
-    "409": errorJson("A target with that key already exists in the benchmark."),
+    "409": errorJson("A target with that key already exists in the benchmark, or the benchmark has reached its limit of 5,000 targets."),
   },
 });
 
@@ -1378,7 +1378,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(run.Response, "The created run."),
     ...commonErrors,
-    "409": errorJson("A run with that key already exists in the target."),
+    "409": errorJson("A run with that key already exists in the target, or the target has reached its limit of 100 runs."),
   },
 });
 
@@ -1388,13 +1388,14 @@ registry.registerPath({
   tags: ["Runs"],
   summary: "List runs",
   parameters: [
-    filterParam("target", "Limit results to runs of this target id.", true),
+    filterParam("target", "Limit results to runs of this target id. Exactly one of filter[target] and filter[benchmark] is required."),
+    filterParam("benchmark", "Limit results to every run under this benchmark id, across all of its targets — one request for a whole leaderboard. Exactly one of filter[target] and filter[benchmark] is required."),
     filterParam("key", "Limit results to the run with this key."),
     ...paginationParams,
   ],
   responses: {
     "200": domainResponse(run.ListResponse, "A page of runs."),
-    "400": errorJson("The query parameters were malformed or filter[target] was missing."),
+    "400": errorJson("The query parameters were malformed, or neither/both of filter[target] and filter[benchmark] were provided."),
   },
 });
 

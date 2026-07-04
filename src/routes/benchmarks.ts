@@ -13,6 +13,7 @@ import {
 import { sha256Hex } from "../auth/crypto";
 import { accountHasVerifiedUser, getAccountById } from "../data/accounts";
 import {
+  countBenchmarksForAccount,
   createBenchmark,
   deleteBenchmarkCascade,
   getBenchmarkById,
@@ -22,6 +23,7 @@ import {
   updateBenchmark,
   withdrawBenchmark,
 } from "../data/benchmarks";
+import { LIMITS } from "../limits";
 import { getPublisherIdentityById } from "../data/publisher_identities";
 import { listVerifiedDomains } from "../data/publisher_domains";
 import {
@@ -109,15 +111,21 @@ benchmarks.post("/", requireAuth, async (c) => {
   }
   requireWrite(auth);
   const attrs = await readAttributes(c);
-  const key = requireString(attrs, "key");
-  const name = requireString(attrs, "name");
-  const description = optionalStringOrNull(attrs, "description") ?? null;
-  const about = optionalStringOrNull(attrs, "about") ?? null;
-  const methodology = optionalStringOrNull(attrs, "methodology") ?? null;
+  const key = requireString(attrs, "key", LIMITS.keyLength);
+  const name = requireString(attrs, "name", LIMITS.nameLength);
+  const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
+  const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
+  const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
   const sample_schema =
     "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
+
+  if ((await countBenchmarksForAccount(c.env.DB, auth.account_id)) >= LIMITS.benchmarksPerAccount) {
+    throw new ConflictError(
+      `This account has reached the limit of ${LIMITS.benchmarksPerAccount} benchmarks.`,
+    );
+  }
 
   const row = await createBenchmark(c.env.DB, {
     account_id: auth.account_id,
@@ -190,10 +198,10 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const existing = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(existing); // marked-ready subtree is frozen until publish/return-to-draft
   const attrs = await readAttributes(c);
-  const name = requireString(attrs, "name");
-  const description = optionalStringOrNull(attrs, "description") ?? null;
-  const about = optionalStringOrNull(attrs, "about") ?? null;
-  const methodology = optionalStringOrNull(attrs, "methodology") ?? null;
+  const name = requireString(attrs, "name", LIMITS.nameLength);
+  const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
+  const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
+  const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
   const sample_schema =
     "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
   // Full-replace semantics, like sample_schema: absent → the defaults, not "keep".

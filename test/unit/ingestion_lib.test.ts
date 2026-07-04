@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 // The ingestion lib is plain ESM JavaScript (Node-side tooling, gen-seed.mjs precedent); its pure
 // modules are imported here so vitest covers the logic the importer runs.
+import { LIMITS as WORKER_LIMITS } from "../../src/limits";
+import { LIMITS as IMPORTER_LIMITS } from "../../ingestion/lib/limits.mjs";
 import { epochMsOrNull, slugify, uniqueSlug } from "../../ingestion/lib/model.mjs";
 import { isPathAllowed, parseRobots } from "../../ingestion/lib/robots.mjs";
 import { sampleBenchmarks } from "../../ingestion/lib/sampler.mjs";
@@ -11,6 +13,12 @@ import {
   q,
   SYSTEM_ACCOUNT_ID,
 } from "../../ingestion/lib/sql.mjs";
+
+describe("limits parity", () => {
+  it("the importer's mirror of src/limits.ts is identical", () => {
+    expect(IMPORTER_LIMITS).toEqual(WORKER_LIMITS);
+  });
+});
 
 describe("model helpers", () => {
   it("slugify: lowercases, strips punctuation, trims dashes, never empty", () => {
@@ -140,7 +148,7 @@ describe("sql builders", () => {
       { benchmark: bench() as never, source, retrievedAt: 5000 },
     ]);
     const joined = statements.join("\n");
-    expect(counts).toEqual({ benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1 });
+    expect(counts).toEqual({ benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, clamped: 0 });
     expect(joined).toContain("'INGESTED'");
     expect(joined).toContain('\'{"source_name":"Demo Source","source_url":"https://example.org","license":"CC0-1.0","retrieved_at":5000}\'');
     expect(joined).toContain("'ing-demo'");
@@ -175,6 +183,56 @@ describe("sql builders", () => {
         },
       ]),
     ).toThrow(/duplicate target key/);
+  });
+
+  it("enforces the platform count limits and key lengths, and clamps display strings", () => {
+    // Too many runs on one target → throws (structural).
+    expect(() =>
+      buildInsertSql([
+        {
+          benchmark: bench({
+            targets: [
+              {
+                key: "t1",
+                name: "T",
+                runs: Array.from({ length: WORKER_LIMITS.runsPerTarget + 1 }, (_, i) => ({
+                  key: `r${i}`,
+                  observations: [],
+                })),
+              },
+            ],
+          }) as never,
+          source,
+          retrievedAt: 1,
+        },
+      ]),
+    ).toThrow(/runs exceeds the platform limit/);
+    // Over-long key → throws (identity is never clamped).
+    expect(() =>
+      buildInsertSql([
+        {
+          benchmark: bench({
+            targets: [{ key: "k".repeat(WORKER_LIMITS.keyLength + 1), name: "T", runs: [] }],
+          }) as never,
+          source,
+          retrievedAt: 1,
+        },
+      ]),
+    ).toThrow(/key exceeds/);
+    // Over-long display name → clamped with an ellipsis and counted.
+    const { statements, counts } = buildInsertSql([
+      {
+        benchmark: bench({
+          targets: [
+            { key: "t1", name: "N".repeat(WORKER_LIMITS.nameLength + 50), runs: [] },
+          ],
+        }) as never,
+        source,
+        retrievedAt: 1,
+      },
+    ]);
+    expect(counts.clamped).toBe(1);
+    expect(statements.join("\n")).toContain("N".repeat(WORKER_LIMITS.nameLength - 1) + "…");
   });
 
   it("chunks huge insert sets into multiple bounded statements", () => {

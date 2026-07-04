@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
+  countRunsForTarget,
   createRun,
   deleteRunCascade,
   endRun,
@@ -11,7 +12,8 @@ import {
   updateRun,
 } from "../data/runs";
 import { getTargetById } from "../data/targets";
-import { ConflictError, NotFoundError } from "../errors";
+import { LIMITS } from "../limits";
+import { BadRequestError, ConflictError, NotFoundError } from "../errors";
 import {
   optionalStringOrNull,
   parseEpochMs,
@@ -83,10 +85,15 @@ runs.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  const key = requireString(attrs, "key");
-  const name = optionalStringOrNull(attrs, "name") ?? null;
+  const key = requireString(attrs, "key", LIMITS.keyLength);
+  const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
   const started_at = optionalStartedAt(attrs);
+  if ((await countRunsForTarget(c.env.DB, target.id)) >= LIMITS.runsPerTarget) {
+    throw new ConflictError(
+      `This target has reached the limit of ${LIMITS.runsPerTarget} runs.`,
+    );
+  }
   const row = await createRun(c.env.DB, {
     target_id: target.id,
     key,
@@ -100,10 +107,22 @@ runs.post("/", requireAuth, async (c) => {
 runs.get("/", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
   const targetId = c.req.query("filter[target]");
-  if (targetId === undefined) throw new NotFoundError(); // must be scoped to a target
-  const target = await getTargetById(c.env.DB, targetId);
-  if (!target) throw new NotFoundError();
-  const benchmark = await getBenchmarkById(c.env.DB, target.benchmark_id);
+  const benchmarkId = c.req.query("filter[benchmark]");
+  if ((targetId === undefined) === (benchmarkId === undefined)) {
+    throw new BadRequestError("Provide exactly one of filter[target], filter[benchmark].");
+  }
+
+  // Resolve the owning benchmark for the visibility gate; the target link is validated when
+  // target-scoped (the benchmark-wide form serves whole-leaderboard reads in one request).
+  let target = null;
+  if (targetId !== undefined) {
+    target = await getTargetById(c.env.DB, targetId);
+    if (!target) throw new NotFoundError();
+  }
+  const benchmark = await getBenchmarkById(
+    c.env.DB,
+    target !== null ? target.benchmark_id : (benchmarkId as string),
+  );
   if (!benchmark) throw new NotFoundError();
   if (!isPublicStatus(benchmark.status)) {
     if (
@@ -111,7 +130,7 @@ runs.get("/", optionalAuth, async (c) => {
       !covers(auth, {
         account_id: benchmark.account_id,
         benchmark_id: benchmark.id,
-        target_id: target.id,
+        ...(target !== null ? { target_id: target.id } : {}),
       })
     ) {
       throw new NotFoundError();
@@ -121,6 +140,7 @@ runs.get("/", optionalAuth, async (c) => {
   const sort = readSort(c, "created_at", SORT_ALLOWED);
   const { rows, total } = await listRuns(c.env.DB, {
     targetId,
+    benchmarkId: targetId === undefined ? benchmark.id : undefined,
     filterKey: c.req.query("filter[key]"),
     sort,
     limit: pagination.limit,
@@ -160,7 +180,7 @@ runs.put("/:id", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
   const attrs = await readAttributes(c);
-  const name = optionalStringOrNull(attrs, "name") ?? null;
+  const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
   const started_at = optionalStartedAt(attrs);
   // started_at feeds relative-time derived metrics, so it is factual and frozen once published.

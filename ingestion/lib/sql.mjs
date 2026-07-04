@@ -12,7 +12,29 @@
 //     byte-identical SQL (reviewable diffs, stable cross-run references).
 //   • Every statement stays under D1's ~100 KB statement cap via row- and byte-bounded chunking.
 
+import { LIMITS } from "./limits.mjs";
+
 export const SYSTEM_ACCOUNT_ID = "acct-system";
+
+/**
+ * Display strings over the platform limit are clamped with an ellipsis (identity keys are never
+ * clamped — an over-long key throws instead, since truncation could silently merge two keys).
+ * @param {string | null | undefined} value
+ * @param {number} max
+ * @param {{ clamped: number }} counter
+ */
+function clamp(value, max, counter) {
+  if (typeof value !== "string" || value.length <= max) return value;
+  counter.clamped += 1;
+  return value.slice(0, max - 1) + "…";
+}
+
+/** @param {string} key @param {string} what */
+function assertKeyLength(key, what) {
+  if (key.length > LIMITS.keyLength) {
+    throw new Error(`${what} key exceeds ${LIMITS.keyLength} chars: ${key}`);
+  }
+}
 
 /**
  * SQL string literal (single-quote doubling); null/undefined → NULL.
@@ -97,7 +119,12 @@ function chunkInsert(head, rows) {
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0 };
+  const counts = { benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, clamped: 0 };
+  if (entries.length > LIMITS.benchmarksPerAccount) {
+    throw new Error(
+      `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
+    );
+  }
 
   statements.push(
     `INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES (${q(SYSTEM_ACCOUNT_ID)}, 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, 1783123200000, 0)`,
@@ -113,6 +140,12 @@ export function buildInsertSql(entries) {
   for (const { benchmark: b, source, retrievedAt } of entries) {
     if (seenBenchKeys.has(b.key)) throw new Error(`duplicate benchmark key: ${b.key}`);
     seenBenchKeys.add(b.key);
+    assertKeyLength(b.key, "benchmark");
+    if (b.targets.length > LIMITS.targetsPerBenchmark) {
+      throw new Error(
+        `${b.key}: ${b.targets.length} targets exceeds the platform limit of ${LIMITS.targetsPerBenchmark} (see src/limits.ts) — tighten the adapter's curation cap`,
+      );
+    }
     const bid = `ing-${b.key}`;
     const attribution = JSON.stringify({
       source_name: source.name,
@@ -121,7 +154,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(b.name)}, ${q(b.description)}, ${q(b.about)}, ${q(b.methodology)}, 'PUBLISHED', ${n(retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.sampleSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)})`,
+      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.sampleSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)})`,
     );
     counts.benchmarks += 1;
 
@@ -137,9 +170,15 @@ export function buildInsertSql(entries) {
     for (const t of b.targets) {
       if (seenTargetKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
       seenTargetKeys.add(t.key);
+      assertKeyLength(t.key, `${b.key} target`);
+      if (t.runs.length > LIMITS.runsPerTarget) {
+        throw new Error(
+          `${b.key}/${t.key}: ${t.runs.length} runs exceeds the platform limit of ${LIMITS.runsPerTarget} (see src/limits.ts)`,
+        );
+      }
       const tid = `${bid}-t-${t.key}`;
       targetRows.push(
-        `(${q(tid)}, ${q(bid)}, ${q(t.key)}, ${q(t.name)}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+        `(${q(tid)}, ${q(bid)}, ${q(t.key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
       );
       counts.targets += 1;
 
@@ -147,9 +186,10 @@ export function buildInsertSql(entries) {
       for (const r of t.runs) {
         if (seenRunKeys.has(r.key)) throw new Error(`duplicate run key in ${b.key}/${t.key}: ${r.key}`);
         seenRunKeys.add(r.key);
+        assertKeyLength(r.key, `${b.key}/${t.key} run`);
         const rid = `${tid}-r-${r.key}`;
         runRows.push(
-          `(${q(rid)}, ${q(tid)}, ${q(r.key)}, ${q(r.name ?? null)}, ${q(r.details === undefined ? null : JSON.stringify(r.details))}, ${n(r.started_at ?? null)}, ${n(r.ended_at ?? retrievedAt)}, NULL, NULL, NULL, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+          `(${q(rid)}, ${q(tid)}, ${q(r.key)}, ${q(clamp(r.name ?? null, LIMITS.nameLength, counts))}, ${q(r.details === undefined ? null : JSON.stringify(r.details))}, ${n(r.started_at ?? null)}, ${n(r.ended_at ?? retrievedAt)}, NULL, NULL, NULL, ${n(retrievedAt)}, ${n(retrievedAt)})`,
         );
         counts.runs += 1;
 

@@ -36,6 +36,7 @@ function pointer(field: string) {
 export function requireString(
   attrs: Record<string, unknown>,
   field: string,
+  maxLen?: number,
 ): string {
   const v = attrs[field];
   if (typeof v !== "string" || v.length === 0) {
@@ -44,17 +45,32 @@ export function requireString(
       pointer(field),
     );
   }
+  if (maxLen !== undefined && v.length > maxLen) {
+    throw new BadRequestError(
+      `${field} must be at most ${maxLen} characters.`,
+      pointer(field),
+    );
+  }
   return v;
 }
 
-/** Present → string|null; absent → undefined; wrong type → 400. */
+/** Present → string|null; absent → undefined; wrong type or over maxLen → 400. */
 export function optionalStringOrNull(
   attrs: Record<string, unknown>,
   field: string,
+  maxLen?: number,
 ): string | null | undefined {
   if (!(field in attrs)) return undefined;
   const v = attrs[field];
-  if (v === null || typeof v === "string") return v;
+  if (v === null || typeof v === "string") {
+    if (typeof v === "string" && maxLen !== undefined && v.length > maxLen) {
+      throw new BadRequestError(
+        `${field} must be at most ${maxLen} characters.`,
+        pointer(field),
+      );
+    }
+    return v;
+  }
   throw new BadRequestError(`${field} must be a string or null.`, pointer(field));
 }
 
