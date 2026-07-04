@@ -146,7 +146,10 @@
       html += " " + (isReady ? SM.statusPill("ready", "ready") : SM.statusPill("draft", "draft"));
     } else if (a.published_as) {
       const pa = a.published_as;
-      const who = pa.kind === "ORGANIZATION" ? (pa.name || "") : (pa.display_name || "you");
+      const who =
+        pa.kind === "ORGANIZATION" ? (pa.name || "")
+        : pa.kind === "INGESTED" ? (pa.source_name || "ingested")
+        : (pa.display_name || "you");
       html += ' <span class="muted attributionLabel">as ' + esc(who) + "</span>";
     }
     return html;
@@ -355,7 +358,11 @@
     let meta = "Created by " + whoLabel(a.created_by);
     if (a.published_by) {
       const pa = a.published_as;
-      const as = pa ? (pa.kind === "ORGANIZATION" ? " as " + (pa.name || "") : " personally") : "";
+      const as = pa
+        ? pa.kind === "ORGANIZATION" ? " as " + (pa.name || "")
+          : pa.kind === "INGESTED" ? " from " + (pa.source_name || "an ingested source")
+          : " personally"
+        : "";
       meta += " · Published by " + whoLabel(a.published_by) + as;
     }
     mp.innerHTML =

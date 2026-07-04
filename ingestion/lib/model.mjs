@@ -45,6 +45,7 @@
  *
  * @typedef {Object} Archive read-only view of ingestion/archive/<source>/
  * @property {(name: string) => any} readJson
+ * @property {(name: string) => string} readText
  * @property {{ retrieved_at: number, files: {name: string, url: string, sha256: string, bytes: number}[] }} manifest
  */
 

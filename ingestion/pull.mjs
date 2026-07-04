@@ -110,21 +110,23 @@ async function pullSource(key) {
       return res.text();
     },
     async writeJson(name, data) {
-      urlsByName.set(name, ctx._lastUrl ?? source.meta.url);
-      const buf = Buffer.from(JSON.stringify(data));
-      await writeFile(path.join(dir, name), buf);
-      files.push({ name, url: urlsByName.get(name), sha256: sha256Hex(buf), bytes: buf.length });
-      console.log(`  ${name} (${buf.length.toLocaleString()} B)`);
+      await save(name, Buffer.from(JSON.stringify(data)));
     },
     async writeText(name, text) {
-      urlsByName.set(name, ctx._lastUrl ?? source.meta.url);
-      const buf = Buffer.from(text);
-      await writeFile(path.join(dir, name), buf);
-      files.push({ name, url: urlsByName.get(name), sha256: sha256Hex(buf), bytes: buf.length });
-      console.log(`  ${name} (${buf.length.toLocaleString()} B)`);
+      await save(name, Buffer.from(text));
     },
     _lastUrl: null,
   };
+
+  /** @param {string} name @param {Buffer} buf */
+  async function save(name, buf) {
+    urlsByName.set(name, ctx._lastUrl ?? source.meta.url);
+    const filePath = path.join(dir, name);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, buf);
+    files.push({ name, url: urlsByName.get(name), sha256: sha256Hex(buf), bytes: buf.length });
+    console.log(`  ${name} (${buf.length.toLocaleString()} B)`);
+  }
 
   await source.pull(ctx);
 
