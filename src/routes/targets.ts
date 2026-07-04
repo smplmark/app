@@ -5,6 +5,7 @@ import { LIMITS } from "../limits";
 import {
   countTargetsForBenchmark,
   createTarget,
+  setTargetClosed,
   deleteTargetCascade,
   getTargetById,
   listTargets,
@@ -65,6 +66,9 @@ targets.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
+  if (benchmark.closed_at !== null) {
+    throw new ConflictError("This benchmark is closed; no new targets can be added.");
+  }
   const key = requireString(attrs, "key", LIMITS.keyLength);
   const name = requireString(attrs, "name", LIMITS.nameLength);
   const details = "details" in attrs ? attrs.details : null;
@@ -151,4 +155,25 @@ targets.delete("/:id", requireAuth, async (c) => {
   }
   await deleteTargetCascade(c.env.DB, target.id);
   return noContentResponse();
+});
+
+// The reversible per-target "complete" signal: a closed target accepts no new runs/observations.
+targets.post("/:id/actions/close", requireAuth, async (c) => {
+  const { target, benchmark } = await loadOwned(c, c.req.param("id"));
+  assertBenchmarkEditable(benchmark);
+  if (target.closed_at !== null) {
+    throw new ConflictError("This target is already closed.");
+  }
+  const row = await setTargetClosed(c.env.DB, target.id, Date.now());
+  return resourceResponse(serializeTarget(row as TargetRow));
+});
+
+targets.post("/:id/actions/reopen", requireAuth, async (c) => {
+  const { target, benchmark } = await loadOwned(c, c.req.param("id"));
+  assertBenchmarkEditable(benchmark);
+  if (target.closed_at === null) {
+    throw new ConflictError("This target is not closed.");
+  }
+  const row = await setTargetClosed(c.env.DB, target.id, null);
+  return resourceResponse(serializeTarget(row as TargetRow));
 });

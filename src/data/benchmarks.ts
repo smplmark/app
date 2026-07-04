@@ -51,6 +51,7 @@ export async function createBenchmark(
     // The DB defaults apply on INSERT; the route refreshes search_text once tags are attached.
     search_text: "",
     views_total: 0,
+    closed_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -286,6 +287,19 @@ export async function updateBenchmark(
     )
     .run();
   return updated;
+}
+
+/** Set/clear the reversible "complete" signal (close → now, reopen → null). */
+export async function setBenchmarkClosed(
+  db: D1Database,
+  id: string,
+  closedAt: number | null,
+): Promise<BenchmarkRow | null> {
+  await db
+    .prepare("UPDATE benchmark SET closed_at=?, updated_at=? WHERE id=?")
+    .bind(closedAt, Date.now(), id)
+    .run();
+  return getBenchmarkById(db, id);
 }
 
 /** Flip the draft/ready flag (mark_ready → 0, return_to_draft → 1). */

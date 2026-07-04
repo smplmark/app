@@ -157,7 +157,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.sampleSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)})`,
+      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.sampleSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${b.closed === true ? n(retrievedAt) : "NULL"})`,
     );
     counts.benchmarks += 1;
 
@@ -208,7 +208,7 @@ export function buildInsertSql(entries) {
 
   statements.push(
     ...chunkInsert(
-      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category) VALUES",
+      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, closed_at) VALUES",
       benchRows,
     ),
     ...tagStatements,

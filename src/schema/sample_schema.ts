@@ -152,28 +152,33 @@ function canonical(value: unknown): string {
   );
 }
 
-/** The immutable "semantic core" of a schema: metric names+types, derived names+exprs, chart. */
-function semanticCore(s: SampleSchema): string {
-  return canonical({
-    metrics: s.metrics.map((m) => ({ name: m.name, type: m.type })).sort((a, b) => a.name.localeCompare(b.name)),
-    derived: s.derived
-      .map((d) => ({ name: d.name, expr: d.expr }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    chart: s.chart ?? null,
-  });
-}
-
 /**
- * Enforce the interpretation freeze: when a benchmark is PUBLISHED/WITHDRAWN, an update may change
- * only cosmetic labels. If the semantic core differs, reject with 409 (§8).
+ * Enforce the interpretation freeze, ADDITIVELY: once a benchmark is PUBLISHED/WITHDRAWN, every
+ * existing metric (name+type), derived value (name+expr), and the chart mapping are immutable —
+ * but NEW metrics and derived values may be appended (continuous publishers grow their schema;
+ * old observations simply lack the new keys, which reads as null). A chart may be added where none
+ * existed; an existing chart never changes. Cosmetic unit/description labels stay editable.
  */
 export function assertFrozenCompatible(
   oldSchema: SampleSchema,
   newSchema: SampleSchema,
 ): void {
-  if (semanticCore(oldSchema) !== semanticCore(newSchema)) {
-    throw new ConflictError(
-      "The interpretation of a published benchmark is frozen: metrics, derived expressions, and the chart mapping cannot change. Only descriptions and unit labels may be edited.",
+  const frozen = () =>
+    new ConflictError(
+      "The interpretation of a published benchmark is frozen: existing metrics, derived expressions, and the chart mapping cannot be changed or removed (new ones may be added). Only descriptions and unit labels may be edited.",
     );
+  const newMetrics = new Map(newSchema.metrics.map((m) => [m.name, m]));
+  for (const old of oldSchema.metrics) {
+    const current = newMetrics.get(old.name);
+    if (!current || current.type !== old.type) throw frozen();
+  }
+  const newDerived = new Map(newSchema.derived.map((d) => [d.name, d]));
+  for (const old of oldSchema.derived) {
+    const current = newDerived.get(old.name);
+    if (!current || canonical(current.expr) !== canonical(old.expr)) throw frozen();
+  }
+  const oldChart = oldSchema.chart ?? null;
+  if (oldChart !== null && canonical(oldChart) !== canonical(newSchema.chart ?? null)) {
+    throw frozen();
   }
 }

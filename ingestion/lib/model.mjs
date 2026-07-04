@@ -32,6 +32,8 @@
  * @property {"HARDWARE"|"DATABASE"|"ML_AI"|"STORAGE"|"NETWORK"|"OTHER"} category
  * @property {string[]} tags lowercase slugs
  * @property {object} sampleSchema the benchmark's sample_schema (metrics/derived/chart)
+ * @property {boolean} [closed] true when the source dataset is final (frozen leaderboards) — the
+ *   benchmark imports pre-closed, so nothing new can be appended beneath it
  * @property {IngestTarget[]} targets
  *
  * @typedef {Object} SourceMeta

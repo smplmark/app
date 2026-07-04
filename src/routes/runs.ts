@@ -85,6 +85,12 @@ runs.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
+  if (benchmark.closed_at !== null) {
+    throw new ConflictError("This benchmark is closed; no new runs can be added.");
+  }
+  if (target.closed_at !== null) {
+    throw new ConflictError("This target is closed; no new runs can be added.");
+  }
   const key = requireString(attrs, "key", LIMITS.keyLength);
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;

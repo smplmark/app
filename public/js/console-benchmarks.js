@@ -125,7 +125,11 @@
           btn("Delete", "act-delete", id, "danger");
       }
     } else if (status === "PUBLISHED") {
-      actions = viewLink(a.key) + btn("Manage", "act-manage", id) + btn("Withdraw", "act-withdraw", id, "danger");
+      actions =
+        viewLink(a.key) +
+        (a.closed ? btn("Reopen", "act-reopen", id) : btn("Close", "act-close", id)) +
+        btn("Manage", "act-manage", id) +
+        btn("Withdraw", "act-withdraw", id, "danger");
     } else {
       actions = viewLink(a.key) + btn("Manage", "act-manage", id);
     }
@@ -142,6 +146,7 @@
   // frozen attribution for published ones.
   function statusCell(a, status, isReady) {
     let html = SM.statusPill(status, status);
+    if (a.closed) html += " " + SM.statusPill("complete", "complete");
     if (status === "PRIVATE") {
       html += " " + (isReady ? SM.statusPill("ready", "ready") : SM.statusPill("draft", "draft"));
     } else if (a.published_as) {
@@ -170,6 +175,8 @@
     body.querySelectorAll(".act-undraft").forEach((el) => el.addEventListener("click", () => doReturnToDraft(el.dataset.id)));
     body.querySelectorAll(".act-publish").forEach((el) => el.addEventListener("click", () => openPublishModal(byId[el.dataset.id])));
     body.querySelectorAll(".act-withdraw").forEach((el) => el.addEventListener("click", () => doWithdraw(el.dataset.id)));
+    body.querySelectorAll(".act-close").forEach((el) => el.addEventListener("click", () => doCloseReopen(el.dataset.id, "close")));
+    body.querySelectorAll(".act-reopen").forEach((el) => el.addEventListener("click", () => doCloseReopen(el.dataset.id, "reopen")));
     body.querySelectorAll(".act-delete").forEach((el) => el.addEventListener("click", () => doDelete(el.dataset.id)));
     body.querySelectorAll(".act-manage").forEach((el) => el.addEventListener("click", () => openManage(byId[el.dataset.id])));
   }
@@ -315,6 +322,15 @@
       setMsg(msg, err.message, "error");
       submit.disabled = false;
     }
+  }
+
+  // Close = "complete, nothing new may be appended"; reversible, unlike withdraw.
+  async function doCloseReopen(id, action) {
+    setMsg($("benchmarks-msg"), "");
+    try {
+      await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(id) + "/actions/" + action, { method: "POST" });
+      await loadBenchmarks();
+    } catch (err) { setMsg($("benchmarks-msg"), err.message, "error"); }
   }
 
   async function doWithdraw(id) {

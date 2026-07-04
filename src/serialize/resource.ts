@@ -205,6 +205,8 @@ export function serializeBenchmark(
     category: row.category,
     tags: [...tags],
     views: row.views_total,
+    closed: row.closed_at !== null,
+    closed_at: isoOrNull(row.closed_at),
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
   };
@@ -258,6 +260,8 @@ export function serializeTarget(row: TargetRow): ResourceObject {
       key: row.key,
       name: row.name,
       details: parseJsonOrNull(row.details),
+      closed: row.closed_at !== null,
+      closed_at: isoOrNull(row.closed_at),
       created_at: iso(row.created_at),
       updated_at: iso(row.updated_at),
     },

@@ -422,6 +422,8 @@ const benchmark = registerEntity(
       .number()
       .int()
       .openapi({ description: "All-time page-view count for the benchmark. A raw, best-effort popularity signal — not an audited metric." }),
+    closed: z.boolean().openapi({ description: "Whether the publisher has marked the benchmark complete. A closed benchmark accepts no new targets, runs, or observations; existing data stays public. Reversible." }),
+    closed_at: dateTime("When the benchmark was closed, or null while open.").nullable(),
     created_at: dateTime("When the benchmark was created."),
     updated_at: dateTime("When the benchmark was last updated."),
   }),
@@ -451,6 +453,8 @@ const target = registerEntity(
     key: z.string().openapi({ description: "The target's human-readable identifier, unique within its benchmark." }),
     name: z.string().openapi({ description: "The target's display name." }),
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the target, or null.", type: "object" }),
+    closed: z.boolean().openapi({ description: "Whether the publisher has marked the target complete. A closed target accepts no new runs or observations. Reversible." }),
+    closed_at: dateTime("When the target was closed, or null while open.").nullable(),
     created_at: dateTime("When the target was created."),
     updated_at: dateTime("When the target was last updated."),
   }),
@@ -1170,6 +1174,26 @@ registry.registerPath({
   },
 });
 
+for (const [action, summary, description] of [
+  ["close", "Close a benchmark", "Marks the benchmark complete: no new targets, runs, or observations may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
+  ["reopen", "Reopen a benchmark", "Clears the complete mark so new targets, runs, and observations may be added again."],
+] as const) {
+  registry.registerPath({
+    method: "post",
+    path: `/api/v1/benchmarks/{id}/actions/${action}`,
+    tags: ["Benchmarks"],
+    summary,
+    description,
+    security: bearerSecurity,
+    request: { params: benchmarkIdParam },
+    responses: {
+      "200": domainResponse(benchmark.Response, "The updated benchmark."),
+      ...commonErrors,
+      "409": errorJson(action === "close" ? "The benchmark is already closed." : "The benchmark is not closed."),
+    },
+  });
+}
+
 registry.registerPath({
   method: "post",
   path: "/api/v1/benchmarks/{id}/actions/view",
@@ -1384,6 +1408,26 @@ registry.registerPath({
 });
 
 // ── Paths: Runs ──────────────────────────────────────────────────────────────
+
+for (const [action, summary, description] of [
+  ["close", "Close a target", "Marks the target complete: no new runs or observations may be added beneath it. Reversible via actions/reopen."],
+  ["reopen", "Reopen a target", "Clears the complete mark so new runs and observations may be added again."],
+] as const) {
+  registry.registerPath({
+    method: "post",
+    path: `/api/v1/targets/{id}/actions/${action}`,
+    tags: ["Targets"],
+    summary,
+    description,
+    security: bearerSecurity,
+    request: { params: targetIdParam },
+    responses: {
+      "200": domainResponse(target.Response, "The updated target."),
+      ...commonErrors,
+      "409": errorJson(action === "close" ? "The target is already closed." : "The target is not closed."),
+    },
+  });
+}
 
 const runIdParam = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the run." }),

@@ -197,6 +197,8 @@ export interface BenchmarkRow {
   search_text: string;
   /** All-time view count (the popularity beacon increments it; windows live in benchmark_view_day). */
   views_total: number;
+  /** Publisher's "complete" signal: nothing new may be added beneath. Reversible. Surfaced as `closed`. */
+  closed_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -274,6 +276,8 @@ export interface TargetRow {
   name: string;
   /** JSON string or null. */
   details: string | null;
+  /** Publisher's "complete" signal: no new runs/observations beneath. Reversible. Surfaced as `closed`. */
+  closed_at: number | null;
   created_at: number;
   updated_at: number;
 }

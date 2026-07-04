@@ -144,7 +144,7 @@ describe("serializeBenchmark", () => {
     created_by_user_id: "u1", draft: 1,
     published_by_user_id: null, published_as_kind: null, published_identity_id: null,
     attribution_snapshot: null, category: "OTHER",
-    search_text: "", views_total: 0,
+    search_text: "", views_total: 0, closed_at: null,
     created_at: T0, updated_at: T0,
   };
 
@@ -285,12 +285,15 @@ describe("serializePublisherDomain", () => {
 describe("serializeTarget", () => {
   const row: TargetRow = {
     id: "t1", benchmark_id: "b1", key: "sched-a", name: "Scheduler A",
-    details: JSON.stringify({ region: "us-east-1" }), created_at: T0, updated_at: T0,
+    details: JSON.stringify({ region: "us-east-1" }), closed_at: null,
+    created_at: T0, updated_at: T0,
   };
   it("maps benchmark and parses details; null details → null", () => {
     expect(serializeTarget(row).attributes.benchmark).toBe("b1");
     expect(serializeTarget(row).attributes.details).toEqual({ region: "us-east-1" });
     expect(serializeTarget({ ...row, details: null }).attributes.details).toBeNull();
+    expect(serializeTarget(row).attributes.closed).toBe(false);
+    expect(serializeTarget({ ...row, closed_at: T0 }).attributes.closed_at).toBe(ISO0);
   });
 });
 

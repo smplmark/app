@@ -166,15 +166,28 @@ describe("assertFrozenCompatible", () => {
     expect409(() => assertFrozenCompatible(published, edited));
   });
 
-  it("rejects an added metric and a changed chart mapping", () => {
-    expect409(() =>
+  it("allows ADDING metrics/derived (additive growth) but rejects a changed chart mapping", () => {
+    // Continuous publishers may grow the schema — appending is compatible.
+    expect(() =>
       assertFrozenCompatible(published, {
         ...published,
         metrics: [...published.metrics, { name: "extra", type: "number" }],
       }),
-    );
+    ).not.toThrow();
+    expect(() =>
+      assertFrozenCompatible(published, {
+        ...published,
+        derived: [...published.derived, { name: "extra_d", expr: { var: "created_at" } }],
+      }),
+    ).not.toThrow();
+    // A chart may be added where none existed…
+    expect(() =>
+      assertFrozenCompatible({ ...published, chart: undefined }, published),
+    ).not.toThrow();
+    // …but an existing chart never changes or disappears.
     expect409(() =>
       assertFrozenCompatible(published, { ...published, chart: { x: null, y: "skew_ms" } }),
     );
+    expect409(() => assertFrozenCompatible(published, { ...published, chart: undefined }));
   });
 });

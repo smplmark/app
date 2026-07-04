@@ -21,6 +21,7 @@ export async function createTarget(
     key: input.key,
     name: input.name,
     details: jsonOrNull(input.details),
+    closed_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -52,6 +53,19 @@ export async function countTargetsForBenchmark(
     .bind(benchmarkId)
     .first<{ n: number }>();
   return r?.n ?? 0;
+}
+
+/** Set/clear the reversible "complete" signal (close → now, reopen → null). */
+export async function setTargetClosed(
+  db: D1Database,
+  id: string,
+  closedAt: number | null,
+): Promise<TargetRow | null> {
+  await db
+    .prepare("UPDATE target SET closed_at=?, updated_at=? WHERE id=?")
+    .bind(closedAt, Date.now(), id)
+    .run();
+  return getTargetById(db, id);
 }
 
 export async function getTargetById(

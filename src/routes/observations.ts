@@ -8,7 +8,11 @@ import {
 } from "../data/observations";
 import { getRunById } from "../data/runs";
 import { getTargetById } from "../data/targets";
-import { BadRequestError, NotFoundError } from "../errors";
+import {
+  BadRequestError,
+  ConflictError,
+  NotFoundError,
+} from "../errors";
 import { parseEpochMs, requireObject, requireString } from "../http/body";
 import { wantsCsv } from "../http/content_negotiation";
 import { collectionResponse, resourceResponse } from "../http/jsonapi";
@@ -68,6 +72,17 @@ observations.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
+  // The append-only door is open by default, but closed things are actually closed: an ended run
+  // and a closed target/benchmark all refuse new observations.
+  if (benchmark.closed_at !== null) {
+    throw new ConflictError("This benchmark is closed; no new observations can be added.");
+  }
+  if (target.closed_at !== null) {
+    throw new ConflictError("This target is closed; no new observations can be added.");
+  }
+  if (run.ended_at !== null) {
+    throw new ConflictError("This run has ended; no new observations can be added.");
+  }
 
   const now = Date.now();
   const createdAt = "created_at" in attrs ? parseEpochMs(attrs.created_at, "created_at") : now;

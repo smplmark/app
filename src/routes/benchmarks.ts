@@ -15,6 +15,7 @@ import { accountHasVerifiedUser, getAccountById } from "../data/accounts";
 import {
   countBenchmarksForAccount,
   createBenchmark,
+  setBenchmarkClosed,
   deleteBenchmarkCascade,
   getBenchmarkById,
   listBenchmarks,
@@ -295,6 +296,38 @@ benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
   return resourceResponse(
     serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
     reason !== null ? { meta: { reason } } : {},
+  );
+});
+
+// ── Close / reopen ───────────────────────────────────────────────────────────
+// The publisher's reversible "complete" signal: a closed benchmark accepts no new targets, runs,
+// or observations. History stays append-only either way — closing is a lifecycle signal, not a
+// credibility invariant, which is why reopening is allowed (any sequence of close/reopen/append is
+// inherently visible in the observations' timestamps).
+
+benchmarks.post("/:id/actions/close", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  const existing = await loadOwned(c, c.req.param("id"));
+  assertCanManageDraft(auth, existing);
+  if (existing.closed_at !== null) {
+    throw new ConflictError("This benchmark is already closed.");
+  }
+  const row = await setBenchmarkClosed(c.env.DB, existing.id, Date.now());
+  return resourceResponse(
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+  );
+});
+
+benchmarks.post("/:id/actions/reopen", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  const existing = await loadOwned(c, c.req.param("id"));
+  assertCanManageDraft(auth, existing);
+  if (existing.closed_at === null) {
+    throw new ConflictError("This benchmark is not closed.");
+  }
+  const row = await setBenchmarkClosed(c.env.DB, existing.id, null);
+  return resourceResponse(
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });
 

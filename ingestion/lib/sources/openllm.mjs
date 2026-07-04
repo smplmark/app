@@ -337,6 +337,8 @@ export function adapt(archive, options = {}) {
   return [
     {
       key: "open-llm-leaderboard",
+      // The source is retired/frozen — the dataset is final, so it imports pre-closed.
+      closed: true,
       name: "Open LLM Leaderboard (archived)",
       description:
         "Final scores from the retired Hugging Face Open LLM Leaderboard: open-weight language models on six standardized benchmarks.",
