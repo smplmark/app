@@ -41,7 +41,7 @@ export function scalarHtml(specUrl: string, wwwOrigin = "https://www.smplmark.or
     }
     .brand { display: inline-flex; align-items: center; }
     .brand img { height: 22px; width: auto; display: block; }
-    header.site nav { display: flex; gap: 20px; margin-left: auto; }
+    header.site nav { display: flex; align-items: center; gap: 20px; margin-left: auto; }
     header.site nav a {
       color: #9aa7b4; font-size: 14px; text-decoration: none;
       font: 14px system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
