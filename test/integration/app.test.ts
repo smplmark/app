@@ -37,5 +37,8 @@ describe("app routing", () => {
     expect(body).toContain("/img/logo-dark.png");
     expect(body).toContain('<a href="/api-reference" class="active">API Reference</a>');
     expect(body).toContain('class="reference-wrap"');
+    // The logo links the bare website origin (no path); box-sizing matches the site's reset.
+    expect(body).toContain('<a class="brand" href="https://www.smplmark.org" title="smplmark home">');
+    expect(body).toContain("box-sizing: border-box");
   });
 });

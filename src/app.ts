@@ -110,7 +110,11 @@ export function createApp() {
   app.get("/api/openapi.json", (c) =>
     c.json(buildOpenApiDocument(appUrl(c.env, c.req.url))),
   );
-  app.get("/api-reference", (c) => c.html(scalarHtml("/api/openapi.json")));
+  app.get("/api-reference", (c) =>
+    // The banner's site links target the website origin directly (bare origin on the logo);
+    // in the local loop that's the local website Worker.
+    c.html(scalarHtml("/api/openapi.json", c.env.DEV_WWW_ORIGIN || "https://www.smplmark.org")),
+  );
 
   // Any thrown AppError (and unexpected errors) render as a JSON:API error document.
   app.onError((err) => errorResponse(err));

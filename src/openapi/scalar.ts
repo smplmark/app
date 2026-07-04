@@ -1,7 +1,7 @@
 // The Scalar API-reference page (§14). Served by the Worker at /api-reference, pointed at
 // /api/openapi.json. Theme structure lifted from docs.smplkit.com's ApiReference.vue (theme:'none'
 // + custom --scalar-* vars) but remapped to smplmark's dark palette (accent #4f8cff).
-export function scalarHtml(specUrl: string): string {
+export function scalarHtml(specUrl: string, wwwOrigin = "https://www.smplmark.org"): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -22,6 +22,9 @@ export function scalarHtml(specUrl: string): string {
       --scalar-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       --scalar-font-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
+    /* Match the website's global reset exactly — the banner .wrap's 1040px must INCLUDE its
+       padding (border-box) or the column sits ~20px off the site's. */
+    * { box-sizing: border-box; }
     html, body { margin: 0; background: #0e1116; }
     /* The site banner, duplicated exactly from the website's header.site (dark palette). */
     header.site {
@@ -53,10 +56,10 @@ export function scalarHtml(specUrl: string): string {
 <body>
   <header class="site">
     <div class="wrap">
-      <a class="brand" href="/benchmarks" title="smplmark home"><img src="/img/logo-dark.png" alt="smplmark" /></a>
+      <a class="brand" href="${wwwOrigin}" title="smplmark home"><img src="/img/logo-dark.png" alt="smplmark" /></a>
       <nav>
-        <a href="/benchmarks">Benchmarks</a>
-        <a href="/about">About</a>
+        <a href="${wwwOrigin}/benchmarks">Benchmarks</a>
+        <a href="${wwwOrigin}/about">About</a>
         <a href="/api-reference" class="active">API Reference</a>
         <a href="/login">Sign in</a>
         <a href="/signup">Sign up</a>
