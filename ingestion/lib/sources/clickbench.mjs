@@ -114,7 +114,7 @@ const SCHEMA = {
 // Factual citation only — what the numbers are, per the source's own definitions. No smplmark
 // voice, and no methodology authored here (a source's methodology is theirs to publish).
 const ABOUT =
-  "The latest published result per system and machine from ClickBench (github.com/ClickHouse/ClickBench), a benchmark of analytical databases over 43 fixed queries on a ~100M-row web-analytics dataset. Load time, data size, and total cold/hot query times are shown as recorded in the source's result files; lower is faster.";
+  "The latest published result per system and machine from ClickBench (github.com/ClickHouse/ClickBench), a benchmark of analytical databases over 43 fixed queries on a ~100M-row web-analytics dataset. Load time and data size are as recorded in the source's result files; the cold and hot totals are sums, computed here, of the source's 43 per-query timings (cold = each query's first run, hot = the best of its second and third). Lower is faster. The source's own headline 'relative' score is not reproduced.";
 
 /**
  * @typedef {Object} ParsedEntry
