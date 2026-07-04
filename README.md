@@ -53,9 +53,14 @@ npm run cf-typegen                 # (re)generate worker-configuration.d.ts
 npm run db:migrate:local           # apply migrations to the local D1
 node scripts/gen-seed.mjs > scripts/seed.sql   # (re)generate the seed (crypto-derived columns)
 npm run db:seed:local              # seed smplkit + scheduler-latency (published) + demo data
+node ingestion/import.mjs          # optional: the full ingested dataset (offline, from ingestion/archive/)
 
-npm run dev                        # wrangler dev — http://localhost:8787
+npm run dev                        # wrangler dev — http://localhost:8788
 ```
+
+Local-loop convention: this Worker on **:8788**, the website Worker on **:8787**. The website's
+viewer targets `http://localhost:8788` automatically on localhost, so the two `npm run dev`s are
+the whole loop (see the website repo's README "Local development").
 
 Pages (this repo): `/login` · `/signup` · `/account` (dashboard) · `/account/{benchmarks,api-keys,
 publishers,users,settings,profile}` (self-serve console), `/accept-invitation`, `/verify-email`,
@@ -75,7 +80,7 @@ register / invite / contact.
 run-scoped API key:
 
 ```bash
-curl -X POST http://localhost:8787/api/v1/observations \
+curl -X POST http://localhost:8788/api/v1/observations \
   -H "Authorization: Bearer sm_api_devlocalkeyDEADBEEF00000000000000000000" \
   -H "Content-Type: application/vnd.api+json" \
   -d '{"data":{"type":"observation","attributes":{"run":"run-scheduler-a"}}}'

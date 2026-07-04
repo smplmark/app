@@ -5,7 +5,7 @@
   "type": "module",
   "description": "smplmark app — the console SPA, auth, and JSON:API on Cloudflare Workers + D1",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --port 8788",
     "deploy": "wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",

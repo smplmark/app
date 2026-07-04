@@ -4,7 +4,7 @@
 -- DEV CREDENTIALS (local only — never real):
 --   Web login:  dev@smplkit.test  /  smplmark-dev-password
 --   Ingest key (RUN-scoped, run-scheduler-a): sm_api_devlocalkeyDEADBEEF00000000000000000000
---     curl -X POST http://localhost:8787/api/v1/observations \
+--     curl -X POST http://localhost:8788/api/v1/observations \
 --       -H "Authorization: Bearer sm_api_devlocalkeyDEADBEEF00000000000000000000" \
 --       -H "Content-Type: application/vnd.api+json" \
 --       -d '{"data":{"type":"observation","attributes":{"run":"run-scheduler-a"}}}'
