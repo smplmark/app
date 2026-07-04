@@ -1,11 +1,11 @@
 import { SELF, env } from "cloudflare:test";
 import { expect } from "vitest";
 import { clearScopeCache } from "../../src/auth/scope_cache";
-import type { SampleSchema } from "../../src/types";
+import type { ObservationSchema } from "../../src/types";
 
 export const JSONAPI = "application/vnd.api+json";
 
-export const SKEW_SCHEMA: SampleSchema = {
+export const SKEW_SCHEMA: ObservationSchema = {
   metrics: [],
   derived: [
     { name: "skew_ms", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } },
@@ -165,7 +165,7 @@ export async function makeBenchmark(
         attributes: {
           key: "scheduler-latency",
           name: "Scheduler Latency",
-          sample_schema: SKEW_SCHEMA,
+          observation_schema: SKEW_SCHEMA,
           ...attrs,
         },
       },

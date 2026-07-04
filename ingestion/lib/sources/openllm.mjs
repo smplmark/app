@@ -346,7 +346,7 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "open-weights", "huggingface"],
-      sampleSchema: SCHEMA,
+      observationSchema: SCHEMA,
       targets,
     },
   ];

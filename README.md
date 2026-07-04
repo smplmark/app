@@ -40,7 +40,7 @@ arrived) is **computed on read** from the timestamp.
   fully-mutable workspace; PUBLISHED is world-visible and append-only; WITHDRAWN keeps the data
   public behind a "withdrawn on X because Y" banner. Invalidating a run is an annotation, never a
   removal — invalidated runs stay visible, flagged.
-- **Interpretation freeze:** publishing freezes the semantic core of `sample_schema` (derived
+- **Interpretation freeze:** publishing freezes the semantic core of `observation_schema` (derived
   expressions + chart mapping); only cosmetic labels and prose stay editable.
 
 ## Local development
@@ -177,7 +177,7 @@ src/
   http/                    envelope, error rendering, body parsing, dual-credential middleware
   auth/                    crypto (PBKDF2/AES/SHA-256), JWT, API keys, OIDC, scope cache
   authz/                   scope-coverage + authority-ceiling checks
-  query/ logic/ schema/    range/sort/pagination, json-logic + compute-on-read, sample_schema
+  query/ logic/ schema/    range/sort/pagination, json-logic + compute-on-read, observation_schema
   serialize/               row → JSON:API resource, observations → CSV
   data/                    D1 access (the only layer touching env.DB)
   services/                account provisioning, session issuance

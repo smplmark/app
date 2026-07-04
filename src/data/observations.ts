@@ -25,7 +25,7 @@ export async function insertObservation(
 }
 
 /**
- * An observation row for reads, carrying its benchmark's sample_schema and its run's timing context
+ * An observation row for reads, carrying its benchmark's observation_schema and its run's timing context
  * (for compute-on-read of relative-time derived metrics like elapsed_ms).
  */
 export interface ObservationListRow {
@@ -34,7 +34,7 @@ export interface ObservationListRow {
   created_at: number;
   metrics: string | null;
   meta: string | null;
-  sample_schema: string;
+  observation_schema: string;
   run_started_at: number | null;
   run_ended_at: number | null;
 }
@@ -101,7 +101,7 @@ export async function listObservations(
       .prepare(
         `SELECT observation.id AS id, observation.run_id AS run_id, observation.created_at AS created_at,` +
           ` observation.metrics AS metrics, observation.meta AS meta,` +
-          ` benchmark.sample_schema AS sample_schema,` +
+          ` benchmark.observation_schema AS observation_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
           ` ${JOINS} ${where.sql} ${order} LIMIT ? OFFSET ?`,
       )

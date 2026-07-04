@@ -31,7 +31,7 @@ describe("benchmark create + read", () => {
     expect(b.attributes.published_at).toBeNull();
   });
 
-  it("defaults to an empty sample_schema when none is supplied, as a draft", async () => {
+  it("defaults to an empty observation_schema when none is supplied, as a draft", async () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
@@ -40,7 +40,7 @@ describe("benchmark create + read", () => {
     );
     expect(res.status).toBe(201);
     const b = ((await res.json()) as { data: Resource }).data;
-    expect(b.attributes.sample_schema).toEqual({ metrics: [], derived: [] });
+    expect(b.attributes.observation_schema).toEqual({ metrics: [], derived: [] });
     expect(b.attributes.draft).toBe(true);
     expect(b.attributes.created_by).toBe(me.user_id);
   });
@@ -146,7 +146,7 @@ describe("interpretation freeze + append-only", () => {
     // Cosmetic prose edit is allowed.
     const ok = await apiPut(
       `/api/v1/benchmarks/${b.id}`,
-      putBody({ name: "Renamed", description: "new tagline", sample_schema: SKEW_SCHEMA }),
+      putBody({ name: "Renamed", description: "new tagline", observation_schema: SKEW_SCHEMA }),
       bearer(me.token),
     );
     expect(ok.status).toBe(200);
@@ -156,7 +156,7 @@ describe("interpretation freeze + append-only", () => {
       `/api/v1/benchmarks/${b.id}`,
       putBody({
         name: "Renamed",
-        sample_schema: {
+        observation_schema: {
           metrics: [],
           derived: [{ name: "skew_ms", expr: { "+": [1, 1] } }],
           chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
@@ -185,7 +185,7 @@ describe("tenant isolation", () => {
     const b = await register("b@example.com");
     expect((await apiGet(`/api/v1/benchmarks/${bench.id}`, bearer(b.token))).status).toBe(404);
     expect(
-      (await apiPut(`/api/v1/benchmarks/${bench.id}`, putBody({ name: "x", sample_schema: SKEW_SCHEMA }), bearer(b.token))).status,
+      (await apiPut(`/api/v1/benchmarks/${bench.id}`, putBody({ name: "x", observation_schema: SKEW_SCHEMA }), bearer(b.token))).status,
     ).toBe(404);
     expect((await apiDelete(`/api/v1/benchmarks/${bench.id}`, bearer(b.token))).status).toBe(404);
   });

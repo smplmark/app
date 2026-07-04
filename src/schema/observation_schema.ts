@@ -1,4 +1,4 @@
-// Validate a client-supplied sample_schema (benchmark create/update only — never the hot path) and
+// Validate a client-supplied observation_schema (benchmark create/update only — never the hot path) and
 // parse a stored one back. Enforces unique metric names across metrics + derived so the merged read
 // surface is unambiguous (§4), validates the chart declaration (§11), and — for PUBLISHED benchmarks
 // — enforces the interpretation freeze (§8/§10): the semantic core (derived expressions, metric set,
@@ -8,7 +8,7 @@ import type {
   ChartDecl,
   DerivedDecl,
   MetricDecl,
-  SampleSchema,
+  ObservationSchema,
   XKind,
 } from "../types";
 import { X_KINDS } from "../types";
@@ -16,7 +16,7 @@ import { X_KINDS } from "../types";
 function asArray(v: unknown, field: string): unknown[] {
   if (v === undefined) return [];
   if (!Array.isArray(v)) {
-    throw new BadRequestError(`sample_schema.${field} must be an array.`);
+    throw new BadRequestError(`observation_schema.${field} must be an array.`);
   }
   return v;
 }
@@ -36,62 +36,62 @@ function asObject(v: unknown, field: string): Record<string, unknown> {
 }
 
 function parseMetric(m: unknown, i: number): MetricDecl {
-  const mm = asObject(m, `sample_schema.metrics[${i}]`);
+  const mm = asObject(m, `observation_schema.metrics[${i}]`);
   const decl: MetricDecl = {
-    name: nonEmptyString(mm.name, `sample_schema.metrics[${i}].name`),
-    type: nonEmptyString(mm.type, `sample_schema.metrics[${i}].type`),
+    name: nonEmptyString(mm.name, `observation_schema.metrics[${i}].name`),
+    type: nonEmptyString(mm.type, `observation_schema.metrics[${i}].type`),
   };
   if (mm.unit !== undefined) {
-    decl.unit = nonEmptyString(mm.unit, `sample_schema.metrics[${i}].unit`);
+    decl.unit = nonEmptyString(mm.unit, `observation_schema.metrics[${i}].unit`);
   }
   if (mm.description !== undefined) {
     decl.description = nonEmptyString(
       mm.description,
-      `sample_schema.metrics[${i}].description`,
+      `observation_schema.metrics[${i}].description`,
     );
   }
   return decl;
 }
 
 function parseDerived(d: unknown, i: number): DerivedDecl {
-  const dd = asObject(d, `sample_schema.derived[${i}]`);
+  const dd = asObject(d, `observation_schema.derived[${i}]`);
   if (!("expr" in dd)) {
-    throw new BadRequestError(`sample_schema.derived[${i}].expr is required.`);
+    throw new BadRequestError(`observation_schema.derived[${i}].expr is required.`);
   }
   const decl: DerivedDecl = {
-    name: nonEmptyString(dd.name, `sample_schema.derived[${i}].name`),
+    name: nonEmptyString(dd.name, `observation_schema.derived[${i}].name`),
     expr: dd.expr,
   };
   if (dd.unit !== undefined) {
-    decl.unit = nonEmptyString(dd.unit, `sample_schema.derived[${i}].unit`);
+    decl.unit = nonEmptyString(dd.unit, `observation_schema.derived[${i}].unit`);
   }
   if (dd.description !== undefined) {
     decl.description = nonEmptyString(
       dd.description,
-      `sample_schema.derived[${i}].description`,
+      `observation_schema.derived[${i}].description`,
     );
   }
   return decl;
 }
 
 function parseChart(v: unknown, names: Set<string>): ChartDecl {
-  const c = asObject(v, "sample_schema.chart");
+  const c = asObject(v, "observation_schema.chart");
   if (!("y" in c)) {
-    throw new BadRequestError("sample_schema.chart.y is required.");
+    throw new BadRequestError("observation_schema.chart.y is required.");
   }
-  const y = nonEmptyString(c.y, "sample_schema.chart.y");
+  const y = nonEmptyString(c.y, "observation_schema.chart.y");
   if (!names.has(y)) {
     throw new BadRequestError(
-      `sample_schema.chart.y references unknown metric ${JSON.stringify(y)}.`,
+      `observation_schema.chart.y references unknown metric ${JSON.stringify(y)}.`,
     );
   }
 
   let x: string | null = null;
   if ("x" in c && c.x !== null) {
-    x = nonEmptyString(c.x, "sample_schema.chart.x");
+    x = nonEmptyString(c.x, "observation_schema.chart.x");
     if (x !== "created_at" && !names.has(x)) {
       throw new BadRequestError(
-        `sample_schema.chart.x references unknown metric ${JSON.stringify(x)}.`,
+        `observation_schema.chart.x references unknown metric ${JSON.stringify(x)}.`,
       );
     }
   }
@@ -100,7 +100,7 @@ function parseChart(v: unknown, names: Set<string>): ChartDecl {
   if (c.x_kind !== undefined) {
     if (typeof c.x_kind !== "string" || !X_KINDS.includes(c.x_kind as XKind)) {
       throw new BadRequestError(
-        `sample_schema.chart.x_kind must be one of: ${X_KINDS.join(", ")}.`,
+        `observation_schema.chart.x_kind must be one of: ${X_KINDS.join(", ")}.`,
       );
     }
     chart.x_kind = c.x_kind as XKind;
@@ -108,8 +108,8 @@ function parseChart(v: unknown, names: Set<string>): ChartDecl {
   return chart;
 }
 
-export function validateSampleSchema(value: unknown): SampleSchema {
-  const obj = asObject(value, "sample_schema");
+export function validateObservationSchema(value: unknown): ObservationSchema {
+  const obj = asObject(value, "observation_schema");
   const metrics = asArray(obj.metrics, "metrics").map(parseMetric);
   const derived = asArray(obj.derived, "derived").map(parseDerived);
 
@@ -117,23 +117,23 @@ export function validateSampleSchema(value: unknown): SampleSchema {
   for (const name of [...metrics.map((m) => m.name), ...derived.map((d) => d.name)]) {
     if (names.has(name)) {
       throw new BadRequestError(
-        `Duplicate metric name in sample_schema: ${JSON.stringify(name)}.`,
+        `Duplicate metric name in observation_schema: ${JSON.stringify(name)}.`,
       );
     }
     names.add(name);
   }
 
-  const schema: SampleSchema = { metrics, derived };
+  const schema: ObservationSchema = { metrics, derived };
   if (obj.chart !== undefined && obj.chart !== null) {
     schema.chart = parseChart(obj.chart, names);
   }
   return schema;
 }
 
-/** Read a stored sample_schema JSON back into a normalized object (trusted DB value). */
-export function parseSampleSchema(json: string): SampleSchema {
-  const parsed = JSON.parse(json) as Partial<SampleSchema> | null;
-  const schema: SampleSchema = {
+/** Read a stored observation_schema JSON back into a normalized object (trusted DB value). */
+export function parseObservationSchema(json: string): ObservationSchema {
+  const parsed = JSON.parse(json) as Partial<ObservationSchema> | null;
+  const schema: ObservationSchema = {
     metrics: parsed?.metrics ?? [],
     derived: parsed?.derived ?? [],
   };
@@ -160,8 +160,8 @@ function canonical(value: unknown): string {
  * existed; an existing chart never changes. Cosmetic unit/description labels stay editable.
  */
 export function assertFrozenCompatible(
-  oldSchema: SampleSchema,
-  newSchema: SampleSchema,
+  oldSchema: ObservationSchema,
+  newSchema: ObservationSchema,
 ): void {
   const frozen = () =>
     new ConflictError(

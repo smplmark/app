@@ -77,7 +77,7 @@ export async function pull(ctx) {
 // Leaderboard column → observation metric. Header cells carry the scenario in
 // metadata.run_group ("GPQA", "Omni-MATH", …); the "Mean score" column has no run_group, so the
 // display value is the fallback. Unknown columns are skipped — every emitted metric key must be
-// declared in the sample schema.
+// declared in the observation schema.
 const METRIC_BY_GROUP = new Map([
   ["mean-score", "mean_score"],
   ["mmlu-pro", "mmlu_pro"],
@@ -204,7 +204,7 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "helm", "language-models"],
-      sampleSchema: SCHEMA,
+      observationSchema: SCHEMA,
       targets,
     },
   ];

@@ -22,7 +22,7 @@ async function bench(key: string): Promise<string> {
     (await createAccount(env.DB, { key: `acct-${crypto.randomUUID()}`, name: "A" }));
   const row = await createBenchmark(env.DB, {
     account_id: account.id, key, name: key, description: null, about: null,
-    methodology: null, sample_schema: { metrics: [], derived: [] },
+    methodology: null, observation_schema: { metrics: [], derived: [] },
     category: "OTHER", created_by_user_id: null,
   });
   return row.id;

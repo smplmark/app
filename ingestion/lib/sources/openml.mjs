@@ -265,7 +265,7 @@ function cc18Benchmark(task, topFlows, retrievedAt, benchmarkSeen) {
     methodology: null,
     category: "ML_AI",
     tags: ["openml", "cc18", "classification"],
-    sampleSchema: CC18_SCHEMA,
+    observationSchema: CC18_SCHEMA,
     targets: flows.map((row) => ({
       key: uniqueSlug(row.flowName, seen),
       name: row.flowName,
@@ -377,7 +377,7 @@ function amlbBenchmark(archive, retrievedAt) {
     methodology: null,
     category: "ML_AI",
     tags: ["openml", "automl"],
-    sampleSchema: AMLB_SCHEMA,
+    observationSchema: AMLB_SCHEMA,
     targets: [...frameworks.entries()].map(([framework, entries]) => {
       /** @type {Map<string, number>} */
       const runSeen = new Map();

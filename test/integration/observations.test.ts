@@ -56,7 +56,7 @@ describe("POST /observations", () => {
     const me = await register();
     const started = Date.UTC(2026, 6, 1, 12, 0, 0);
     const b = await makeBenchmark(me.token, {
-      sample_schema: {
+      observation_schema: {
         metrics: [],
         derived: [{ name: "elapsed_ms", expr: { "-": [{ var: "created_at" }, { var: "run.started_at" }] } }],
         chart: { x: "elapsed_ms", y: "elapsed_ms", x_kind: "NUMBER" },

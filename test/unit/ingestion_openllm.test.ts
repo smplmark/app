@@ -168,7 +168,7 @@ describe("openllm adapter", () => {
     expect(b.name).toBe("Open LLM Leaderboard (archived)");
     expect(b.category).toBe("ML_AI");
     expect(b.tags).toEqual(["llm", "evaluation", "open-weights", "huggingface"]);
-    expect(b.sampleSchema).toMatchObject({ chart: { x: null, y: "average", x_kind: "CATEGORY" } });
+    expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "average", x_kind: "CATEGORY" } });
 
     // 5 valid targets (flagged + malformed rows dropped), in average-descending order.
     expect(b.targets.map((t) => t.key)).toEqual([
@@ -208,8 +208,8 @@ describe("openllm adapter", () => {
       },
     ]);
 
-    // Every observation metric key is declared in the sample schema.
-    const schema = b.sampleSchema as { metrics: { name: string }[] };
+    // Every observation metric key is declared in the observation schema.
+    const schema = b.observationSchema as { metrics: { name: string }[] };
     const declared = new Set(schema.metrics.map((m) => m.name));
     for (const t of b.targets) {
       for (const key of Object.keys(t.runs[0].observations[0].metrics)) {

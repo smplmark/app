@@ -22,7 +22,7 @@ import {
 beforeEach(resetDb);
 
 describe("benchmark create defaults + scoped-key visibility", () => {
-  it("defaults an omitted sample_schema to empty", async () => {
+  it("defaults an omitted observation_schema to empty", async () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
@@ -30,7 +30,7 @@ describe("benchmark create defaults + scoped-key visibility", () => {
       bearer(me.token),
     );
     expect(res.status).toBe(201);
-    expect(((await res.json()) as { data: Resource }).data.attributes.sample_schema).toEqual({
+    expect(((await res.json()) as { data: Resource }).data.attributes.observation_schema).toEqual({
       metrics: [],
       derived: [],
     });

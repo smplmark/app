@@ -115,7 +115,7 @@ const SCHEMA = {
         "Median benchmark score: the estimated number of Cycles samples rendered per minute, summed across the benchmark scenes. Higher is faster. Scores are comparable within one Blender version.",
     },
     {
-      name: "sample_count",
+      name: "submission_count",
       type: "number",
       description: "How many community submissions the median is computed from.",
     },
@@ -188,7 +188,7 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
       }
       /** @type {Record<string, number>} */
       const metrics = { median_score: row.score };
-      if (row.count !== null) metrics.sample_count = row.count;
+      if (row.count !== null) metrics.submission_count = row.count;
       device.runs.push({
         key: slice.runKey,
         name: slice.compute === "CPU" ? `Blender ${slice.version}` : `Blender ${slice.version} (${slice.compute})`,
@@ -214,7 +214,7 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     methodology: null,
     category: "HARDWARE",
     tags,
-    sampleSchema: SCHEMA,
+    observationSchema: SCHEMA,
     targets: ranked.map((d) => ({
       key: uniqueSlug(d.name, seen),
       name: d.name,

@@ -162,7 +162,7 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "DATABASE",
       tags: ["olap", "sql", "analytics", "databases"],
-      sampleSchema: SCHEMA,
+      observationSchema: SCHEMA,
       targets: kept.map((t) => ({
         key: uniqueSlug(`${t.system}-${t.machine}`, seen),
         // System names may carry emoji (e.g. "ClickHouse ☁️") — keep them in the display name.

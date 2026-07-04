@@ -54,9 +54,9 @@ import { paginationMeta } from "../query/pagination";
 import { parseSearchQuery } from "../query/search";
 import {
   assertFrozenCompatible,
-  parseSampleSchema,
-  validateSampleSchema,
-} from "../schema/sample_schema";
+  parseObservationSchema,
+  validateObservationSchema,
+} from "../schema/observation_schema";
 import { serializeBenchmark } from "../serialize/resource";
 import {
   CATEGORIES,
@@ -65,12 +65,12 @@ import {
   type Category,
   type OrgAttributionSnapshot,
   type PersonalAttributionSnapshot,
-  type SampleSchema,
+  type ObservationSchema,
   type Status,
 } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
-const EMPTY_SCHEMA: SampleSchema = { metrics: [], derived: [] };
+const EMPTY_SCHEMA: ObservationSchema = { metrics: [], derived: [] };
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = [
   "name",
@@ -130,8 +130,8 @@ benchmarks.post("/", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
-  const sample_schema =
-    "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
+  const observation_schema =
+    "observation_schema" in attrs ? validateObservationSchema(attrs.observation_schema) : EMPTY_SCHEMA;
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
@@ -148,7 +148,7 @@ benchmarks.post("/", requireAuth, async (c) => {
     description,
     about,
     methodology,
-    sample_schema,
+    observation_schema,
     category,
     created_by_user_id: auth.user_id, // null when an API key creates it
   });
@@ -220,15 +220,15 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
-  const sample_schema =
-    "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
-  // Full-replace semantics, like sample_schema: absent → the defaults, not "keep".
+  const observation_schema =
+    "observation_schema" in attrs ? validateObservationSchema(attrs.observation_schema) : EMPTY_SCHEMA;
+  // Full-replace semantics, like observation_schema: absent → the defaults, not "keep".
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
   // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable.
   if (existing.status !== "PRIVATE") {
-    assertFrozenCompatible(parseSampleSchema(existing.sample_schema), sample_schema);
+    assertFrozenCompatible(parseObservationSchema(existing.observation_schema), observation_schema);
   }
 
   const row = await updateBenchmark(c.env.DB, existing.id, {
@@ -236,7 +236,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     description,
     about,
     methodology,
-    sample_schema,
+    observation_schema,
     category,
   });
   await setBenchmarkTags(c.env.DB, existing.id, tags);

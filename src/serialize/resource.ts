@@ -4,7 +4,7 @@
 // columns (password_hash, key_hash/key_encrypted, client_ip) never emitted.
 import type { ResourceObject } from "../http/jsonapi";
 import { computeMetrics, type DerivedContext } from "../logic/derived";
-import { parseSampleSchema } from "../schema/sample_schema";
+import { parseObservationSchema } from "../schema/observation_schema";
 import type {
   AccountRow,
   AccountUserRow,
@@ -19,7 +19,7 @@ import type {
   PublisherIdentityRow,
   Role,
   RunRow,
-  SampleSchema,
+  ObservationSchema,
   TargetRow,
   UserRow,
 } from "../types";
@@ -201,7 +201,7 @@ export function serializeBenchmark(
     published_at: isoOrNull(row.published_at),
     withdrawn_at: isoOrNull(row.withdrawn_at),
     withdrawal_reason: row.withdrawal_reason,
-    sample_schema: parseSampleSchema(row.sample_schema),
+    observation_schema: parseObservationSchema(row.observation_schema),
     category: row.category,
     tags: [...tags],
     views: row.views_total,
@@ -292,7 +292,7 @@ export function serializeRun(row: RunRow): ResourceObject {
 
 export function serializeObservation(
   row: Pick<ObservationRow, "id" | "run_id" | "created_at" | "metrics" | "meta">,
-  schema: SampleSchema,
+  schema: ObservationSchema,
   ctx: DerivedContext,
 ): ResourceObject {
   // client_ip is never surfaced. id (rowid INTEGER) is stringified on the wire.

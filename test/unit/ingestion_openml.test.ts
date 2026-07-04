@@ -162,7 +162,7 @@ describe("openml adapter", () => {
     expect(krvskp.name).toBe("OpenML-CC18: kr-vs-kp");
     expect(krvskp.category).toBe("ML_AI");
     expect(krvskp.tags).toEqual(["openml", "cc18", "classification"]);
-    expect(krvskp.sampleSchema).toMatchObject({
+    expect(krvskp.observationSchema).toMatchObject({
       chart: { x: null, y: "predictive_accuracy", x_kind: "CATEGORY" },
     });
 
@@ -206,7 +206,7 @@ describe("openml adapter", () => {
     expect(amlb.name).toBe("AutoML Benchmark (AMLB)");
     expect(amlb.category).toBe("ML_AI");
     expect(amlb.tags).toEqual(["openml", "automl"]);
-    expect(amlb.sampleSchema).toMatchObject({
+    expect(amlb.observationSchema).toMatchObject({
       chart: { x: null, y: "predictive_accuracy", x_kind: "CATEGORY" },
     });
 

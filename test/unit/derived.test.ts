@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { computeMetrics, type DerivedContext } from "../../src/logic/derived";
-import type { SampleSchema } from "../../src/types";
+import type { ObservationSchema } from "../../src/types";
 
-const SKEW_SCHEMA: SampleSchema = {
+const SKEW_SCHEMA: ObservationSchema = {
   metrics: [],
   derived: [
     { name: "skew_ms", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } },
   ],
 };
-const EMPTY_SCHEMA: SampleSchema = { metrics: [], derived: [] };
+const EMPTY_SCHEMA: ObservationSchema = { metrics: [], derived: [] };
 const MS = Date.UTC(2026, 6, 1, 14, 3, 0) + 87;
 
 const ctx = (createdAt: number, startedAt: number | null = null): DerivedContext => ({
@@ -29,7 +29,7 @@ describe("computeMetrics", () => {
   });
 
   it("computes a relative-time metric from the widened run context (elapsed_ms)", () => {
-    const schema: SampleSchema = {
+    const schema: ObservationSchema = {
       metrics: [],
       derived: [
         { name: "elapsed_ms", expr: { "-": [{ var: "created_at" }, { var: "run.started_at" }] } },
@@ -55,7 +55,7 @@ describe("computeMetrics", () => {
   });
 
   it("omits a derived field whose expression throws, without failing the read", () => {
-    const schema: SampleSchema = {
+    const schema: ObservationSchema = {
       metrics: [],
       derived: [{ name: "x", expr: { no_such_op: [1] } }],
     };
@@ -63,7 +63,7 @@ describe("computeMetrics", () => {
   });
 
   it("omits a derived field that evaluates to a non-finite or non-numeric value", () => {
-    const schema: SampleSchema = {
+    const schema: ObservationSchema = {
       metrics: [],
       derived: [
         { name: "inf", expr: { "/": [1, 0] } },

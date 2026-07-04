@@ -25,10 +25,10 @@ import {
 } from "../http/middleware";
 import { parseDateRange } from "../query/daterange";
 import { paginationMeta } from "../query/pagination";
-import { parseSampleSchema } from "../schema/sample_schema";
+import { parseObservationSchema } from "../schema/observation_schema";
 import { observationsToCsv } from "../serialize/csv";
 import { serializeObservation } from "../serialize/resource";
-import type { AuthContext, SampleSchema } from "../types";
+import type { AuthContext, ObservationSchema } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
 const SORT_ALLOWED = ["created_at"] as const;
@@ -104,7 +104,7 @@ observations.post("/", requireAuth, async (c) => {
     client_ip: clientIp,
   });
 
-  const schema = parseSampleSchema(benchmark.sample_schema);
+  const schema = parseObservationSchema(benchmark.observation_schema);
   const resource = serializeObservation(
     { id, run_id: run.id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
     schema,
@@ -178,12 +178,12 @@ observations.get("/", optionalAuth, async (c) => {
   });
 
   // Parse each benchmark's schema once per request (compute-on-read is O(rows × derived)).
-  const schemaCache = new Map<string, SampleSchema>();
+  const schemaCache = new Map<string, ObservationSchema>();
   const resources = rows.map((r) => {
-    let schema = schemaCache.get(r.sample_schema);
+    let schema = schemaCache.get(r.observation_schema);
     if (schema === undefined) {
-      schema = parseSampleSchema(r.sample_schema);
-      schemaCache.set(r.sample_schema, schema);
+      schema = parseObservationSchema(r.observation_schema);
+      schemaCache.set(r.observation_schema, schema);
     }
     return serializeObservation(
       { id: r.id, run_id: r.run_id, created_at: r.created_at, metrics: r.metrics, meta: r.meta },

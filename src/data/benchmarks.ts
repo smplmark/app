@@ -5,7 +5,7 @@ import type {
   BenchmarkRow,
   Category,
   PublishedKind,
-  SampleSchema,
+  ObservationSchema,
   Status,
 } from "../types";
 import { isUniqueViolation } from "./d1";
@@ -17,7 +17,7 @@ export interface CreateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
-  sample_schema: SampleSchema;
+  observation_schema: ObservationSchema;
   category: Category;
   /** The creating user, or null if an API key created it. */
   created_by_user_id: string | null;
@@ -40,7 +40,7 @@ export async function createBenchmark(
     published_at: null,
     withdrawn_at: null,
     withdrawal_reason: null,
-    sample_schema: JSON.stringify(input.sample_schema),
+    observation_schema: JSON.stringify(input.observation_schema),
     created_by_user_id: input.created_by_user_id,
     draft: 1,
     published_by_user_id: null,
@@ -58,7 +58,7 @@ export async function createBenchmark(
   try {
     await db
       .prepare(
-        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
+        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, observation_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
       )
       .bind(
         row.id,
@@ -69,7 +69,7 @@ export async function createBenchmark(
         row.about,
         row.methodology,
         row.status,
-        row.sample_schema,
+        row.observation_schema,
         row.created_by_user_id,
         row.draft,
         row.category,
@@ -249,7 +249,7 @@ export interface UpdateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
-  sample_schema: SampleSchema;
+  observation_schema: ObservationSchema;
   /** Browse metadata — editable at any status, like `name`. */
   category: Category;
 }
@@ -267,20 +267,20 @@ export async function updateBenchmark(
     description: input.description,
     about: input.about,
     methodology: input.methodology,
-    sample_schema: JSON.stringify(input.sample_schema),
+    observation_schema: JSON.stringify(input.observation_schema),
     category: input.category,
     updated_at: Date.now(),
   };
   await db
     .prepare(
-      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, sample_schema=?, category=?, updated_at=? WHERE id=?",
+      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, observation_schema=?, category=?, updated_at=? WHERE id=?",
     )
     .bind(
       updated.name,
       updated.description,
       updated.about,
       updated.methodology,
-      updated.sample_schema,
+      updated.observation_schema,
       updated.category,
       updated.updated_at,
       id,

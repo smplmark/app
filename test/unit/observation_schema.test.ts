@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/errors";
 import {
   assertFrozenCompatible,
-  parseSampleSchema,
-  validateSampleSchema,
-} from "../../src/schema/sample_schema";
-import type { SampleSchema } from "../../src/types";
+  parseObservationSchema,
+  validateObservationSchema,
+} from "../../src/schema/observation_schema";
+import type { ObservationSchema } from "../../src/types";
 
 function expectStatus(fn: () => void, status: number) {
   expect(fn).toThrow(AppError);
@@ -18,9 +18,9 @@ function expectStatus(fn: () => void, status: number) {
 const expect400 = (fn: () => void) => expectStatus(fn, 400);
 const expect409 = (fn: () => void) => expectStatus(fn, 409);
 
-describe("validateSampleSchema", () => {
+describe("validateObservationSchema", () => {
   it("normalizes a full valid schema", () => {
-    const out = validateSampleSchema({
+    const out = validateObservationSchema({
       metrics: [{ name: "p95_ms", type: "number", unit: "ms" }],
       derived: [
         { name: "skew_ms", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } },
@@ -35,11 +35,11 @@ describe("validateSampleSchema", () => {
   });
 
   it("defaults missing metrics/derived to empty arrays", () => {
-    expect(validateSampleSchema({})).toEqual({ metrics: [], derived: [] });
+    expect(validateObservationSchema({})).toEqual({ metrics: [], derived: [] });
   });
 
   it("keeps a metric without a unit and a derived without a unit", () => {
-    const out = validateSampleSchema({
+    const out = validateObservationSchema({
       metrics: [{ name: "n", type: "number" }],
       derived: [{ name: "d", expr: { var: "created_at" } }],
     });
@@ -48,7 +48,7 @@ describe("validateSampleSchema", () => {
   });
 
   it("carries per-metric descriptions through", () => {
-    const out = validateSampleSchema({
+    const out = validateObservationSchema({
       metrics: [{ name: "n", type: "number", description: "a stored value" }],
       derived: [{ name: "d", expr: {}, description: "a derived value" }],
     });
@@ -85,22 +85,22 @@ describe("validateSampleSchema", () => {
       "duplicate across metrics and derived",
     ],
   ])("rejects %o (%s)", (value, _label) => {
-    expect400(() => validateSampleSchema(value));
+    expect400(() => validateObservationSchema(value));
   });
 });
 
-describe("parseSampleSchema", () => {
+describe("parseObservationSchema", () => {
   it("round-trips a stored schema", () => {
     const json = JSON.stringify({ metrics: [], derived: [{ name: "d", expr: {} }] });
-    expect(parseSampleSchema(json)).toEqual({
+    expect(parseObservationSchema(json)).toEqual({
       metrics: [],
       derived: [{ name: "d", expr: {} }],
     });
   });
 
   it("defaults null / missing keys to empty arrays", () => {
-    expect(parseSampleSchema("null")).toEqual({ metrics: [], derived: [] });
-    expect(parseSampleSchema("{}")).toEqual({ metrics: [], derived: [] });
+    expect(parseObservationSchema("null")).toEqual({ metrics: [], derived: [] });
+    expect(parseObservationSchema("{}")).toEqual({ metrics: [], derived: [] });
   });
 
   it("round-trips a chart block", () => {
@@ -109,7 +109,7 @@ describe("parseSampleSchema", () => {
       derived: [],
       chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
     });
-    expect(parseSampleSchema(json).chart).toEqual({ x: "created_at", y: "skew_ms", x_kind: "TIME" });
+    expect(parseObservationSchema(json).chart).toEqual({ x: "created_at", y: "skew_ms", x_kind: "TIME" });
   });
 });
 
@@ -121,15 +121,15 @@ describe("chart validation", () => {
   });
 
   it("accepts a time-series chart and a scalar (x=null) chart", () => {
-    expect(validateSampleSchema(withMetric({ x: "created_at", y: "skew_ms", x_kind: "TIME" })).chart)
+    expect(validateObservationSchema(withMetric({ x: "created_at", y: "skew_ms", x_kind: "TIME" })).chart)
       .toEqual({ x: "created_at", y: "skew_ms", x_kind: "TIME" });
-    expect(validateSampleSchema(withMetric({ x: null, y: "skew_ms" })).chart)
+    expect(validateObservationSchema(withMetric({ x: null, y: "skew_ms" })).chart)
       .toEqual({ x: null, y: "skew_ms" });
   });
 
   it("infers no chart when omitted or explicitly null", () => {
-    expect(validateSampleSchema({ metrics: [], derived: [] }).chart).toBeUndefined();
-    expect(validateSampleSchema({ metrics: [], derived: [], chart: null }).chart).toBeUndefined();
+    expect(validateObservationSchema({ metrics: [], derived: [] }).chart).toBeUndefined();
+    expect(validateObservationSchema({ metrics: [], derived: [], chart: null }).chart).toBeUndefined();
   });
 
   it.each([
@@ -138,19 +138,19 @@ describe("chart validation", () => {
     [withMetric({ x: "created_at" }), "missing y"],
     [withMetric({ x: "created_at", y: "skew_ms", x_kind: "PIE" }), "bad x_kind"],
   ])("rejects %o (%s)", (value, _label) => {
-    expect400(() => validateSampleSchema(value));
+    expect400(() => validateObservationSchema(value));
   });
 });
 
 describe("assertFrozenCompatible", () => {
-  const published: SampleSchema = {
+  const published: ObservationSchema = {
     metrics: [{ name: "skew_ms", type: "number", unit: "ms", description: "old" }],
     derived: [{ name: "d", expr: { minute_offset_ms: [{ var: "created_at" }] }, unit: "ms" }],
     chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
   };
 
   it("allows cosmetic-only changes (unit/description)", () => {
-    const edited: SampleSchema = {
+    const edited: ObservationSchema = {
       metrics: [{ name: "skew_ms", type: "number", unit: "milliseconds", description: "new" }],
       derived: [{ name: "d", expr: { minute_offset_ms: [{ var: "created_at" }] }, unit: "ms" }],
       chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
@@ -159,7 +159,7 @@ describe("assertFrozenCompatible", () => {
   });
 
   it("rejects a changed derived expression", () => {
-    const edited: SampleSchema = {
+    const edited: ObservationSchema = {
       ...published,
       derived: [{ name: "d", expr: { "+": [1, 1] }, unit: "ms" }],
     };

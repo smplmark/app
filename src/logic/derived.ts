@@ -1,9 +1,9 @@
 // Compute-on-read: merge an observation's stored metrics with its benchmark's derived metrics into
 // one flat object. The consumer can't tell stored from derived — that split lives only in
-// sample_schema (spec §4). The evaluation context is WIDENED (§10) beyond the observation's own
+// observation_schema (spec §4). The evaluation context is WIDENED (§10) beyond the observation's own
 // created_at to include its run's timing, so relative-time metrics (elapsed_ms = created_at −
 // run.started_at) are a declared JSON Logic expression, not a chart hack.
-import type { SampleSchema } from "../types";
+import type { ObservationSchema } from "../types";
 import { applyRule } from "./evaluator";
 
 /** The widened data context a derived expression may reference via `var`. */
@@ -35,7 +35,7 @@ function parseStored(metricsJson: string | null): Record<string, unknown> {
  */
 export function computeMetrics(
   metricsJson: string | null,
-  schema: SampleSchema,
+  schema: ObservationSchema,
   ctx: DerivedContext,
 ): Record<string, unknown> | null {
   const data = {

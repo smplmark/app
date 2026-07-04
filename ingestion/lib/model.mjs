@@ -6,7 +6,7 @@
 /**
  * @typedef {Object} IngestObservation
  * @property {number} created_at epoch-ms (source timestamp, or the archive's retrieved_at)
- * @property {Record<string, number>} metrics numeric measures (keys must match the sample_schema)
+ * @property {Record<string, number>} metrics numeric measures (keys must match the observation_schema)
  * @property {Record<string, unknown>} [meta] non-numeric context
  *
  * @typedef {Object} IngestRun
@@ -31,7 +31,7 @@
  * @property {string | null} methodology null — sources' methodology is theirs to publish, never paraphrased here
  * @property {"HARDWARE"|"DATABASE"|"ML_AI"|"STORAGE"|"NETWORK"|"OTHER"} category
  * @property {string[]} tags lowercase slugs
- * @property {object} sampleSchema the benchmark's sample_schema (metrics/derived/chart)
+ * @property {object} observationSchema the benchmark's observation_schema (metrics/derived/chart)
  * @property {boolean} [closed] true when the source dataset is final (frozen leaderboards) — the
  *   benchmark imports pre-closed, so nothing new can be appended beneath it
  * @property {IngestTarget[]} targets

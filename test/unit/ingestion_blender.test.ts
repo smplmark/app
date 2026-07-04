@@ -64,7 +64,7 @@ describe("blender adapter", () => {
     expect(cpu.key).toBe("blender-cpu");
     expect(cpu.category).toBe("HARDWARE");
     expect(cpu.tags).toContain("cpu");
-    expect(cpu.sampleSchema).toMatchObject({ chart: { x: null, y: "median_score", x_kind: "CATEGORY" } });
+    expect(cpu.observationSchema).toMatchObject({ chart: { x: null, y: "median_score", x_kind: "CATEGORY" } });
 
     // Latest version (5.1.1) only: the 5.0.0 slice must NOT appear as a run.
     const ryzen = cpu.targets.find((t: { key: string }) => t.key === "amd-ryzen-9-7950x");
@@ -72,7 +72,7 @@ describe("blender adapter", () => {
     expect(ryzen!.runs.map((r: { key: string }) => r.key)).toEqual(["v5-1-1"]);
     expect(ryzen!.runs[0].observations[0]).toEqual({
       created_at: T_RETRIEVED,
-      metrics: { median_score: 320.5, sample_count: 40 },
+      metrics: { median_score: 320.5, submission_count: 40 },
     });
 
     // GPU: one device with two API runs; the null-score junk row is dropped.
@@ -83,7 +83,7 @@ describe("blender adapter", () => {
     expect(gpu.targets.some((t: { name: string }) => t.name === "Broken Device")).toBe(false);
   });
 
-  it("ranks targets by community sample count and caps at topDevices", () => {
+  it("ranks targets by community submission count and caps at topDevices", () => {
     const [cpu] = adapt(archive as never, { topDevices: 2 });
     expect(cpu.targets.map((t: { name: string }) => t.name)).toEqual([
       "AMD Ryzen 9 7950X",

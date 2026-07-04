@@ -119,7 +119,7 @@ describe("sql builders", () => {
     methodology: "m",
     category: "HARDWARE" as const,
     tags: ["gpu"],
-    sampleSchema: { metrics: [{ name: "score", type: "number" }], derived: [], chart: { x: null, y: "score", x_kind: "CATEGORY" } },
+    observationSchema: { metrics: [{ name: "score", type: "number" }], derived: [], chart: { x: null, y: "score", x_kind: "CATEGORY" } },
     targets: [
       {
         key: "t1",
@@ -260,7 +260,7 @@ describe("sampler", () => {
       methodology: "",
       category: "OTHER" as const,
       tags: [],
-      sampleSchema: {},
+      observationSchema: {},
       targets: Array.from({ length: nTargets }, (_, i) => ({
         key: `t${i}`,
         name: `T${i}`,

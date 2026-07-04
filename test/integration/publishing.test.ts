@@ -108,7 +108,7 @@ describe("draft edit-lock", () => {
 
     // benchmark edits
     expect(
-      (await apiPut(`/api/v1/benchmarks/${benchmark.id}`, { data: { type: "benchmark", attributes: { name: "x", sample_schema: SKEW_SCHEMA } } }, tok)).status,
+      (await apiPut(`/api/v1/benchmarks/${benchmark.id}`, { data: { type: "benchmark", attributes: { name: "x", observation_schema: SKEW_SCHEMA } } }, tok)).status,
     ).toBe(409);
     // create/edit target
     expect(

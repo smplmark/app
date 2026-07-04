@@ -170,7 +170,7 @@ function registerEntity(
   return { Attributes, Resource, Response, ListResponse, Request };
 }
 
-// ── sample_schema (nested value object on benchmark) ─────────────────────────
+// ── observation_schema (nested value object on benchmark) ─────────────────────────
 
 const X_KINDS = ["TIME", "NUMBER", "CATEGORY"] as const;
 
@@ -205,8 +205,8 @@ const ChartDecl = z
   })
   .openapi("ChartDecl", { description: "The default chart the benchmark page renders. Visitors may override it." });
 
-const SampleSchema = registry.register(
-  "SampleSchema",
+const ObservationSchema = registry.register(
+  "ObservationSchema",
   z
     .object({
       metrics: z.array(MetricDecl).openapi({ description: "The metrics clients supply on each observation." }),
@@ -411,7 +411,7 @@ const benchmark = registerEntity(
     published_at: dateTime("When the benchmark was published, or null if it has not been published.").nullable(),
     withdrawn_at: dateTime("When the benchmark was withdrawn, or null.").nullable(),
     withdrawal_reason: z.string().nullable().openapi({ description: "The stated reason the benchmark was withdrawn, or null." }),
-    sample_schema: SampleSchema,
+    observation_schema: ObservationSchema,
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
       .openapi({ description: "The benchmark's coarse browse category. Exactly one per benchmark; tags carry finer-grained classification." }),
@@ -433,7 +433,7 @@ const benchmark = registerEntity(
     description: z.string().max(500).optional().openapi({ description: "A one-line summary of the benchmark. At most 500 characters." }),
     about: z.string().max(20000).optional().openapi({ description: "A longer description of the benchmark. At most 20,000 characters." }),
     methodology: z.string().max(20000).optional().openapi({ description: "How the benchmark is run and measured. At most 20,000 characters." }),
-    sample_schema: SampleSchema.optional(),
+    observation_schema: ObservationSchema.optional(),
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
       .optional()

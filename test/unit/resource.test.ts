@@ -24,7 +24,7 @@ import type {
   PublisherDomainRow,
   PublisherIdentityRow,
   RunRow,
-  SampleSchema,
+  ObservationSchema,
   TargetRow,
   UserRow,
 } from "../../src/types";
@@ -140,7 +140,7 @@ describe("serializeBenchmark", () => {
     id: "b1", account_id: "a1", key: "sched", name: "Sched",
     description: null, about: null, methodology: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
-    sample_schema: "{}",
+    observation_schema: "{}",
     created_by_user_id: "u1", draft: 1,
     published_by_user_id: null, published_as_kind: null, published_identity_id: null,
     attribution_snapshot: null, category: "OTHER",
@@ -191,18 +191,18 @@ describe("serializeBenchmark", () => {
     });
   });
 
-  it("renders an ORGANIZATION attribution badge, parsing sample_schema and keeping a soft identity ref", () => {
+  it("renders an ORGANIZATION attribution badge, parsing observation_schema and keeping a soft identity ref", () => {
     const row: BenchmarkRow = {
       ...priv, about: "long", methodology: "how", status: "WITHDRAWN", draft: 0,
       published_at: T0, withdrawn_at: T0, withdrawal_reason: "bad data",
-      sample_schema: JSON.stringify({ metrics: [], derived: [] }),
+      observation_schema: JSON.stringify({ metrics: [], derived: [] }),
       published_by_user_id: "admin1", published_as_kind: "ORGANIZATION", published_identity_id: "pi1",
       attribution_snapshot: JSON.stringify({ name: "Acme", logo_url: null, verified_domains: ["acme.com", "acme.io"] }),
     };
     const out = serializeBenchmark(row, []);
     expect(out.attributes.status).toBe("WITHDRAWN");
     expect(out.attributes.withdrawal_reason).toBe("bad data");
-    expect(out.attributes.sample_schema).toEqual({ metrics: [], derived: [] });
+    expect(out.attributes.observation_schema).toEqual({ metrics: [], derived: [] });
     expect(out.attributes.published_by).toBe("admin1");
     expect(out.attributes.published_as).toEqual({
       kind: "ORGANIZATION", identity: "pi1", name: "Acme", logo_url: null,
@@ -321,7 +321,7 @@ describe("serializeRun", () => {
 });
 
 describe("serializeObservation", () => {
-  const schema: SampleSchema = {
+  const schema: ObservationSchema = {
     metrics: [],
     derived: [{ name: "skew_ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }],
   };

@@ -168,7 +168,7 @@ describe("additive schema freeze", () => {
       {
         data: {
           type: "benchmark",
-          attributes: { name: "Scheduler Latency", sample_schema: schema },
+          attributes: { name: "Scheduler Latency", observation_schema: schema },
         },
       },
       bearer(token),

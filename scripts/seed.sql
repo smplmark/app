@@ -15,7 +15,7 @@ DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE
 INSERT INTO user (id, email, email_verified, display_name, created_at) VALUES
   ('usr-dev', 'dev@smplkit.test', 1, 'smplkit dev', 1782864000000);
 INSERT INTO user_identity (id, user_id, provider, provider_subject, password_hash, created_at) VALUES
-  ('a5bafeb0-4c2c-459e-85de-a1622feeb7c0', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$AJlCOUvN05vgG_-rEYUSaA$skgbZ_QR4e-bUcfFG5DTYF-a1tiPTfLMGMlJD8XCD_c', 1782864000000);
+  ('8a09c933-fffb-494f-853e-cc5ba6de390b', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$O_KCHEajiqW6QStB6IHVxQ$avWiDmNsT9_YcN6uP8vvbEZzmVY9T4peed_X5eL46yU', 1782864000000);
 
 -- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
 INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES

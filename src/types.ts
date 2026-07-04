@@ -1,4 +1,4 @@
-// Domain row types (as stored in D1; snake_case columns), the sample_schema shape, and the
+// Domain row types (as stored in D1; snake_case columns), the observation_schema shape, and the
 // resolved auth context. This is the shared vocabulary the whole codebase speaks.
 
 // ── Enums (SCREAMING_SNAKE_CASE on the wire, per ADR-014) ────────────────────
@@ -177,8 +177,8 @@ export interface BenchmarkRow {
   published_at: number | null;
   withdrawn_at: number | null;
   withdrawal_reason: string | null;
-  /** JSON string of a SampleSchema. */
-  sample_schema: string;
+  /** JSON string of a ObservationSchema. */
+  observation_schema: string;
   /** The user who created the benchmark, or null if an API key created it. */
   created_by_user_id: string | null;
   /** 0/1 boolean. 1 = still cooking (editable); 0 = marked ready (subtree locked). Surfaced as `draft`. */
@@ -312,7 +312,7 @@ export interface ObservationRow {
   client_ip: string | null;
 }
 
-// ── sample_schema ──────────────────────────────────────────────────────────
+// ── observation_schema ──────────────────────────────────────────────────────────
 
 /** A JSON Logic rule, e.g. `{ "minute_offset_ms": [{ "var": "created_at" }] }`. */
 export type JsonLogicRule = unknown;
@@ -351,7 +351,7 @@ export interface ChartDecl {
   x_kind?: XKind;
 }
 
-export interface SampleSchema {
+export interface ObservationSchema {
   metrics: MetricDecl[];
   derived: DerivedDecl[];
   /** Optional default chart declaration; the visitor may override at chart time. */

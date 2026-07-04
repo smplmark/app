@@ -33,8 +33,8 @@ source's trademark in a way that implies endorsement. Cite as
 | License | **CC0 1.0** (public-domain dedication). Stated at https://opendata.blender.org/download/ ("The data in this archive is licensed under the CC0 - Creative Commons Zero license") and as `LICENSE.txt` inside the snapshot archive. Attribution not legally required; we give it anyway. |
 | robots.txt | `User-agent: * / Disallow: /snapshots/` — the full-dump directory is disallowed; everything else (incl. the aggregated query API) is allowed. **We pull only the robots-allowed `/benchmarks/query/` endpoint**, which also happens to be exactly the aggregated granularity we ingest. The 1.8 GB raw dump is never touched. |
 | Pull | `GET /benchmarks/query/suggest/?column=blender_version` (version list), then `GET /benchmarks/query/?blender_version=<v>&compute_type=<CPU\|CUDA\|OPTIX\|HIP\|METAL\|ONEAPI>&group_by=device_name&response_type=datatables` per (version, compute type). ~60 requests, &lt; 2 MB. |
-| Mapping | Two benchmarks mirroring the site's headline split: `blender-cpu` and `blender-gpu` (category `HARDWARE`; tags `rendering`, `blender`, `cycles`, + `cpu`/`gpu`). Target = device; run = version slice (`v5.1.1`, GPU also per API `v5.1.1-optix`); observation metrics `median_score` (samples/min, higher is better) + `sample_count`. Scalar → CATEGORY chart on `median_score`. |
-| Default import cap | Latest Blender version only; top 200 devices per benchmark by `sample_count` (full matrix in the archive). |
+| Mapping | Two benchmarks mirroring the site's headline split: `blender-cpu` and `blender-gpu` (category `HARDWARE`; tags `rendering`, `blender`, `cycles`, + `cpu`/`gpu`). Target = device; run = version slice (`v5.1.1`, GPU also per API `v5.1.1-optix`); observation metrics `median_score` (samples/min, higher is better) + `submission_count`. Scalar → CATEGORY chart on `median_score`. |
+| Default import cap | Latest Blender version only; top 200 devices per benchmark by `submission_count` (full matrix in the archive). |
 | Verified | 2026-07-04 |
 
 ### Stanford HELM (Capabilities) — `helm`

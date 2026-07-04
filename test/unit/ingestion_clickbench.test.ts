@@ -95,9 +95,9 @@ describe("clickbench adapter", () => {
     expect(b.name).toBe("ClickBench — analytical databases");
     expect(b.category).toBe("DATABASE");
     expect(b.tags).toEqual(["olap", "sql", "analytics", "databases"]);
-    expect(b.sampleSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });
-    // Every emitted metric key is declared in the sample schema.
-    const declared = new Set((b.sampleSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name));
+    expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });
+    // Every emitted metric key is declared in the observation schema.
+    const declared = new Set((b.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name));
     for (const t of b.targets) {
       for (const r of t.runs) {
         for (const o of r.observations) {

@@ -74,7 +74,7 @@ describe("count ceilings (409)", () => {
     const now = Date.now();
     await bulkInsert(
       "benchmark",
-      "id, account_id, key, name, status, sample_schema, created_at, updated_at, draft, category",
+      "id, account_id, key, name, status, observation_schema, created_at, updated_at, draft, category",
       Array.from(
         { length: LIMITS.benchmarksPerAccount },
         (_, i) => `('bulk-${i}', '${account_id}', 'bulk-${i}', 'B${i}', 'PRIVATE', '{}', ${now}, ${now}, 1, 'OTHER')`,

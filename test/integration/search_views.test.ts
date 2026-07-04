@@ -93,7 +93,7 @@ describe("filter[search]", () => {
       {
         data: {
           type: "benchmark",
-          attributes: { name: "Renamed Xyzzy", sample_schema: SKEW_SCHEMA, tags: ["newtag"] },
+          attributes: { name: "Renamed Xyzzy", observation_schema: SKEW_SCHEMA, tags: ["newtag"] },
         },
       },
       bearer(owner.token),

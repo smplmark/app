@@ -13,7 +13,7 @@ const HEADER = [
   { value: "IFEval - IFEval Strict Acc", metadata: { metric: "IFEval Strict Acc", run_group: "IFEval" } },
   { value: "WildBench - Score", metadata: { metric: "Score", run_group: "WildBench" } },
   { value: "Omni-MATH - COT correct", metadata: { metric: "COT correct", run_group: "Omni-MATH" } },
-  // An unrecognized scenario column the adapter must skip (its key isn't in the sample schema).
+  // An unrecognized scenario column the adapter must skip (its key isn't in the observation schema).
   { value: "FutureBench - Score", metadata: { metric: "Score", run_group: "FutureBench" } },
 ];
 
@@ -114,7 +114,7 @@ describe("helm adapter", () => {
     expect(bench.key).toBe("helm-capabilities");
     expect(bench.category).toBe("ML_AI");
     expect(bench.tags).toEqual(["llm", "evaluation", "helm", "language-models"]);
-    expect(bench.sampleSchema).toMatchObject({
+    expect(bench.observationSchema).toMatchObject({
       chart: { x: null, y: "mean_score", x_kind: "CATEGORY" },
     });
 
@@ -175,10 +175,10 @@ describe("helm adapter", () => {
     expect(mystery[0].details).toBeUndefined();
   });
 
-  it("only emits metric keys declared in the sample schema", () => {
+  it("only emits metric keys declared in the observation schema", () => {
     const [bench] = adapt(archive as never);
     const declared = new Set(
-      (bench.sampleSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name),
+      (bench.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name),
     );
     for (const target of bench.targets) {
       for (const run of target.runs) {
