@@ -117,7 +117,8 @@ const SCHEMA = {
     {
       name: "submission_count",
       type: "number",
-      description: "How many community submissions the median is computed from.",
+      description:
+        'How many community submissions the median is computed from — the source\'s "Number of Benchmarks" column.',
     },
   ],
   derived: [],
