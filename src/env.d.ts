@@ -23,6 +23,11 @@ interface SmplmarkSecrets {
   RESEND_FROM?: string;
   /** Shared secret authorizing the Smpl Jobs system triggers (e.g. the publisher-domain re-check). */
   JOBS_TRIGGER_SECRET?: string;
+  /**
+   * Local-loop only (.dev.vars): where marketing-path redirects (/about, /benchmarks…) point,
+   * e.g. http://localhost:8787. Unset in production → https://www.smplmark.org.
+   */
+  DEV_WWW_ORIGIN?: string;
   /** IP-keyed rate limiter for login / OIDC begin (10 / 60s). */
   RL_AUTH?: RateLimiter;
   /** IP-keyed rate limiter for register / resend-verification / invite / contact (5 / 60s). */

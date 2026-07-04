@@ -23,28 +23,42 @@ export function scalarHtml(specUrl: string): string {
       --scalar-font-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
     html, body { margin: 0; background: #0e1116; }
-    /* Branded header above the Scalar app (which renders as a normal block below it). */
-    header.brand {
-      display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 20px;
-      background: color-mix(in srgb, #0e1116 85%, transparent);
+    /* The site banner, duplicated exactly from the website's header.site (dark palette). */
+    header.site {
       border-bottom: 1px solid #2a3140;
+      background: color-mix(in srgb, #0e1116 85%, transparent);
+      backdrop-filter: blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header.site .wrap {
+      max-width: 1040px; margin: 0 auto; padding: 0 20px;
+      display: flex; align-items: center; gap: 20px; height: 58px;
+    }
+    .brand { display: inline-flex; align-items: center; }
+    .brand img { height: 22px; width: auto; display: block; }
+    header.site nav { display: flex; gap: 20px; margin-left: auto; }
+    header.site nav a {
+      color: #9aa7b4; font-size: 14px; text-decoration: none;
       font: 14px system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    header.brand img { height: 20px; width: auto; display: block; }
-    header.brand .page { color: #9aa7b4; }
-    header.brand nav { margin-left: auto; display: flex; gap: 18px; }
-    header.brand a { color: #9aa7b4; text-decoration: none; }
-    header.brand a:hover { color: #e6edf3; }
+    header.site nav a:hover { color: #e6edf3; }
+    header.site nav a.active { color: #4f8cff; font-weight: 600; }
   </style>
 </head>
 <body>
-  <header class="brand">
-    <a href="https://www.smplmark.org" title="smplmark home"><img src="/img/logo-dark.png" alt="smplmark" /></a>
-    <span class="page">API reference</span>
-    <nav>
-      <a href="https://www.smplmark.org/benchmarks">Benchmarks</a>
-      <a href="https://www.smplmark.org/about">About</a>
-    </nav>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="/benchmarks" title="smplmark home"><img src="/img/logo-dark.png" alt="smplmark" /></a>
+      <nav>
+        <a href="/benchmarks">Benchmarks</a>
+        <a href="/about">About</a>
+        <a href="/api-reference" class="active">API Reference</a>
+        <a href="/login">Sign in</a>
+        <a href="/signup">Sign up</a>
+      </nav>
+    </div>
   </header>
   <script id="api-reference" data-url="${specUrl}"></script>
   <script>

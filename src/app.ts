@@ -74,8 +74,13 @@ export function createApp() {
       res.headers.append("Vary", "Cookie");
       return res;
     }
-    // Marketing + published benchmarks live on the website; send stragglers there.
+    // Marketing + published benchmarks live on the website; send stragglers there. In the local
+    // loop (.dev.vars) that's the local website Worker, not prod — hostname sniffing can't detect
+    // dev because wrangler dev presents requests as the configured custom domain.
     if (isPublicPage(p)) {
+      if (c.env.DEV_WWW_ORIGIN) {
+        return c.redirect(new URL(p + url.search, c.env.DEV_WWW_ORIGIN).toString(), 301);
+      }
       url.protocol = "https:";
       url.hostname = WWW_HOST;
       url.port = "";

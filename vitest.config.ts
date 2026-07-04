@@ -22,6 +22,9 @@ export default defineConfig({
           APP_AUTH_SECRET: "test-app-auth-secret-do-not-use-in-prod",
           KEY_ENCRYPTION_SECRET: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
           APP_URL: "http://smplmark.test",
+          // vitest auto-loads .dev.vars; blank the local-loop override so tests exercise the
+          // PRODUCTION marketing redirects (the dev behavior is exercised via wrangler dev).
+          DEV_WWW_ORIGIN: "",
         },
       },
       wrangler: { configPath: "./wrangler.jsonc" },

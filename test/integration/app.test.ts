@@ -32,8 +32,9 @@ describe("app routing", () => {
     const body = await res.text();
     expect(body).toContain("/api/openapi.json");
     expect(body).toContain("--scalar-color-accent");
-    // The branded header sits above the Scalar app.
-    expect(body).toContain('header class="brand"');
+    // The site banner (cloned exactly) sits above the Scalar app, API Reference marked active.
+    expect(body).toContain('header class="site"');
     expect(body).toContain("/img/logo-dark.png");
+    expect(body).toContain('<a href="/api-reference" class="active">API Reference</a>');
   });
 });
