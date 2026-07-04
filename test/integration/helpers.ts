@@ -20,6 +20,7 @@ const TABLES = [
   "target",
   "benchmark_tag",
   "tag",
+  "benchmark_view_day",
   "benchmark",
   "publisher_domain",
   "publisher_identity",

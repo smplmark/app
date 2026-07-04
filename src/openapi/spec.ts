@@ -418,6 +418,10 @@ const benchmark = registerEntity(
     tags: z
       .array(z.string())
       .openapi({ description: "The benchmark's tags: lowercase slugs, sorted alphabetically." }),
+    views: z
+      .number()
+      .int()
+      .openapi({ description: "All-time page-view count for the benchmark. A raw, best-effort popularity signal — not an audited metric." }),
     created_at: dateTime("When the benchmark was created."),
     updated_at: dateTime("When the benchmark was last updated."),
   }),
@@ -1138,11 +1142,14 @@ registry.registerPath({
   path: "/api/v1/benchmarks",
   tags: ["Benchmarks"],
   summary: "List benchmarks",
+  description:
+    "Sortable by name, created_at, updated_at, and popularity: views (all-time) or the rolling windows views_today, views_week, views_month, views_year (prefix with - for descending, e.g. sort=-views_week).",
   parameters: [
     filterParam("account", "Limit results to benchmarks owned by this account id."),
     filterParam("key", "Limit results to the benchmark with this key."),
     filterParam("tag", "Limit results to benchmarks carrying this tag (exact match on the tag's lowercase slug)."),
     filterParam("category", "Limit results to benchmarks in this category: HARDWARE, DATABASE, ML_AI, STORAGE, NETWORK, or OTHER."),
+    filterParam("search", "Free-text search. Every term must match (AND) as a case-insensitive substring of the benchmark's key, name, description, about, methodology, category, tags, or ingested source name. Double-quote a phrase to match it exactly, e.g. \"blender 4.2\". At most 8 terms."),
     ...paginationParams,
   ],
   responses: {
@@ -1159,6 +1166,20 @@ registry.registerPath({
   request: { params: benchmarkIdParam },
   responses: {
     "200": domainResponse(benchmark.Response, "The requested benchmark."),
+    "404": errorJson("The requested resource was not found."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/benchmarks/{id}/actions/view",
+  tags: ["Benchmarks"],
+  summary: "Record a page view",
+  description:
+    "Increments the benchmark's view counters (all-time plus the current day's bucket, which feeds the windowed popularity sorts). Unauthenticated and best-effort: benchmark pages fire it once per load. Only world-visible benchmarks accept views.",
+  request: { params: benchmarkIdParam },
+  responses: {
+    "204": { description: "The view was recorded." },
     "404": errorJson("The requested resource was not found."),
   },
 });

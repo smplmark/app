@@ -60,6 +60,9 @@ export function n(value) {
 /**
  * The scoped destructive wipe: delete the system account's entire benchmark subtree, child-first,
  * then prune orphaned tags (tags carry no data beyond their key; recreation is lossless).
+ * benchmark_view_day is deliberately NOT wiped — benchmark ids are deterministic, so view history
+ * survives a re-ingest and buildInsertSql recomputes views_total from it (stale buckets for
+ * benchmarks that disappear for good are pruned there too).
  * @returns {string[]}
  */
 export function buildWipeSql() {
@@ -221,6 +224,20 @@ export function buildInsertSql(entries) {
       "INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES",
       obsRows,
     ),
+    // Rebuild the search index for the ingested scope (same expression as migration 0005 /
+    // src/data/benchmarks.ts — keep the three in sync).
+    `UPDATE benchmark SET search_text = lower(
+  coalesce(key, '') || ' ' || coalesce(name, '') || ' ' || coalesce(description, '') || ' ' ||
+  coalesce(about, '') || ' ' || coalesce(methodology, '') || ' ' || coalesce(category, '') || ' ' ||
+  coalesce((SELECT group_concat(t.key, ' ') FROM benchmark_tag bt JOIN tag t ON t.id = bt.tag_id
+            WHERE bt.benchmark_id = benchmark.id), '') || ' ' ||
+  coalesce(json_extract(attribution_snapshot, '$.source_name'), '')
+) WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`,
+    // Popularity survives the wipe-and-rebuild: ids are deterministic, so the untouched per-day
+    // view buckets still apply — recompute the all-time counter from them, then drop buckets for
+    // ingested benchmarks that no longer exist (source removed for good).
+    `UPDATE benchmark SET views_total = coalesce((SELECT SUM(views) FROM benchmark_view_day WHERE benchmark_id = benchmark.id), 0) WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`,
+    `DELETE FROM benchmark_view_day WHERE benchmark_id LIKE 'ing-%' AND benchmark_id NOT IN (SELECT id FROM benchmark)`,
   );
 
   return { statements, counts };

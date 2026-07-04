@@ -1,4 +1,5 @@
 import { ConflictError } from "../errors";
+import { likePattern } from "../query/search";
 import { orderByClause, type Sort } from "../query/sort";
 import type {
   BenchmarkRow,
@@ -47,6 +48,9 @@ export async function createBenchmark(
     published_identity_id: null,
     attribution_snapshot: null,
     category: input.category,
+    // The DB defaults apply on INSERT; the route refreshes search_text once tags are attached.
+    search_text: "",
+    views_total: 0,
     created_at: now,
     updated_at: now,
   };
@@ -83,6 +87,30 @@ export async function createBenchmark(
   return row;
 }
 
+// The one search_text expression, shared verbatim with migration 0005's backfill and the
+// ingestion importer — keep the three in sync.
+const SEARCH_TEXT_SQL = `lower(
+  coalesce(key, '') || ' ' || coalesce(name, '') || ' ' || coalesce(description, '') || ' ' ||
+  coalesce(about, '') || ' ' || coalesce(methodology, '') || ' ' || coalesce(category, '') || ' ' ||
+  coalesce((SELECT group_concat(t.key, ' ') FROM benchmark_tag bt JOIN tag t ON t.id = bt.tag_id
+            WHERE bt.benchmark_id = benchmark.id), '') || ' ' ||
+  coalesce(json_extract(attribution_snapshot, '$.source_name'), '')
+)`;
+
+/**
+ * Rebuild a benchmark's search_text from its current row + tags. Called after any create/update/
+ * tag change — the column is a projection, never authored directly.
+ */
+export async function refreshBenchmarkSearchText(
+  db: D1Database,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE benchmark SET search_text = ${SEARCH_TEXT_SQL} WHERE id = ?`)
+    .bind(id)
+    .run();
+}
+
 /** Serves the benchmarks-per-account ceiling check on create. */
 export async function countBenchmarksForAccount(
   db: D1Database,
@@ -115,6 +143,8 @@ export interface ListBenchmarksInput {
   /** Exact-match on a tag key (normalized slug). */
   tag?: string;
   category?: Category;
+  /** filter[search]: every term must appear in search_text (parsed by query/search.ts). */
+  searchTerms?: string[];
   sort: Sort;
   limit: number;
   offset: number;
@@ -125,7 +155,21 @@ const BENCHMARK_COLUMNS: Record<string, string> = {
   name: "name",
   created_at: "created_at",
   updated_at: "updated_at",
+  views: "views_total",
 };
+
+// Rolling popularity windows (UTC day buckets, inclusive of today).
+const VIEW_WINDOW_DAYS: Record<string, number> = {
+  views_today: 1,
+  views_week: 7,
+  views_month: 30,
+  views_year: 365,
+};
+
+/** The oldest UTC day (YYYY-MM-DD) inside a rolling window ending today. */
+function windowCutoffDay(days: number): string {
+  return new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+}
 
 function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unknown[] } {
   const clauses: string[] = [];
@@ -146,6 +190,12 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
     clauses.push("category = ?");
     binds.push(input.category);
   }
+  if (input.searchTerms !== undefined) {
+    for (const term of input.searchTerms) {
+      clauses.push("search_text LIKE ? ESCAPE '\\'");
+      binds.push(likePattern(term));
+    }
+  }
   if (input.tag !== undefined) {
     // EXISTS keeps the outer query join-free (no DISTINCT needed; COUNT stays correct).
     clauses.push(
@@ -161,11 +211,23 @@ export async function listBenchmarks(
   input: ListBenchmarksInput,
 ): Promise<{ rows: BenchmarkRow[]; total?: number }> {
   const where = benchmarkWhere(input);
-  const order = orderByClause(input.sort, (f) => BENCHMARK_COLUMNS[f], "id");
+  // Windowed popularity sorts join the per-day view buckets; everything else orders on a column.
+  const windowDays = VIEW_WINDOW_DAYS[input.sort.field];
+  let join = "";
+  const joinBinds: unknown[] = [];
+  let order: string;
+  if (windowDays !== undefined) {
+    join =
+      " LEFT JOIN (SELECT benchmark_id, SUM(views) AS window_views FROM benchmark_view_day WHERE day >= ? GROUP BY benchmark_id) wv ON wv.benchmark_id = benchmark.id";
+    joinBinds.push(windowCutoffDay(windowDays));
+    order = `ORDER BY coalesce(wv.window_views, 0) ${input.sort.desc ? "DESC" : "ASC"}, benchmark.id`;
+  } else {
+    order = orderByClause(input.sort, (f) => BENCHMARK_COLUMNS[f], "id");
+  }
   const rows = (
     await db
-      .prepare(`SELECT * FROM benchmark ${where.sql} ${order} LIMIT ? OFFSET ?`)
-      .bind(...where.binds, input.limit, input.offset)
+      .prepare(`SELECT benchmark.* FROM benchmark${join} ${where.sql} ${order} LIMIT ? OFFSET ?`)
+      .bind(...joinBinds, ...where.binds, input.limit, input.offset)
       .all<BenchmarkRow>()
   ).results;
 

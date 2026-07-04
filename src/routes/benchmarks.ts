@@ -19,10 +19,12 @@ import {
   getBenchmarkById,
   listBenchmarks,
   publishBenchmark,
+  refreshBenchmarkSearchText,
   setBenchmarkDraft,
   updateBenchmark,
   withdrawBenchmark,
 } from "../data/benchmarks";
+import { recordBenchmarkView } from "../data/views";
 import { LIMITS } from "../limits";
 import { getPublisherIdentityById } from "../data/publisher_identities";
 import { listVerifiedDomains } from "../data/publisher_domains";
@@ -48,6 +50,7 @@ import {
 import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
 import { getAuth, getOptionalAuth, optionalAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
+import { parseSearchQuery } from "../query/search";
 import {
   assertFrozenCompatible,
   parseSampleSchema,
@@ -68,7 +71,17 @@ import { assertBenchmarkEditable, readAttributes, readPagination, readSort } fro
 
 const EMPTY_SCHEMA: SampleSchema = { metrics: [], derived: [] };
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
-const SORT_ALLOWED = ["name", "created_at", "updated_at"] as const;
+const SORT_ALLOWED = [
+  "name",
+  "created_at",
+  "updated_at",
+  // Popularity: all-time, plus rolling windows over the per-day view buckets.
+  "views",
+  "views_today",
+  "views_week",
+  "views_month",
+  "views_year",
+] as const;
 
 /** filter[category]: SCREAMING_SNAKE_CASE enum, case-insensitive on input (ADR-014). */
 function readCategoryFilter(value: string | undefined): Category | undefined {
@@ -139,6 +152,7 @@ benchmarks.post("/", requireAuth, async (c) => {
     created_by_user_id: auth.user_id, // null when an API key creates it
   });
   if (tags.length > 0) await setBenchmarkTags(c.env.DB, row.id, tags);
+  await refreshBenchmarkSearchText(c.env.DB, row.id);
   return resourceResponse(serializeBenchmark(row, tags), { status: 201 });
 });
 
@@ -150,6 +164,8 @@ benchmarks.get("/", optionalAuth, async (c) => {
   const filterKey = c.req.query("filter[key]");
   const filterTag = c.req.query("filter[tag]");
   const filterCategory = readCategoryFilter(c.req.query("filter[category]"));
+  const filterSearch = c.req.query("filter[search]");
+  const searchTerms = filterSearch !== undefined ? parseSearchQuery(filterSearch) : undefined;
 
   // An account-authority caller viewing their own account sees every status; everyone else sees
   // only world-visible benchmarks.
@@ -165,6 +181,7 @@ benchmarks.get("/", optionalAuth, async (c) => {
     filterKey,
     tag: filterTag !== undefined ? normalizeTagKey(filterTag) : undefined,
     category: filterCategory,
+    searchTerms: searchTerms !== undefined && searchTerms.length > 0 ? searchTerms : undefined,
     sort,
     limit: pagination.limit,
     offset: pagination.offset,
@@ -222,6 +239,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     category,
   });
   await setBenchmarkTags(c.env.DB, existing.id, tags);
+  await refreshBenchmarkSearchText(c.env.DB, existing.id);
   return resourceResponse(serializeBenchmark(row as BenchmarkRow, tags));
 });
 
@@ -234,6 +252,18 @@ benchmarks.delete("/:id", requireAuth, async (c) => {
     );
   }
   await deleteBenchmarkCascade(c.env.DB, existing.id);
+  return noContentResponse();
+});
+
+// ── Popularity ───────────────────────────────────────────────────────────────
+
+// The view beacon: the public benchmark page fires this once per load. Unauthenticated,
+// fire-and-forget, best-effort by design — a raw view count, not an audited metric. Only
+// world-visible benchmarks count (private ones 404 without leaking existence).
+benchmarks.post("/:id/actions/view", async (c) => {
+  const row = await getBenchmarkById(c.env.DB, c.req.param("id"));
+  if (!row || !isPublicStatus(row.status)) throw new NotFoundError();
+  await recordBenchmarkView(c.env.DB, row.id);
   return noContentResponse();
 });
 

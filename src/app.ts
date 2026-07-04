@@ -37,15 +37,16 @@ function isPublicPage(p: string): boolean {
 export function createApp() {
   const app = new Hono<AppBindings>();
 
-  // CORS for the public API: the marketing website reads published data cross-origin. Only GETs are
-  // allowed cross-origin — every write comes from the same-origin console, so a foreign origin can
-  // read world-visible data but never mutate. Credentials are not allowed (published reads are
-  // unauthenticated). Same-origin console requests are unaffected (CORS is browser-enforced).
+  // CORS for the public API: the marketing website reads published data cross-origin, and its
+  // benchmark pages POST the unauthenticated view beacon. Auth-bearing writes all come from the
+  // same-origin console, carry credentials CORS never grants here (credentials are not allowed),
+  // and are gated by auth — CORS is the browser courtesy layer, not the security boundary.
+  // Same-origin console requests are unaffected (CORS is browser-enforced).
   app.use(
     "/api/*",
     cors({
       origin: (origin) => (isAllowedCorsOrigin(origin) ? origin : null),
-      allowMethods: ["GET"],
+      allowMethods: ["GET", "POST"],
       allowHeaders: ["Accept", "Content-Type"],
       maxAge: 86400,
     }),

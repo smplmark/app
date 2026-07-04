@@ -193,6 +193,10 @@ export interface BenchmarkRow {
   attribution_snapshot: string | null;
   /** One coarse browse bucket (the nav rail). Tags carry the flexible long tail. */
   category: Category;
+  /** Lowercased concatenation of the searchable fields — filter[search]'s low-tech index. */
+  search_text: string;
+  /** All-time view count (the popularity beacon increments it; windows live in benchmark_view_day). */
+  views_total: number;
   created_at: number;
   updated_at: number;
 }

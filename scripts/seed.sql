@@ -10,14 +10,14 @@
 --       -d '{"data":{"type":"observation","attributes":{"run":"run-scheduler-a"}}}'
 
 DELETE FROM observation; DELETE FROM run; DELETE FROM target;
-DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark;
+DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark_view_day; DELETE FROM benchmark;
 DELETE FROM api_key; DELETE FROM email_verification; DELETE FROM session;
 DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE FROM user;
 
 INSERT INTO user (id, email, email_verified, display_name, created_at) VALUES
   ('usr-dev', 'dev@smplkit.test', 1, 'smplkit dev', 1782864000000);
 INSERT INTO user_identity (id, user_id, provider, provider_subject, password_hash, created_at) VALUES
-  ('93393daf-d469-4f56-a9a2-aee9fb090d33', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$gp4F9x9_HluPHmmKo-izlA$u2b-VpkFr_MemMcv0WL7kKzOqoTuk5vFBPRTxe-pQy4', 1782864000000);
+  ('92432613-907a-4121-97ba-7ddc3990685b', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$gSXi4NPzZ9YqUpbUetvuNQ$MXii0fVdWyNzDdrC4EiaHyuhg8cNt__QNAmoQ42tbc0', 1782864000000);
 
 -- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
 INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
@@ -36,8 +36,8 @@ Every target is a scheduler set to run once a minute. When it fires, it sends a 
 skew_ms is computed on read as arrival − floor(arrival ÷ 60000) × 60000. Because it is computed on read, the definition can be refined without migrating a single row.', 'PUBLISHED', 1782864000000, NULL, NULL, '{"metrics":[],"derived":[{"name":"skew_ms","unit":"ms","description":"Milliseconds past the top of the minute the beacon arrived. Lower is more punctual; 0 means the job fired exactly on the minute boundary.","expr":{"minute_offset_ms":[{"var":"created_at"}]}}],"chart":{"x":"created_at","y":"skew_ms","x_kind":"TIME"}}', 1782864000000, 1782864000000, 'usr-dev', 0, 'usr-dev', 'PERSONAL', NULL, '{"display_name":"smplkit dev","email_sha256":"182333200e73408dbbbfcc494415d2992213bd37ec46cfb286c9b0f2518ca85c"}', 'OTHER');
 
 INSERT INTO tag (id, key, created_at) VALUES
-  ('4fd55272-960e-4af3-b574-3fb859ce418f', 'scheduler', 1782864000000),
-  ('e6a14d43-187f-4a58-a628-fb10d81e0929', 'latency', 1782864000000);
+  ('04b3ff7a-07f0-4a69-b3a7-f3b0f188d25f', 'scheduler', 1782864000000),
+  ('ee628795-55b5-4a76-98cc-6e66ac5a4718', 'latency', 1782864000000);
 INSERT INTO benchmark_tag (benchmark_id, tag_id, created_at)
   SELECT 'bench-scheduler-latency', id, 1782864000000 FROM tag;
 
@@ -50,7 +50,7 @@ INSERT INTO run (id, target_id, key, name, details, started_at, ended_at, invali
   ('run-scheduler-b', 'tgt-scheduler-b', 'default', 'default', NULL, 1782900000000, NULL, NULL, NULL, NULL, 1782864000000, 1782864000000);
 
 INSERT INTO api_key (id, account_id, name, scope_type, scope_ref, key_hash, key_encrypted, prefix, expires_at, created_by_user_id, revoked_at, last_used_at, created_at) VALUES
-  ('df21470c-a34a-491c-8225-09fe88f38d3d', 'acct-smplkit', 'scheduler-a ingest', 'RUN', 'run-scheduler-a', '11af306ecb935987c21c293a43cdceb3875176de17c379123e08bb84987c0862', 'WVO6aGktPEPAYDxwyU9GL1MJWakcFgnHadHnm2ZAJwOwq53jaQSAyFLTmkexS3plqR+eAoGlYsh082FoZZEa/4A2jWqdN1Y/GBo=', 'sm_api_devlocal', NULL, 'usr-dev', NULL, NULL, 1782864000000);
+  ('d56207ce-44d0-4e25-9ec5-8738157d6285', 'acct-smplkit', 'scheduler-a ingest', 'RUN', 'run-scheduler-a', '11af306ecb935987c21c293a43cdceb3875176de17c379123e08bb84987c0862', 'd0dz8rGKjifQ9kOHaty0FnNm4QKWn+9HlAuFVnPWGU8YwYtuzg5H78Q0hTi2zjbIzLb1dd79YyRSfk5xY9L2E3ETLkcyc8RNfvM=', 'sm_api_devlocal', NULL, 'usr-dev', NULL, NULL, 1782864000000);
 
 INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES
   ('run-scheduler-a', 1782900000020, NULL, NULL, NULL),
@@ -295,3 +295,12 @@ INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES
   ('run-scheduler-b', 1782907020329, NULL, NULL, NULL),
   ('run-scheduler-b', 1782907080401, NULL, NULL, NULL),
   ('run-scheduler-b', 1782907140447, NULL, NULL, NULL);
+
+-- Rebuild the search index (same expression as migration 0005 / src/data/benchmarks.ts).
+UPDATE benchmark SET search_text = lower(
+  coalesce(key, '') || ' ' || coalesce(name, '') || ' ' || coalesce(description, '') || ' ' ||
+  coalesce(about, '') || ' ' || coalesce(methodology, '') || ' ' || coalesce(category, '') || ' ' ||
+  coalesce((SELECT group_concat(t.key, ' ') FROM benchmark_tag bt JOIN tag t ON t.id = bt.tag_id
+            WHERE bt.benchmark_id = benchmark.id), '') || ' ' ||
+  coalesce(json_extract(attribution_snapshot, '$.source_name'), '')
+);

@@ -144,6 +144,7 @@ describe("serializeBenchmark", () => {
     created_by_user_id: "u1", draft: 1,
     published_by_user_id: null, published_as_kind: null, published_identity_id: null,
     attribution_snapshot: null, category: "OTHER",
+    search_text: "", views_total: 0,
     created_at: T0, updated_at: T0,
   };
 
@@ -155,6 +156,7 @@ describe("serializeBenchmark", () => {
     expect(out.attributes.created_by).toBe("u1");
     expect(out.attributes.category).toBe("OTHER");
     expect(out.attributes.tags).toEqual([]);
+    expect(out.attributes.views).toBe(0);
     expect(out.attributes.published_at).toBeNull();
     expect(out.attributes.withdrawn_at).toBeNull();
     expect(out.attributes).not.toHaveProperty("published_by");

@@ -204,6 +204,7 @@ export function serializeBenchmark(
     sample_schema: parseSampleSchema(row.sample_schema),
     category: row.category,
     tags: [...tags],
+    views: row.views_total,
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
   };

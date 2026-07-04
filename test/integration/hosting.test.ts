@@ -72,7 +72,7 @@ describe("public API CORS", () => {
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("does not offer cross-origin writes (GET only)", async () => {
+  it("offers cross-origin GET and POST (the view beacon) but never credentials", async () => {
     const res = await fetchNoFollow("http://smplmark.test/api/v1/benchmarks", {
       method: "OPTIONS",
       headers: {
@@ -80,7 +80,11 @@ describe("public API CORS", () => {
         "Access-Control-Request-Method": "POST",
       },
     });
-    // The allowed-methods list is GET only, so a browser blocks the cross-origin POST.
-    expect(res.headers.get("access-control-allow-methods")).not.toContain("POST");
+    // POST is allowed cross-origin for the unauthenticated view beacon; auth-bearing writes are
+    // still gated by auth itself, and credentials are never granted cross-origin.
+    const methods = res.headers.get("access-control-allow-methods") ?? "";
+    expect(methods).toContain("GET");
+    expect(methods).toContain("POST");
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
   });
 });

@@ -15,6 +15,7 @@ describe("test harness", () => {
       "api_key",
       "benchmark",
       "benchmark_tag",
+      "benchmark_view_day",
       "email_verification",
       "invitation",
       "observation",
