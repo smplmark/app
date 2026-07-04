@@ -373,14 +373,18 @@ const apiKey = registerEntity(
 const PublishedAs = z
   .object({
     kind: z
-      .enum(["PERSONAL", "ORGANIZATION"])
-      .openapi({ description: "How the benchmark is attributed: PERSONAL (its author) or ORGANIZATION (a publisher identity)." }),
+      .enum(["PERSONAL", "ORGANIZATION", "INGESTED"])
+      .openapi({ description: "How the benchmark is attributed: PERSONAL (its author), ORGANIZATION (a publisher identity), or INGESTED (openly licensed results imported from a third-party source)." }),
     identity: z.string().nullable().optional().openapi({ description: "The publisher identity the benchmark was published under (ORGANIZATION only). Null if that identity has since been deleted." }),
     name: z.string().optional().openapi({ description: "The organization brand name captured at publish (ORGANIZATION only)." }),
     logo_url: z.string().nullable().optional().openapi({ description: "The organization logo captured at publish (ORGANIZATION only), or null." }),
     verified_domains: z.array(z.string()).optional().openapi({ description: "The domains that were verified at the instant of publish (ORGANIZATION only)." }),
     display_name: z.string().nullable().optional().openapi({ description: "The author's display name captured at publish (PERSONAL only), or null." }),
     gravatar_hash: z.string().optional().openapi({ description: "A SHA-256 hash of the author's email captured at publish (PERSONAL only), for rendering an avatar." }),
+    source_name: z.string().optional().openapi({ description: "The name of the source the results were ingested from (INGESTED only), e.g. \"Blender Open Data\"." }),
+    source_url: z.string().optional().openapi({ description: "A link back to the source's original data (INGESTED only)." }),
+    license: z.string().optional().openapi({ description: "The source's license for the ingested results (INGESTED only), e.g. \"CC0\"." }),
+    retrieved_at: dateTime("When the ingested data was retrieved from the source (INGESTED only).").optional(),
   })
   .openapi("PublishedAs", {
     description:
@@ -408,6 +412,12 @@ const benchmark = registerEntity(
     withdrawn_at: dateTime("When the benchmark was withdrawn, or null.").nullable(),
     withdrawal_reason: z.string().nullable().openapi({ description: "The stated reason the benchmark was withdrawn, or null." }),
     sample_schema: SampleSchema,
+    category: z
+      .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
+      .openapi({ description: "The benchmark's coarse browse category. Exactly one per benchmark; tags carry finer-grained classification." }),
+    tags: z
+      .array(z.string())
+      .openapi({ description: "The benchmark's tags: lowercase slugs, sorted alphabetically." }),
     created_at: dateTime("When the benchmark was created."),
     updated_at: dateTime("When the benchmark was last updated."),
   }),
@@ -418,6 +428,14 @@ const benchmark = registerEntity(
     about: z.string().optional().openapi({ description: "A longer description of the benchmark." }),
     methodology: z.string().optional().openapi({ description: "How the benchmark is run and measured." }),
     sample_schema: SampleSchema.optional(),
+    category: z
+      .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
+      .optional()
+      .openapi({ description: "The benchmark's coarse browse category. Defaults to OTHER when omitted." }),
+    tags: z
+      .array(z.string())
+      .optional()
+      .openapi({ description: "The benchmark's tags: up to 20 lowercase slugs (letters, digits, \".\", \"_\", \"-\"; at most 40 characters each). Replaced as a set on update; omitting the field clears them." }),
   }),
 );
 
@@ -1123,6 +1141,8 @@ registry.registerPath({
   parameters: [
     filterParam("account", "Limit results to benchmarks owned by this account id."),
     filterParam("key", "Limit results to the benchmark with this key."),
+    filterParam("tag", "Limit results to benchmarks carrying this tag (exact match on the tag's lowercase slug)."),
+    filterParam("category", "Limit results to benchmarks in this category: HARDWARE, DATABASE, ML_AI, STORAGE, NETWORK, or OTHER."),
     ...paginationParams,
   ],
   responses: {

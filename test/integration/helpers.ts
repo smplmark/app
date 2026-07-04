@@ -18,6 +18,8 @@ const TABLES = [
   "observation",
   "run",
   "target",
+  "benchmark_tag",
+  "tag",
   "benchmark",
   "publisher_domain",
   "publisher_identity",

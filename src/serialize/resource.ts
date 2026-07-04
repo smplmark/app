@@ -10,6 +10,7 @@ import type {
   AccountUserRow,
   ApiKeyRow,
   BenchmarkRow,
+  IngestedAttributionSnapshot,
   InvitationRow,
   ObservationRow,
   OrgAttributionSnapshot,
@@ -164,6 +165,16 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
       verified_domains: snap.verified_domains,
     };
   }
+  if (row.published_as_kind === "INGESTED") {
+    const snap = JSON.parse(row.attribution_snapshot) as IngestedAttributionSnapshot;
+    return {
+      kind: "INGESTED",
+      source_name: snap.source_name,
+      source_url: snap.source_url,
+      license: snap.license,
+      retrieved_at: iso(snap.retrieved_at),
+    };
+  }
   const snap = JSON.parse(row.attribution_snapshot) as PersonalAttributionSnapshot;
   return {
     kind: "PERSONAL",
@@ -172,7 +183,11 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
   };
 }
 
-export function serializeBenchmark(row: BenchmarkRow): ResourceObject {
+/** `tags` comes from the benchmark_tag join — callers fetch it alongside the row(s). */
+export function serializeBenchmark(
+  row: BenchmarkRow,
+  tags: readonly string[],
+): ResourceObject {
   const attributes: Record<string, unknown> = {
     account: row.account_id,
     key: row.key,
@@ -187,6 +202,8 @@ export function serializeBenchmark(row: BenchmarkRow): ResourceObject {
     withdrawn_at: isoOrNull(row.withdrawn_at),
     withdrawal_reason: row.withdrawal_reason,
     sample_schema: parseSampleSchema(row.sample_schema),
+    category: row.category,
+    tags: [...tags],
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
   };

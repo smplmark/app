@@ -13,7 +13,10 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    // The ingestion lib is plain ESM JS with JSDoc types (// @ts-check opts each file in);
+    // allowJs lets tests import it and tsc type-check it.
+    "allowJs": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
 }

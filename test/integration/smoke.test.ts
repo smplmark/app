@@ -14,6 +14,7 @@ describe("test harness", () => {
       "account_user",
       "api_key",
       "benchmark",
+      "benchmark_tag",
       "email_verification",
       "invitation",
       "observation",
@@ -21,10 +22,23 @@ describe("test harness", () => {
       "publisher_identity",
       "run",
       "session",
+      "tag",
       "target",
       "user",
       "user_identity",
     ]);
+  });
+
+  it("seeds the built-in system account (0004) — owner of all ingested benchmarks", async () => {
+    // Runs before this file's inserts and without resetDb, so the migration's seed row is intact.
+    const row = await env.DB.prepare("SELECT id, key, name FROM account WHERE id = 'acct-system'")
+      .first<{ id: string; key: string; name: string }>();
+    expect(row).not.toBeNull();
+    expect(row?.key).toBe("system");
+    const members = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM account_user WHERE account_id = 'acct-system'",
+    ).first<{ n: number }>();
+    expect(members?.n).toBe(0);
   });
 
   it("can insert and read back through the D1 binding", async () => {

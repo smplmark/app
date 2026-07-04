@@ -44,9 +44,34 @@ export const PUBLISHER_DOMAIN_STATUSES: readonly PublisherDomainStatus[] = [
   "LAPSED",
 ];
 
-/** How a published benchmark is attributed: to its author (personal) or an org brand. */
-export type PublishedKind = "PERSONAL" | "ORGANIZATION";
-export const PUBLISHED_KINDS: readonly PublishedKind[] = ["PERSONAL", "ORGANIZATION"];
+/**
+ * How a published benchmark is attributed: to its author (personal), an org brand, or — for open
+ * reference data seeded by the ingestion importer — its third-party source. INGESTED is never
+ * settable through the API; only the importer writes it.
+ */
+export type PublishedKind = "PERSONAL" | "ORGANIZATION" | "INGESTED";
+export const PUBLISHED_KINDS: readonly PublishedKind[] = [
+  "PERSONAL",
+  "ORGANIZATION",
+  "INGESTED",
+];
+
+/** One coarse browse bucket per benchmark (the nav rail); tags carry the flexible long tail. */
+export type Category =
+  | "HARDWARE"
+  | "DATABASE"
+  | "ML_AI"
+  | "STORAGE"
+  | "NETWORK"
+  | "OTHER";
+export const CATEGORIES: readonly Category[] = [
+  "HARDWARE",
+  "DATABASE",
+  "ML_AI",
+  "STORAGE",
+  "NETWORK",
+  "OTHER",
+];
 
 // ── Identity & tenancy ───────────────────────────────────────────────────────
 
@@ -166,8 +191,23 @@ export interface BenchmarkRow {
   published_identity_id: string | null;
   /** JSON AttributionSnapshot, frozen at publish; null until published. */
   attribution_snapshot: string | null;
+  /** One coarse browse bucket (the nav rail). Tags carry the flexible long tail. */
+  category: Category;
   created_at: number;
   updated_at: number;
+}
+
+export interface TagRow {
+  id: string;
+  /** Lowercase slug — a free-form string, not a SCREAMING_SNAKE_CASE enum. */
+  key: string;
+  created_at: number;
+}
+
+export interface BenchmarkTagRow {
+  benchmark_id: string;
+  tag_id: string;
+  created_at: number;
 }
 
 /** The frozen-at-publish attribution for an ORGANIZATION publish. */
@@ -183,6 +223,21 @@ export interface PersonalAttributionSnapshot {
   display_name: string | null;
   /** SHA-256 of the author's normalized email at publish (for a stable gravatar). */
   email_sha256: string;
+}
+
+/**
+ * The frozen attribution for an INGESTED benchmark — written by the ingestion importer at insert
+ * time (ingested benchmarks are born PUBLISHED; there is no API publish path for them).
+ */
+export interface IngestedAttributionSnapshot {
+  /** e.g. "Blender Open Data". */
+  source_name: string;
+  /** Link back to the original data. */
+  source_url: string;
+  /** The source's license for the ingested results, e.g. "CC0". */
+  license: string;
+  /** When the archive snapshot this build came from was pulled (epoch-ms). */
+  retrieved_at: number;
 }
 
 export interface PublisherIdentityRow {

@@ -1,6 +1,12 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
-import type { BenchmarkRow, PublishedKind, SampleSchema, Status } from "../types";
+import type {
+  BenchmarkRow,
+  Category,
+  PublishedKind,
+  SampleSchema,
+  Status,
+} from "../types";
 import { isUniqueViolation } from "./d1";
 
 export interface CreateBenchmarkInput {
@@ -11,6 +17,7 @@ export interface CreateBenchmarkInput {
   about: string | null;
   methodology: string | null;
   sample_schema: SampleSchema;
+  category: Category;
   /** The creating user, or null if an API key created it. */
   created_by_user_id: string | null;
 }
@@ -39,13 +46,14 @@ export async function createBenchmark(
     published_as_kind: null,
     published_identity_id: null,
     attribution_snapshot: null,
+    category: input.category,
     created_at: now,
     updated_at: now,
   };
   try {
     await db
       .prepare(
-        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?)",
+        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
       )
       .bind(
         row.id,
@@ -59,6 +67,7 @@ export async function createBenchmark(
         row.sample_schema,
         row.created_by_user_id,
         row.draft,
+        row.category,
         row.created_at,
         row.updated_at,
       )
@@ -91,6 +100,9 @@ export interface ListBenchmarksInput {
   statuses?: Status[];
   accountId?: string;
   filterKey?: string;
+  /** Exact-match on a tag key (normalized slug). */
+  tag?: string;
+  category?: Category;
   sort: Sort;
   limit: number;
   offset: number;
@@ -117,6 +129,17 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
   if (input.filterKey !== undefined) {
     clauses.push("key = ?");
     binds.push(input.filterKey);
+  }
+  if (input.category !== undefined) {
+    clauses.push("category = ?");
+    binds.push(input.category);
+  }
+  if (input.tag !== undefined) {
+    // EXISTS keeps the outer query join-free (no DISTINCT needed; COUNT stays correct).
+    clauses.push(
+      "EXISTS (SELECT 1 FROM benchmark_tag JOIN tag ON tag.id = benchmark_tag.tag_id WHERE benchmark_tag.benchmark_id = benchmark.id AND tag.key = ?)",
+    );
+    binds.push(input.tag);
   }
   return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", binds };
 }
@@ -152,6 +175,8 @@ export interface UpdateBenchmarkInput {
   about: string | null;
   methodology: string | null;
   sample_schema: SampleSchema;
+  /** Browse metadata — editable at any status, like `name`. */
+  category: Category;
 }
 
 export async function updateBenchmark(
@@ -168,11 +193,12 @@ export async function updateBenchmark(
     about: input.about,
     methodology: input.methodology,
     sample_schema: JSON.stringify(input.sample_schema),
+    category: input.category,
     updated_at: Date.now(),
   };
   await db
     .prepare(
-      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, sample_schema=?, updated_at=? WHERE id=?",
+      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, sample_schema=?, category=?, updated_at=? WHERE id=?",
     )
     .bind(
       updated.name,
@@ -180,6 +206,7 @@ export async function updateBenchmark(
       updated.about,
       updated.methodology,
       updated.sample_schema,
+      updated.category,
       updated.updated_at,
       id,
     )
@@ -261,6 +288,7 @@ export async function deleteBenchmarkCascade(db: D1Database, id: string): Promis
       )
       .bind(id),
     db.prepare("DELETE FROM target WHERE benchmark_id = ?").bind(id),
+    db.prepare("DELETE FROM benchmark_tag WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark WHERE id = ?").bind(id),
   ]);
 }

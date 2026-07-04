@@ -9,26 +9,37 @@
 --       -H "Content-Type: application/vnd.api+json" \
 --       -d '{"data":{"type":"observation","attributes":{"run":"run-scheduler-a"}}}'
 
-DELETE FROM observation; DELETE FROM run; DELETE FROM target; DELETE FROM benchmark;
+DELETE FROM observation; DELETE FROM run; DELETE FROM target;
+DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark;
 DELETE FROM api_key; DELETE FROM email_verification; DELETE FROM session;
 DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE FROM user;
 
 INSERT INTO user (id, email, email_verified, display_name, created_at) VALUES
   ('usr-dev', 'dev@smplkit.test', 1, 'smplkit dev', 1782864000000);
 INSERT INTO user_identity (id, user_id, provider, provider_subject, password_hash, created_at) VALUES
-  ('146eb7e5-596b-4f1b-b05d-4f48512d35bd', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$FHx_2RdRsU-eN75GqCpfUw$BYDkOO60a3_sAfIs2IDgejASqGJFU1y9YP62O8Jdbsk', 1782864000000);
+  ('93393daf-d469-4f56-a9a2-aee9fb090d33', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$gp4F9x9_HluPHmmKo-izlA$u2b-VpkFr_MemMcv0WL7kKzOqoTuk5vFBPRTxe-pQy4', 1782864000000);
 
-INSERT INTO account (id, key, name, description, url, created_at) VALUES
-  ('acct-smplkit', 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services. Scheduler Latency is smplkit dogfooding smplmark to keep its own schedulers honest.', 'https://smplkit.com', 1782864000000);
+-- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
+INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
+  ('acct-system', 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, 1782864000000, 0);
+
+INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
+  ('acct-smplkit', 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services. Scheduler Latency is smplkit dogfooding smplmark to keep its own schedulers honest.', 'https://smplkit.com', 1782864000000, 1);
 INSERT INTO account_user (account_id, user_id, role, created_at) VALUES
   ('acct-smplkit', 'usr-dev', 'OWNER', 1782864000000);
 
-INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_at, updated_at) VALUES
+INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, sample_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category) VALUES
   ('bench-scheduler-latency', 'acct-smplkit', 'scheduler-latency', 'Scheduler Latency', 'How punctual are scheduled jobs, really?', 'Scheduler Latency measures how close to the top of each minute a scheduled job actually fires.
 
 Every target is a scheduler set to run once a minute. When it fires, it sends a bare-timestamp beacon to smplmark — no payload, just the fact that it ran. The skew (milliseconds past the minute the beacon landed) is derived from that arrival time when the data is read.', 'Each target POSTs an empty beacon to /api/v1/observations on a one-minute cron, authenticated by a run-scoped API key. The server stamps the UTC arrival time and stores nothing else.
 
-skew_ms is computed on read as arrival − floor(arrival ÷ 60000) × 60000. Because it is computed on read, the definition can be refined without migrating a single row.', 'PUBLISHED', 1782864000000, NULL, NULL, '{"metrics":[],"derived":[{"name":"skew_ms","unit":"ms","description":"Milliseconds past the top of the minute the beacon arrived. Lower is more punctual; 0 means the job fired exactly on the minute boundary.","expr":{"minute_offset_ms":[{"var":"created_at"}]}}],"chart":{"x":"created_at","y":"skew_ms","x_kind":"TIME"}}', 1782864000000, 1782864000000);
+skew_ms is computed on read as arrival − floor(arrival ÷ 60000) × 60000. Because it is computed on read, the definition can be refined without migrating a single row.', 'PUBLISHED', 1782864000000, NULL, NULL, '{"metrics":[],"derived":[{"name":"skew_ms","unit":"ms","description":"Milliseconds past the top of the minute the beacon arrived. Lower is more punctual; 0 means the job fired exactly on the minute boundary.","expr":{"minute_offset_ms":[{"var":"created_at"}]}}],"chart":{"x":"created_at","y":"skew_ms","x_kind":"TIME"}}', 1782864000000, 1782864000000, 'usr-dev', 0, 'usr-dev', 'PERSONAL', NULL, '{"display_name":"smplkit dev","email_sha256":"182333200e73408dbbbfcc494415d2992213bd37ec46cfb286c9b0f2518ca85c"}', 'OTHER');
+
+INSERT INTO tag (id, key, created_at) VALUES
+  ('4fd55272-960e-4af3-b574-3fb859ce418f', 'scheduler', 1782864000000),
+  ('e6a14d43-187f-4a58-a628-fb10d81e0929', 'latency', 1782864000000);
+INSERT INTO benchmark_tag (benchmark_id, tag_id, created_at)
+  SELECT 'bench-scheduler-latency', id, 1782864000000 FROM tag;
 
 INSERT INTO target (id, benchmark_id, key, name, details, created_at, updated_at) VALUES
   ('tgt-scheduler-a', 'bench-scheduler-latency', 'scheduler-a', 'Scheduler A', NULL, 1782864000000, 1782864000000),
@@ -39,7 +50,7 @@ INSERT INTO run (id, target_id, key, name, details, started_at, ended_at, invali
   ('run-scheduler-b', 'tgt-scheduler-b', 'default', 'default', NULL, 1782900000000, NULL, NULL, NULL, NULL, 1782864000000, 1782864000000);
 
 INSERT INTO api_key (id, account_id, name, scope_type, scope_ref, key_hash, key_encrypted, prefix, expires_at, created_by_user_id, revoked_at, last_used_at, created_at) VALUES
-  ('40e11513-6584-4a55-9ede-96cd6f078aa3', 'acct-smplkit', 'scheduler-a ingest', 'RUN', 'run-scheduler-a', '11af306ecb935987c21c293a43cdceb3875176de17c379123e08bb84987c0862', '7Nf0az6/5XhIw3/fmkSVb7TKSwL5cgFThtUFGI2piM+K/Q2gdLIG5aMr3uBgFncoDBESF0x+S/rWY+ceKosUH0RinswV5Jdh0KM=', 'sm_api_devlocal', NULL, 'usr-dev', NULL, NULL, 1782864000000);
+  ('df21470c-a34a-491c-8225-09fe88f38d3d', 'acct-smplkit', 'scheduler-a ingest', 'RUN', 'run-scheduler-a', '11af306ecb935987c21c293a43cdceb3875176de17c379123e08bb84987c0862', 'WVO6aGktPEPAYDxwyU9GL1MJWakcFgnHadHnm2ZAJwOwq53jaQSAyFLTmkexS3plqR+eAoGlYsh082FoZZEa/4A2jWqdN1Y/GBo=', 'sm_api_devlocal', NULL, 'usr-dev', NULL, NULL, 1782864000000);
 
 INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES
   ('run-scheduler-a', 1782900000020, NULL, NULL, NULL),

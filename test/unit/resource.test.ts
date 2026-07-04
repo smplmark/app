@@ -143,16 +143,18 @@ describe("serializeBenchmark", () => {
     sample_schema: "{}",
     created_by_user_id: "u1", draft: 1,
     published_by_user_id: null, published_as_kind: null, published_identity_id: null,
-    attribution_snapshot: null,
+    attribution_snapshot: null, category: "OTHER",
     created_at: T0, updated_at: T0,
   };
 
   it("surfaces draft/created_by, omits published_* while unpublished, and never leaks account_id", () => {
-    const out = serializeBenchmark(priv);
+    const out = serializeBenchmark(priv, []);
     expect(out.type).toBe("benchmark");
     expect(out.attributes.account).toBe("a1");
     expect(out.attributes.draft).toBe(true);
     expect(out.attributes.created_by).toBe("u1");
+    expect(out.attributes.category).toBe("OTHER");
+    expect(out.attributes.tags).toEqual([]);
     expect(out.attributes.published_at).toBeNull();
     expect(out.attributes.withdrawn_at).toBeNull();
     expect(out.attributes).not.toHaveProperty("published_by");
@@ -161,7 +163,16 @@ describe("serializeBenchmark", () => {
   });
 
   it("null created_by for an API-key-created benchmark", () => {
-    expect(serializeBenchmark({ ...priv, created_by_user_id: null }).attributes.created_by).toBeNull();
+    expect(serializeBenchmark({ ...priv, created_by_user_id: null }, []).attributes.created_by).toBeNull();
+  });
+
+  it("surfaces category and the caller-supplied tag keys", () => {
+    const out = serializeBenchmark(
+      { ...priv, category: "HARDWARE" },
+      ["gpu", "rendering"],
+    );
+    expect(out.attributes.category).toBe("HARDWARE");
+    expect(out.attributes.tags).toEqual(["gpu", "rendering"]);
   });
 
   it("renders a PERSONAL attribution badge from the frozen snapshot", () => {
@@ -170,7 +181,7 @@ describe("serializeBenchmark", () => {
       published_by_user_id: "u1", published_as_kind: "PERSONAL",
       attribution_snapshot: JSON.stringify({ display_name: "Ada", email_sha256: "abc123" }),
     };
-    const out = serializeBenchmark(row);
+    const out = serializeBenchmark(row, []);
     expect(out.attributes.draft).toBe(false);
     expect(out.attributes.published_by).toBe("u1");
     expect(out.attributes.published_as).toEqual({
@@ -186,7 +197,7 @@ describe("serializeBenchmark", () => {
       published_by_user_id: "admin1", published_as_kind: "ORGANIZATION", published_identity_id: "pi1",
       attribution_snapshot: JSON.stringify({ name: "Acme", logo_url: null, verified_domains: ["acme.com", "acme.io"] }),
     };
-    const out = serializeBenchmark(row);
+    const out = serializeBenchmark(row, []);
     expect(out.attributes.status).toBe("WITHDRAWN");
     expect(out.attributes.withdrawal_reason).toBe("bad data");
     expect(out.attributes.sample_schema).toEqual({ metrics: [], derived: [] });
@@ -194,6 +205,28 @@ describe("serializeBenchmark", () => {
     expect(out.attributes.published_as).toEqual({
       kind: "ORGANIZATION", identity: "pi1", name: "Acme", logo_url: null,
       verified_domains: ["acme.com", "acme.io"],
+    });
+  });
+
+  it("renders an INGESTED attribution badge with source provenance and an ISO retrieved_at", () => {
+    const row: BenchmarkRow = {
+      ...priv, status: "PUBLISHED", draft: 0, published_at: T0, category: "HARDWARE",
+      published_by_user_id: null, published_as_kind: "INGESTED",
+      attribution_snapshot: JSON.stringify({
+        source_name: "Blender Open Data",
+        source_url: "https://opendata.blender.org",
+        license: "CC0",
+        retrieved_at: T0,
+      }),
+    };
+    const out = serializeBenchmark(row, ["rendering"]);
+    expect(out.attributes.published_by).toBeNull();
+    expect(out.attributes.published_as).toEqual({
+      kind: "INGESTED",
+      source_name: "Blender Open Data",
+      source_url: "https://opendata.blender.org",
+      license: "CC0",
+      retrieved_at: ISO0,
     });
   });
 });

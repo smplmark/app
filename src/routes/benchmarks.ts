@@ -24,6 +24,13 @@ import {
 } from "../data/benchmarks";
 import { getPublisherIdentityById } from "../data/publisher_identities";
 import { listVerifiedDomains } from "../data/publisher_domains";
+import {
+  listTagsForBenchmark,
+  listTagsForBenchmarks,
+  normalizeTagKey,
+  optionalTags,
+  setBenchmarkTags,
+} from "../data/tags";
 import { getUserById } from "../data/users";
 import {
   BadRequestError,
@@ -32,6 +39,7 @@ import {
   NotFoundError,
 } from "../errors";
 import {
+  optionalEnum,
   optionalStringOrNull,
   requireString,
 } from "../http/body";
@@ -44,19 +52,33 @@ import {
   validateSampleSchema,
 } from "../schema/sample_schema";
 import { serializeBenchmark } from "../serialize/resource";
-import type {
-  AuthContext,
-  BenchmarkRow,
-  OrgAttributionSnapshot,
-  PersonalAttributionSnapshot,
-  SampleSchema,
-  Status,
+import {
+  CATEGORIES,
+  type AuthContext,
+  type BenchmarkRow,
+  type Category,
+  type OrgAttributionSnapshot,
+  type PersonalAttributionSnapshot,
+  type SampleSchema,
+  type Status,
 } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
 const EMPTY_SCHEMA: SampleSchema = { metrics: [], derived: [] };
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = ["name", "created_at", "updated_at"] as const;
+
+/** filter[category]: SCREAMING_SNAKE_CASE enum, case-insensitive on input (ADR-014). */
+function readCategoryFilter(value: string | undefined): Category | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.toUpperCase();
+  if ((CATEGORIES as readonly string[]).includes(normalized)) {
+    return normalized as Category;
+  }
+  throw new BadRequestError(
+    `filter[category] must be one of: ${CATEGORIES.join(", ")}.`,
+  );
+}
 
 export const benchmarks = new Hono<AppBindings>();
 
@@ -94,6 +116,8 @@ benchmarks.post("/", requireAuth, async (c) => {
   const methodology = optionalStringOrNull(attrs, "methodology") ?? null;
   const sample_schema =
     "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
+  const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
+  const tags = optionalTags(attrs) ?? [];
 
   const row = await createBenchmark(c.env.DB, {
     account_id: auth.account_id,
@@ -103,9 +127,11 @@ benchmarks.post("/", requireAuth, async (c) => {
     about,
     methodology,
     sample_schema,
+    category,
     created_by_user_id: auth.user_id, // null when an API key creates it
   });
-  return resourceResponse(serializeBenchmark(row), { status: 201 });
+  if (tags.length > 0) await setBenchmarkTags(c.env.DB, row.id, tags);
+  return resourceResponse(serializeBenchmark(row, tags), { status: 201 });
 });
 
 benchmarks.get("/", optionalAuth, async (c) => {
@@ -114,6 +140,8 @@ benchmarks.get("/", optionalAuth, async (c) => {
   const sort = readSort(c, "-created_at", SORT_ALLOWED);
   const filterAccount = c.req.query("filter[account]");
   const filterKey = c.req.query("filter[key]");
+  const filterTag = c.req.query("filter[tag]");
+  const filterCategory = readCategoryFilter(c.req.query("filter[category]"));
 
   // An account-authority caller viewing their own account sees every status; everyone else sees
   // only world-visible benchmarks.
@@ -127,14 +155,21 @@ benchmarks.get("/", optionalAuth, async (c) => {
     statuses: ownerView ? undefined : PUBLIC_STATUSES,
     accountId: filterAccount,
     filterKey,
+    tag: filterTag !== undefined ? normalizeTagKey(filterTag) : undefined,
+    category: filterCategory,
     sort,
     limit: pagination.limit,
     offset: pagination.offset,
     includeTotal: pagination.includeTotal,
   });
-  return collectionResponse(rows.map(serializeBenchmark), {
-    meta: { pagination: paginationMeta(pagination, total) },
-  });
+  const tagsByBenchmark = await listTagsForBenchmarks(
+    c.env.DB,
+    rows.map((r) => r.id),
+  );
+  return collectionResponse(
+    rows.map((r) => serializeBenchmark(r, tagsByBenchmark.get(r.id) ?? [])),
+    { meta: { pagination: paginationMeta(pagination, total) } },
+  );
 });
 
 benchmarks.get("/:id", optionalAuth, async (c) => {
@@ -146,7 +181,9 @@ benchmarks.get("/:id", optionalAuth, async (c) => {
       throw new NotFoundError();
     }
   }
-  return resourceResponse(serializeBenchmark(row));
+  return resourceResponse(
+    serializeBenchmark(row, await listTagsForBenchmark(c.env.DB, row.id)),
+  );
 });
 
 benchmarks.put("/:id", requireAuth, async (c) => {
@@ -159,6 +196,9 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const methodology = optionalStringOrNull(attrs, "methodology") ?? null;
   const sample_schema =
     "sample_schema" in attrs ? validateSampleSchema(attrs.sample_schema) : EMPTY_SCHEMA;
+  // Full-replace semantics, like sample_schema: absent → the defaults, not "keep".
+  const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
+  const tags = optionalTags(attrs) ?? [];
 
   // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable.
   if (existing.status !== "PRIVATE") {
@@ -171,8 +211,10 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     about,
     methodology,
     sample_schema,
+    category,
   });
-  return resourceResponse(serializeBenchmark(row as BenchmarkRow));
+  await setBenchmarkTags(c.env.DB, existing.id, tags);
+  return resourceResponse(serializeBenchmark(row as BenchmarkRow, tags));
 });
 
 benchmarks.delete("/:id", requireAuth, async (c) => {
@@ -197,7 +239,9 @@ benchmarks.post("/:id/actions/mark_ready", requireAuth, async (c) => {
     throw new ConflictError("Only a private benchmark can be marked ready.");
   }
   const row = await setBenchmarkDraft(c.env.DB, existing.id, 0);
-  return resourceResponse(serializeBenchmark(row as BenchmarkRow));
+  return resourceResponse(
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+  );
 });
 
 benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
@@ -211,7 +255,7 @@ benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
   const reason = optionalStringOrNull(attrs, "reason") ?? null;
   const row = await setBenchmarkDraft(c.env.DB, existing.id, 1);
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow),
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
     reason !== null ? { meta: { reason } } : {},
   );
 });
@@ -257,7 +301,9 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
       published_identity_id: identity.id,
       attribution_snapshot: JSON.stringify(snapshot),
     });
-    return resourceResponse(serializeBenchmark(row as BenchmarkRow));
+    return resourceResponse(
+      serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    );
   }
 
   // PERSONAL publish — attributed to the author, gated by the account's opt-in.
@@ -276,7 +322,9 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
     published_identity_id: null,
     attribution_snapshot: JSON.stringify(snapshot),
   });
-  return resourceResponse(serializeBenchmark(row as BenchmarkRow));
+  return resourceResponse(
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+  );
 });
 
 benchmarks.post("/:id/actions/withdraw", requireAuth, async (c) => {
@@ -286,8 +334,13 @@ benchmarks.post("/:id/actions/withdraw", requireAuth, async (c) => {
   if (existing.status !== "PUBLISHED") {
     throw new ConflictError("Only a published benchmark can be withdrawn.");
   }
-  // Withdraw authority mirrors the publish attribution.
-  if (existing.published_as_kind === "ORGANIZATION") {
+  // Withdraw authority mirrors the publish attribution. INGESTED benchmarks (importer-seeded,
+  // owned by the member-less system account) take the admin rule — in practice the importer
+  // removes them; no session can ever pass this gate for the system account.
+  if (
+    existing.published_as_kind === "ORGANIZATION" ||
+    existing.published_as_kind === "INGESTED"
+  ) {
     if (!canAdmin(auth)) throw new ForbiddenError(RBAC_REASONS.admin);
   } else if (!(isAuthor(auth, existing) || canAdmin(auth))) {
     throw new ForbiddenError(RBAC_REASONS.withdrawPersonal);
@@ -302,5 +355,7 @@ benchmarks.post("/:id/actions/withdraw", requireAuth, async (c) => {
     );
   }
   const row = await withdrawBenchmark(c.env.DB, existing.id, Date.now(), reason);
-  return resourceResponse(serializeBenchmark(row as BenchmarkRow));
+  return resourceResponse(
+    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+  );
 });
