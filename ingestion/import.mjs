@@ -24,7 +24,7 @@ import { buildInsertSql, buildWipeSql } from "./lib/sql.mjs";
 
 const ARCHIVE_ROOT = path.join(import.meta.dirname, "archive");
 const BUILD_ROOT = path.join(import.meta.dirname, "build");
-const KNOWN_SOURCES = ["blender", "helm", "openllm", "clickbench", "openml", "tpc"];
+const KNOWN_SOURCES = ["blender", "helm", "openllm", "clickbench", "openml", "tpc", "spec"];
 
 // Sources whose license carries a rider needing an explicit business call before we publish them
 // (see SOURCES.md). They still pull and import locally with --with-held; they never ride along by

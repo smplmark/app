@@ -19,7 +19,7 @@ const USER_AGENT =
 const REQUEST_GAP_MS = 600;
 const RETRIES = 3;
 
-const KNOWN_SOURCES = ["blender", "helm", "openllm", "clickbench", "openml", "tpc"];
+const KNOWN_SOURCES = ["blender", "helm", "openllm", "clickbench", "openml", "tpc", "spec"];
 
 let lastRequestAt = 0;
 async function politeDelay() {

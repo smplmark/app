@@ -98,6 +98,19 @@ source's trademark in a way that implies endorsement. Cite as
 | Default import cap | Top 250 results per family by throughput (whole corpus in the archive; `--full` keeps all). Only TPC-C exceeds this today. |
 | Verified | 2026-07-05 |
 
+### SPEC (Standard Performance Evaluation Corporation) — `spec`
+
+| | |
+|---|---|
+| What | Audited, compliant SPEC results (www.spec.org): SPEC CPU 2017 (Integer/Floating-Point × Rate/Speed — four benchmarks), SPECjbb 2015 (Java server throughput), SPEC HPC 2021. |
+| License | **SPEC Fair Use Rules** (www.spec.org/products/fairuse/) permit republishing **compliant** results with attribution (state the source + retrieval date, reference spec.org, cite the SPEC trademark, mark any non-compliant number "(nc)"); the SPEC Copyright Notice restricts only copying "for direct commercial advantage through distribution for profit", which smplmark.org (permanently non-commercial) clears. We ingest only the published compliant results, cite spec.org + `retrieved_at`, link each result to its SPEC page, and surface the SPEC trademark via the source attribution + each benchmark's About. |
+| robots.txt | `Crawl-delay: 10` (site-wide — the pull spaces requests by it); `Disallow: /cgi-bin/`, `/includes/`, `/auto/`, `/jhtest/`, `*.txt.rev*`, one old publication path. The static result-listing pages we fetch are **not** disallowed; the robots-disallowed `/cgi-bin/` interactive search is never used. |
+| Pull | One result-listing HTML page per benchmark — the four CPU2017 metric pages (`cpu2017/results/{rint,rfp,cint,cfp}2017.html`, ~10 MB each), `jbb2015/results/jbb2015.html`, `hpc2021/results/hpc2021.html`. Each lists every published result with its headline score inline, so **no per-result crawl is needed** (6 requests total). |
+| Mapping | One benchmark per page (category `HARDWARE`). Target = a tested system (deduped by sponsor + system + SPEC result id); one completed, audited run per result; observation metrics: base + peak SPEC score (CPU2017 / HPC2021) or max-jOPS + critical-jOPS (jbb2015), all higher-is-better. System config (copies/cores/chips, JVM, nodes/ranks) kept in details. Each observation's `source_url` is the SPEC result page. Scalar → CATEGORY chart on the base/primary metric. |
+| Default import cap | Top 500 results per benchmark by score; `--full` raises to the platform max of **5,000 targets/benchmark** (`src/limits.ts`). **CPU2017 lists ~11,800 results per metric — above the 5,000 cap** — so even `--full` keeps only the top 5,000 by base score. Hosting the full CPU2017 corpus would need either a higher target limit or splitting each metric by era; flagged for Mike. |
+| Verified | 2026-07-05 |
+| TODO | `power_ssj2008` and `storage2020` have no single aggregate page (per-quarter directory crawl, different metrics) — deferred; add via the same class-keyed parser over each quarter's listing page. |
+
 ---
 
 ## Explicitly OUT (do not ingest)
@@ -120,13 +133,3 @@ source's trademark in a way that implies endorsement. Cite as
   licensed (revisit per-dataset).
 - **Benchmark *dataset* hosts (OGB, PMLB, ImageNet, …)** — test *inputs*, not *results*; don't map
   to the model.
-
-### Cleared here, still TODO
-
-- **SPEC (spec.org)** — the SPEC Fair Use Rules affirmatively permit republication of *compliant*
-  results with attribution (source + retrieval date, cite spec.org, reference the SPEC trademark,
-  mark non-compliant results "(nc)" and estimates as estimates); the copyright notice restricts
-  only for-profit distribution, which a non-commercial aggregator clears. robots-allowed static
-  result pages exist outside `/cgi-bin/`. Verified 2026-07-05; adapter not yet built (CPU2017 via
-  the four aggregate metric pages, then the smaller quarterly-crawled suites — honor
-  `Crawl-delay: 10`).
