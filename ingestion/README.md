@@ -36,9 +36,10 @@ real accounts and the first-party benchmarks are never touched) and rebuilds it 
 lands in `ingestion/build/` (gitignored) and executes via `wrangler d1 execute` — same code path
 local and remote.
 
-Sources listed in `HELD_SOURCES` (import.mjs) have license riders awaiting an explicit decision
-(currently: clickbench, CC-BY-NC-SA-4.0). They need `--with-held` locally and are refused for
-`--remote`.
+Sources listed in `HELD_SOURCES` (import.mjs) have license riders awaiting an explicit decision.
+They need `--with-held` locally and are refused for `--remote`. Currently empty — clickbench
+(CC-BY-NC-SA-4.0) cleared this list 2026-07-05 once smplmark.org's non-commercial status was
+settled as permanent.
 
 ## Remote seeding and the D1 free tier
 

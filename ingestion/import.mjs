@@ -29,7 +29,10 @@ const KNOWN_SOURCES = ["blender", "helm", "openllm", "clickbench", "openml"];
 // Sources whose license carries a rider needing an explicit business call before we publish them
 // (see SOURCES.md). They still pull and import locally with --with-held; they never ride along by
 // default, and never to --remote without the flag.
-const HELD_SOURCES = ["clickbench"];
+//
+// clickbench cleared this list 2026-07-05: smplmark.org is permanently non-commercial (the .com is
+// held defensively, unused), which satisfies CC-BY-NC-SA-4.0's NonCommercial clause outright.
+const HELD_SOURCES = [];
 
 // Keep any one wrangler execution comfortably inside D1's request limits; multiple files execute
 // sequentially, which is also the natural checkpoint for spreading a big remote seed over time.

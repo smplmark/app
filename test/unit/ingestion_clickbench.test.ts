@@ -80,7 +80,7 @@ const archiveFor = (data: unknown) => ({
 const archive = archiveFor(entries);
 
 describe("clickbench adapter", () => {
-  it("declares CC-BY-NC-SA provenance (held source) and the raw-host pull surface", () => {
+  it("declares CC-BY-NC-SA provenance (NC-cleared for smplmark.org) and the raw-host pull surface", () => {
     expect(meta.key).toBe("clickbench");
     expect(meta.license).toBe("CC-BY-NC-SA-4.0");
     expect(meta.url).toBe("https://github.com/ClickHouse/ClickBench");

@@ -73,17 +73,13 @@ source's trademark in a way that implies endorsement. Cite as
 | Default import cap | 20 most-evaluated CC18 tasks, top 50 flows per task (all 72 tasks in the archive). |
 | Verified | 2026-07-04 |
 
----
-
-## Held — needs an explicit call from Mike before remote publish
-
 ### ClickBench — `clickbench`
 
 | | |
 |---|---|
 | What | Analytical-DBMS benchmark results, 149 systems (github.com/ClickHouse/ClickBench, benchmark.clickhouse.com) |
 | License | **CC-BY-NC-SA-4.0** (repo LICENSE file, complete legalcode; GitHub's API mislabels it NOASSERTION). Reuse with attribution is affirmatively permitted, **but only NonCommercial, and derivatives must be ShareAlike**. README explicitly allows scoreboards: "We allow but do not encourage creating scoreboards from this benchmark…". |
-| Status | **Adapter built and tested; archive pulled; EXCLUDED from the remote seed by default** (`HELD_SOURCES` in import.mjs). The NC rider is a business/legal judgment: if smplmark is (or becomes) commercial, redistributing this dataset is a genuine license problem, and SA would require the hosted derivative to carry CC-BY-NC-SA-4.0. Mike decides; flipping it on is removing the source key from `HELD_SOURCES`. |
+| Status | **Cleared for the remote seed 2026-07-05.** smplmark.org is permanently non-commercial (Mike's explicit, standing commitment — the smplmark.com registration is held defensively and unused), which satisfies the NC clause outright. ShareAlike is honored automatically: every ingested benchmark already surfaces its source's `license`/`license_url` via `external_source` and the Sources page, so the CC-BY-NC-SA-4.0 mark travels with the hosted derivative. No code change beyond removing `clickbench` from `HELD_SOURCES` was needed. |
 | robots.txt | github.com disallows crawling its HTML UI (`/*/tree/`, `/*/raw/`, `/*/archive/`); raw.githubusercontent.com and codeload.github.com publish no robots.txt. We pull one file from raw.githubusercontent.com (commit-pinned) — permitted. |
 | Pull | `data.generated.js` from the `main` branch (the dashboard's own aggregated dataset: latest result per system+machine, 778 entries, 0.95 MB) plus the LICENSE file. Not commit-pinned — resolving a SHA needs api.github.com, whose robots.txt disallows crawling; the manifest's sha256 + retrieved_at pin the archive instead. |
 | Mapping | One benchmark `clickbench` (category `DATABASE`; tags `olap`, `sql`, `analytics`). Target = system + machine; run = the dated benchmark execution; observation metrics: `load_time_s`, `data_size_bytes`, `cold_total_s`, `hot_total_s` (sums over the 43 queries; the official "relative" score needs a cross-target baseline and is deliberately not reproduced); meta keeps the 43×3 per-query matrix. Scalar → CATEGORY chart on `hot_total_s`. |
