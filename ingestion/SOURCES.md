@@ -85,15 +85,48 @@ source's trademark in a way that implies endorsement. Cite as
 | Mapping | One benchmark `clickbench` (category `DATABASE`; tags `olap`, `sql`, `analytics`). Target = system + machine; run = the dated benchmark execution; observation metrics: `load_time_s`, `data_size_bytes`, `cold_total_s`, `hot_total_s` (sums over the 43 queries; the official "relative" score needs a cross-target baseline and is deliberately not reproduced); meta keeps the 43×3 per-query matrix. Scalar → CATEGORY chart on `hot_total_s`. |
 | Verified | 2026-07-04 |
 
+### TPC (Transaction Processing Performance Council) — `tpc`
+
+| | |
+|---|---|
+| What | Audited transaction-processing and decision-support results (www.tpc.org): TPC-C and TPC-E (OLTP throughput), TPC-H and TPC-DS (decision-support query throughput). One benchmark per family. |
+| License | **TPC Fair Use Policy** (TPC Policies v6.19, §8.2), which affirmatively *encourages* republication of published results by "the press, market researchers, financial analysts, and non-profit organizations" — not gated on commercial status. §8.1.2 grants "permission to copy and distribute to any party without fee all or part of public TPC copyrighted material" for the purpose of dissemination, with the TPC copyright notice and attribution. smplmark.org is a permanently non-commercial, non-profit-style aggregator, squarely inside the encouraged use. Conditions honored: values published verbatim, an "as of"/retrieval date (the archive's `retrieved_at`), and a link to each result's TPC page (`www.tpc.org/<short-id>`, carried as each observation's `source_url`). |
+| Trademark | "TPC", "TPC-C", "TPC-H", "TPC-DS", "TPC-E" are TPC trademarks; results are cited as facts with attribution, never implying TPC endorsement. We publish results verbatim (not "derived" work), so §8.1.4's "Derived from" prefix does not apply — benchmark names identify the source standard only. |
+| robots.txt | `Disallow: /aspnet_client/`, `/cgi-bin/`, `/dtSearch/`, `/include/`, `/Rollover_Menu/`. The bulk exports under `/downloaded_result_files/` are **not** disallowed; the robots-disallowed `/cgi-bin/` interactive results tool is never fetched. |
+| Pull | One flat export per family from `/downloaded_result_files/`: the tab-delimited `.xlsx` variant for TPC-C/E/DS (honestly tab-separated text despite the extension — the comma `.txt` variant carries unescaped commas inside database/OS names), and the `.txt` variant for TPC-H (whose `.xlsx` URL tpc.org serves as an HTML page). ~4 requests, &lt; 1 MB. Each file lists active, historical, and recently-withdrawn results in labeled sections. |
+| Mapping | One benchmark per family (category `DATABASE`). Target = a published result's system (deduped by company + system + TPC short id); one completed, audited run per result; observation metrics: the family's throughput (`tpmc`/`tpse`/`qphh`/`qphds`, higher is better) + price/performance (currency-relative, lower is better) + `scale_factor_gb` for the decision-support families. Lifecycle (active/historical/withdrawn) and the ISO currency are kept in each result's details/metadata. Rows whose Currency column isn't a 3-letter code (an unescaped-comma shift in the text variant) are dropped rather than mis-aligned. Scalar → CATEGORY chart on the throughput metric. |
+| Default import cap | Top 250 results per family by throughput (whole corpus in the archive; `--full` keeps all). Only TPC-C exceeds this today. |
+| Verified | 2026-07-05 |
+
 ---
 
 ## Explicitly OUT (do not ingest)
 
 - **OpenBenchmarking.org** — "all rights reserved", no reuse license, no API, active bot-detection.
   Fails the "no hint it's not okay" test; business decision not to approach them either.
-- **Geekbench Browser, SPEC, TPC, UserBenchmark, PassMark** — commercial/standards-body,
-  restrictive terms + trademark exposure.
+- **PassMark / cpubenchmark.net** — the Legal Disclaimer permits only "personal, non-commercial use
+  or use within your organisation" and forbids reproduction "for general publication … without the
+  permission of the Host"; the paid data-licensing page separately forbids resale and chart
+  reproduction. A public aggregator is "general publication" and outside the carve-out even
+  non-commercially. Re-verified 2026-07-05; would require explicit written permission.
+- **Geekbench Browser** — no accessible third-party-reuse grant (Terms behind Cloudflare bot-check;
+  the EULA governs only the app-runner↔Primate Labs relationship); `robots.txt` disallows the
+  result-search endpoints and blocks ClaudeBot/aggregator crawlers outright. Ambiguous → would need
+  a permission request. Re-verified 2026-07-05.
+- **UserBenchmark** — no reuse license either way; `robots.txt` is a blanket `Disallow: /` for all
+  but a few named search engines (the OpenBenchmarking "hint it's not okay" signal), despite a
+  Developer page offering CSV/badge downloads. Ambiguous → would need a permission request.
 - **LMArena / Chatbot Arena live board** — now commercial; released datasets only if separately
   licensed (revisit per-dataset).
 - **Benchmark *dataset* hosts (OGB, PMLB, ImageNet, …)** — test *inputs*, not *results*; don't map
   to the model.
+
+### Cleared here, still TODO
+
+- **SPEC (spec.org)** — the SPEC Fair Use Rules affirmatively permit republication of *compliant*
+  results with attribution (source + retrieval date, cite spec.org, reference the SPEC trademark,
+  mark non-compliant results "(nc)" and estimates as estimates); the copyright notice restricts
+  only for-profit distribution, which a non-commercial aggregator clears. robots-allowed static
+  result pages exist outside `/cgi-bin/`. Verified 2026-07-05; adapter not yet built (CPU2017 via
+  the four aggregate metric pages, then the smaller quarterly-crawled suites — honor
+  `Crawl-delay: 10`).
