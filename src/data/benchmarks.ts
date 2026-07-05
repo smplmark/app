@@ -156,6 +156,8 @@ const BENCHMARK_COLUMNS: Record<string, string> = {
   name: "name",
   created_at: "created_at",
   updated_at: "updated_at",
+  // NULL for never-published rows; SQLite sorts NULL smallest, so -published_at puts them last.
+  published_at: "published_at",
   views: "views_total",
 };
 

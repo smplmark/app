@@ -76,6 +76,7 @@ const SORT_ALLOWED = [
   "name",
   "created_at",
   "updated_at",
+  "published_at",
   // Popularity: all-time, plus rolling windows over the per-day view buckets.
   "views",
   "views_today",

@@ -165,3 +165,47 @@ describe("view beacon + popularity sorts", () => {
     expect((await apiGet("/api/v1/benchmarks?sort=-views_hourly")).status).toBe(400);
   });
 });
+
+describe("published_at sort", () => {
+  it("orders by publish time, independent of creation order", async () => {
+    const owner = await register();
+    // Created in this order — but published in the reverse, with backdated times.
+    const early = await makeBenchmark(owner.token, { key: "created-first", name: "Created First" });
+    const late = await makeBenchmark(owner.token, { key: "created-second", name: "Created Second" });
+    await publish(owner.token, owner.user_id, early.id);
+    await publish(owner.token, owner.user_id, late.id);
+    // created-first was published AFTER created-second.
+    await env.DB.prepare("UPDATE benchmark SET published_at = ? WHERE id = ?")
+      .bind(2000, early.id)
+      .run();
+    await env.DB.prepare("UPDATE benchmark SET published_at = ? WHERE id = ?")
+      .bind(1000, late.id)
+      .run();
+
+    expect(await keysFor("/api/v1/benchmarks?sort=-published_at")).toEqual([
+      "created-first",
+      "created-second",
+    ]);
+    expect(await keysFor("/api/v1/benchmarks?sort=published_at")).toEqual([
+      "created-second",
+      "created-first",
+    ]);
+  });
+
+  it("puts never-published rows last on -published_at in the owner's view (NULL sorts smallest)", async () => {
+    const owner = await register();
+    const pub = await makeBenchmark(owner.token, { key: "pub", name: "Pub" });
+    await makeBenchmark(owner.token, { key: "draft-only", name: "Draft Only" });
+    await publish(owner.token, owner.user_id, pub.id);
+
+    const res = await apiGet(
+      `/api/v1/benchmarks?filter[account]=${owner.account_id}&sort=-published_at`,
+      bearer(owner.token),
+    );
+    expect(res.status).toBe(200);
+    const keys = ((await res.json()) as { data: Resource[] }).data.map(
+      (b) => b.attributes.key as string,
+    );
+    expect(keys).toEqual(["pub", "draft-only"]);
+  });
+});

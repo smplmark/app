@@ -1147,7 +1147,7 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "List benchmarks",
   description:
-    "Sortable by name, created_at, updated_at, and popularity: views (all-time) or the rolling windows views_today, views_week, views_month, views_year (prefix with - for descending, e.g. sort=-views_week).",
+    "Sortable by name, created_at, updated_at, published_at, and popularity: views (all-time) or the rolling windows views_today, views_week, views_month, views_year (prefix with - for descending, e.g. sort=-published_at for the most recently published).",
   parameters: [
     filterParam("account", "Limit results to benchmarks owned by this account id."),
     filterParam("key", "Limit results to the benchmark with this key."),
