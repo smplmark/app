@@ -17,6 +17,7 @@ describe("test harness", () => {
       "benchmark_tag",
       "benchmark_view_day",
       "email_verification",
+      "external_source",
       "invitation",
       "observation",
       "publisher_domain",

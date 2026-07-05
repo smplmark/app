@@ -15,6 +15,7 @@ export const SKEW_SCHEMA: ObservationSchema = {
 
 // Every table, child-first, so resetDb never trips a logical FK.
 const TABLES = [
+  "external_source",
   "observation",
   "run",
   "target",

@@ -10,11 +10,28 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 export const meta = {
   key: "openllm",
   name: "Hugging Face Open LLM Leaderboard",
+  description: "Final scores for open-weight language models from the retired Hugging Face Open LLM Leaderboard.",
   url: "https://huggingface.co/datasets/open-llm-leaderboard/contents",
   license: "Unspecified license",
   licenseUrl: "https://huggingface.co/datasets/open-llm-leaderboard/contents",
   robotsOrigin: "https://huggingface.co",
 };
+
+/**
+ * dataset-info.json lastModified — when the Hub published the frozen final table this benchmark
+ * mirrors. Absent or malformed (older archives) → null; published_at then falls back to
+ * retrieved_at in the importer.
+ * @param {import("../model.mjs").Archive} archive
+ * @returns {number | null}
+ */
+function datasetPublishedAt(archive) {
+  try {
+    const info = archive.readJson("dataset-info.json");
+    return epochMsOrNull(/** @type {any} */ (info)?.lastModified);
+  } catch {
+    return null;
+  }
+}
 
 const INFO_URL = "https://huggingface.co/api/datasets/open-llm-leaderboard/contents";
 const ROWS_URL =
@@ -339,6 +356,7 @@ export function adapt(archive, options = {}) {
       key: "open-llm-leaderboard",
       // The source is retired/frozen — the dataset is final, so it imports pre-closed.
       closed: true,
+      published_at: datasetPublishedAt(archive) ?? undefined,
       name: "Open LLM Leaderboard (archived)",
       description:
         "Final scores from the retired Hugging Face Open LLM Leaderboard: open-weight language models on six standardized benchmarks.",

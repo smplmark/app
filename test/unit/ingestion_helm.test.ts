@@ -112,6 +112,8 @@ describe("helm adapter", () => {
     expect(benchmarks).toHaveLength(1);
     const [bench] = benchmarks;
     expect(bench.key).toBe("helm-capabilities");
+    // The benchmark's publication moment is the release date from summary.json.
+    expect(bench.published_at).toBe(T_RELEASE);
     expect(bench.category).toBe("ML_AI");
     expect(bench.tags).toEqual(["llm", "evaluation", "helm", "language-models"]);
     expect(bench.observationSchema).toMatchObject({
@@ -199,6 +201,7 @@ describe("helm adapter", () => {
     const bare = makeArchive(withoutSummary, { "release.txt": "v1.15.0" });
     const [bench] = adapt(bare as never);
     expect(bench.targets[0].runs[0].observations[0].created_at).toBe(T_RETRIEVED);
+    expect(bench.published_at).toBeUndefined(); // importer then falls back to retrieved_at
   });
 
   it("throws loudly when the payload shape is unrecognizable", () => {

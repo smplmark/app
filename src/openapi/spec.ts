@@ -391,6 +391,21 @@ const PublishedAs = z
       "The attribution badge for a published benchmark, frozen at the moment of publishing. Rendered from this snapshot, never a live lookup, so it is unaffected if a domain later lapses or the identity is deleted.",
   });
 
+const externalSource = registerEntity(
+  "ExternalSource",
+  "external_source",
+  z.object({
+    key: z.string().openapi({ description: "Stable identifier of the source, e.g. \"openml\"." }),
+    name: z.string().openapi({ description: "The source's display name." }),
+    description: z.string().nullable().openapi({ description: "What kinds of benchmark results the source publishes." }),
+    url: z.string().openapi({ description: "Link to the source." }),
+    license: z.string().nullable().openapi({ description: "The license the source publishes its results under, or null when the source states none." }),
+    benchmark_count: z.number().int().openapi({ description: "How many published benchmarks on smplmark were ingested from this source." }),
+    retrieved_at: dateTime("When data was last retrieved from the source."),
+  }),
+  z.object({}),
+);
+
 const benchmark = registerEntity(
   "Benchmark",
   "benchmark",
@@ -1164,6 +1179,20 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/v1/external_sources",
+  tags: ["External sources"],
+  summary: "List external sources",
+  description:
+    "The third-party sources smplmark republishes openly licensed benchmark results from. Each entry names the source, what it publishes, its license, and when data was last retrieved from it. Sortable by name (the default), key, retrieved_at, and benchmark_count (prefix with - for descending).",
+  parameters: [...paginationParams],
+  responses: {
+    "200": domainResponse(externalSource.ListResponse, "The source catalog."),
+    "400": errorJson("The query parameters were malformed."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/v1/benchmarks/{id}",
   tags: ["Benchmarks"],
   summary: "Get a benchmark by id",
@@ -1764,6 +1793,7 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       { name: "Auth" },
       { name: "Benchmarks" },
       { name: "Contact" },
+      { name: "External sources" },
       { name: "Invitations" },
       { name: "Observations" },
       { name: "Publisher domains" },

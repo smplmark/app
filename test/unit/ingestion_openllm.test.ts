@@ -68,7 +68,10 @@ function makeArchive(files: Record<string, unknown>) {
 }
 
 const files: Record<string, unknown> = {
-  "dataset-info.json": { sha: "9c09a7cae43334062a82cb164f2ef255013dafa2" },
+  "dataset-info.json": {
+    sha: "9c09a7cae43334062a82cb164f2ef255013dafa2",
+    lastModified: "2025-03-20T12:17:27.000Z",
+  },
   "page-000.json": makePage(
     [
       makeRow({
@@ -166,6 +169,8 @@ describe("openllm adapter", () => {
     const [b] = benchmarks;
     expect(b.key).toBe("open-llm-leaderboard");
     expect(b.name).toBe("Open LLM Leaderboard (archived)");
+    // Publication moment = the Hub's final commit to the frozen contents dataset.
+    expect(b.published_at).toBe(Date.UTC(2025, 2, 20, 12, 17, 27));
     expect(b.category).toBe("ML_AI");
     expect(b.tags).toEqual(["llm", "evaluation", "open-weights", "huggingface"]);
     expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "average", x_kind: "CATEGORY" } });

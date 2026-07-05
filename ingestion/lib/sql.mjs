@@ -122,7 +122,7 @@ function chunkInsert(head, rows) {
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, clamped: 0 };
+  const counts = { benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, sources: 0, clamped: 0 };
   if (entries.length > LIMITS.benchmarksPerAccount) {
     throw new Error(
       `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
@@ -132,6 +132,22 @@ export function buildInsertSql(entries) {
   statements.push(
     `INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES (${q(SYSTEM_ACCOUNT_ID)}, 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, 1783123200000, 0)`,
   );
+
+  // The external-source catalog mirrors exactly what this import carries — rebuilt like the
+  // benchmark subtree (timestamps are the archive's retrieved_at, keeping the SQL deterministic).
+  statements.push("DELETE FROM external_source");
+  const bySource = new Map();
+  for (const { source, retrievedAt } of entries) {
+    const seen = bySource.get(source.key);
+    if (seen) seen.count += 1;
+    else bySource.set(source.key, { source, retrievedAt, count: 1 });
+  }
+  for (const { source, retrievedAt, count } of bySource.values()) {
+    statements.push(
+      `INSERT INTO external_source (id, key, name, description, url, license, benchmark_count, retrieved_at, created_at, updated_at) VALUES (${q(`src-${source.key}`)}, ${q(source.key)}, ${q(source.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${q(source.license ?? null)}, ${count}, ${n(retrievedAt)}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+    );
+    counts.sources += 1;
+  }
 
   const benchRows = [];
   const targetRows = [];
@@ -157,7 +173,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${b.closed === true ? n(retrievedAt) : "NULL"})`,
+      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${b.closed === true ? n(retrievedAt) : "NULL"})`,
     );
     counts.benchmarks += 1;
 

@@ -10,6 +10,7 @@ import type {
   AccountUserRow,
   ApiKeyRow,
   BenchmarkRow,
+  ExternalSourceRow,
   IngestedAttributionSnapshot,
   InvitationRow,
   ObservationRow,
@@ -314,4 +315,21 @@ export function serializeObservation(
   }
 
   return { type: "observation", id: String(row.id), attributes };
+}
+
+/** The external-source catalog entry (importer-maintained; see GET /api/v1/external_sources). */
+export function serializeExternalSource(row: ExternalSourceRow): ResourceObject {
+  return {
+    type: "external_source",
+    id: row.id,
+    attributes: {
+      key: row.key,
+      name: row.name,
+      description: row.description,
+      url: row.url,
+      license: row.license,
+      benchmark_count: row.benchmark_count,
+      retrieved_at: iso(row.retrieved_at),
+    },
+  };
 }

@@ -11,6 +11,7 @@ import { epochMsOrNull, slugify, uniqueSlug } from "../model.mjs";
 export const meta = {
   key: "helm",
   name: "Stanford HELM",
+  description: "Language-model capability scores from the frozen Stanford HELM Capabilities leaderboard.",
   url: "https://crfm.stanford.edu/helm/capabilities/latest/",
   license: "Open access",
   licenseUrl: "https://crfm-helm.readthedocs.io/en/latest/maintenance_mode/",
@@ -158,7 +159,9 @@ export function adapt(archive, options = {}) {
   }
 
   const modelsByDisplayName = indexModels(archive.readJson("schema.json"));
-  const createdAt = releaseDate(archive) ?? archive.manifest.retrieved_at;
+  // The release date doubles as the benchmark's publication moment and the observations' stamp.
+  const publishedAt = releaseDate(archive);
+  const createdAt = publishedAt ?? archive.manifest.retrieved_at;
   const runKey = slugify(release);
 
   /** @type {import("../model.mjs").IngestTarget[]} */
@@ -198,6 +201,7 @@ export function adapt(archive, options = {}) {
       key: "helm-capabilities",
       // The source is retired/frozen — the dataset is final, so it imports pre-closed.
       closed: true,
+      published_at: publishedAt ?? undefined,
       name: "HELM Capabilities",
       description: "Language models scored on five scenarios by the Stanford HELM Capabilities leaderboard.",
       about: ABOUT,

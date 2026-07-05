@@ -12,6 +12,7 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 export const meta = {
   key: "clickbench",
   name: "ClickBench",
+  description: "Analytical-database runtimes for a fixed SQL workload over a ~100M-row web-analytics dataset.",
   url: "https://github.com/ClickHouse/ClickBench",
   license: "CC-BY-NC-SA-4.0",
   licenseUrl: "https://github.com/ClickHouse/ClickBench/blob/main/LICENSE",
@@ -151,10 +152,20 @@ export function adapt(archive, options = {}) {
   );
   const kept = parsed.slice(0, topTargets);
 
+  // A living leaderboard has no single publication moment; the earliest dated entry (mid-2022,
+  // ClickBench's launch) is the closest source-native equivalent. Min over ALL parsed entries,
+  // not the curated slice, so curation depth never shifts the date.
+  let publishedAt = null;
+  for (const t of parsed) {
+    const s = t.run.started_at ?? null;
+    if (s !== null && (publishedAt === null || s < publishedAt)) publishedAt = s;
+  }
+
   const seen = new Map();
   return [
     {
       key: "clickbench",
+      published_at: publishedAt ?? undefined,
       name: "ClickBench — analytical databases",
       description:
         "Analytical-database runtimes for 43 SQL queries over a ~100M-row web-analytics dataset.",

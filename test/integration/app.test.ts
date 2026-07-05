@@ -24,6 +24,7 @@ describe("app routing", () => {
     expect(doc.openapi).toBe("3.0.3");
     expect(doc.paths["/api/v1/benchmarks"]).toBeDefined();
     expect(doc.paths["/api/v1/observations"]).toBeDefined();
+    expect(doc.paths["/api/v1/external_sources"]).toBeDefined();
   });
 
   it("serves the Scalar API reference page", async () => {

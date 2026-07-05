@@ -93,6 +93,8 @@ describe("clickbench adapter", () => {
     const [b] = benchmarks;
     expect(b.key).toBe("clickbench");
     expect(b.name).toBe("ClickBench — analytical databases");
+    // Publication proxy: the earliest dated USABLE entry (min over all parsed, pre-curation).
+    expect(b.published_at).toBe(Date.UTC(2026, 3, 1));
     expect(b.category).toBe("DATABASE");
     expect(b.tags).toEqual(["olap", "sql", "analytics", "databases"]);
     expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });

@@ -106,6 +106,21 @@ export interface AccountRow {
   created_at: number;
 }
 
+/** One third-party source the ingestion importer republishes from. Importer-owned; no API writes. */
+export interface ExternalSourceRow {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  url: string;
+  license: string | null;
+  benchmark_count: number;
+  /** When we last retrieved data from the source (the imported archive's pull time). */
+  retrieved_at: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface AccountUserRow {
   account_id: string;
   user_id: string;

@@ -8,6 +8,7 @@ import { slugify, uniqueSlug } from "../model.mjs";
 export const meta = {
   key: "blender",
   name: "Blender Open Data",
+  description: "Community Blender Benchmark results: median rendering performance per CPU and GPU device.",
   url: "https://opendata.blender.org",
   license: "CC0-1.0",
   licenseUrl: "https://opendata.blender.org/download/",

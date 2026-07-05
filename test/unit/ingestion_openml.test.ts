@@ -18,7 +18,9 @@ function rec(over: Record<string, unknown> = {}) {
 }
 
 const files: Record<string, unknown> = {
-  "study-99.json": { study: { id: "99", tasks: { task_id: [3, 6, 11] } } },
+  "study-99.json": {
+    study: { id: "99", creation_date: "2019-02-21T18:47:13", tasks: { task_id: [3, 6, 11] } },
+  },
   "task-3.json": {
     evaluations: {
       evaluation: [
@@ -160,6 +162,8 @@ describe("openml adapter", () => {
 
     const krvskp = benchmarks[0];
     expect(krvskp.name).toBe("OpenML-CC18: kr-vs-kp");
+    // Every CC18 benchmark carries the study's creation date as its publication moment (UTC).
+    expect(krvskp.published_at).toBe(Date.UTC(2019, 1, 21, 18, 47, 13));
     expect(krvskp.category).toBe("ML_AI");
     expect(krvskp.tags).toEqual(["openml", "cc18", "classification"]);
     expect(krvskp.observationSchema).toMatchObject({
@@ -204,6 +208,9 @@ describe("openml adapter", () => {
     const amlb = adapt(archive as never).at(-1)!;
     expect(amlb.key).toBe("openml-amlb");
     expect(amlb.name).toBe("AutoML Benchmark (AMLB)");
+    // No archived study metadata for AMLB — earliest upload_time is the publication proxy
+    // (the fixture's default row keeps 2017-07-16 13:36:20, read as UTC).
+    expect(amlb.published_at).toBe(Date.UTC(2017, 6, 16, 13, 36, 20));
     expect(amlb.category).toBe("ML_AI");
     expect(amlb.tags).toEqual(["openml", "automl"]);
     expect(amlb.observationSchema).toMatchObject({

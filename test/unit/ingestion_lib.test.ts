@@ -38,7 +38,10 @@ describe("model helpers", () => {
   it("epochMsOrNull: ISO, bare dates, garbage", () => {
     expect(epochMsOrNull("2026-07-04")).toBe(Date.UTC(2026, 6, 4));
     expect(epochMsOrNull("2026-07-04T12:00:00Z")).toBe(Date.UTC(2026, 6, 4, 12));
-    expect(epochMsOrNull("2019-08-22 17:43:17")).not.toBeNull();
+    // Naive timestamps (no offset) read as UTC — machine-local parsing would skew imports.
+    expect(epochMsOrNull("2019-08-22 17:43:17")).toBe(Date.UTC(2019, 7, 22, 17, 43, 17));
+    expect(epochMsOrNull("2019-02-21T18:47:13")).toBe(Date.UTC(2019, 1, 21, 18, 47, 13));
+    expect(epochMsOrNull("2025-03-20T12:17:27.000Z")).toBe(Date.UTC(2025, 2, 20, 12, 17, 27));
     expect(epochMsOrNull("not a date")).toBeNull();
     expect(epochMsOrNull("")).toBeNull();
     expect(epochMsOrNull(undefined)).toBeNull();
@@ -137,6 +140,7 @@ describe("sql builders", () => {
   const source = {
     key: "demo-src",
     name: "Demo Source",
+    description: "Demo results.",
     url: "https://example.org",
     license: "CC0-1.0",
     licenseUrl: "https://example.org/license",
@@ -148,7 +152,7 @@ describe("sql builders", () => {
       { benchmark: bench() as never, source, retrievedAt: 5000 },
     ]);
     const joined = statements.join("\n");
-    expect(counts).toEqual({ benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, clamped: 0 });
+    expect(counts).toEqual({ benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, sources: 1, clamped: 0 });
     expect(joined).toContain("'INGESTED'");
     expect(joined).toContain('\'{"source_name":"Demo Source","source_url":"https://example.org","license":"CC0-1.0","retrieved_at":5000}\'');
     expect(joined).toContain("'ing-demo'");
@@ -158,8 +162,22 @@ describe("sql builders", () => {
     // Benchmarks are born PUBLISHED, non-draft, under the system account.
     expect(joined).toMatch(/'PUBLISHED', 5000/);
     expect(joined).toContain("INSERT OR IGNORE INTO account");
+    // The source catalog is rebuilt alongside the benchmark subtree, on retrieved_at stamps.
+    expect(joined).toContain("DELETE FROM external_source");
+    expect(joined).toContain(
+      "INSERT INTO external_source (id, key, name, description, url, license, benchmark_count, retrieved_at, created_at, updated_at) VALUES ('src-demo-src', 'demo-src', 'Demo Source', 'Demo results.', 'https://example.org', 'CC0-1.0', 1, 5000, 5000, 5000)",
+    );
     // Identical input → identical output (reviewable diffs).
     expect(buildInsertSql([{ benchmark: bench() as never, source, retrievedAt: 5000 }]).statements).toEqual(statements);
+  });
+
+  it("prefers the source's publication date for published_at, falling back to retrieved_at", () => {
+    const dated = buildInsertSql([
+      { benchmark: bench({ published_at: 4321 }) as never, source, retrievedAt: 5000 },
+    ]).statements.join("\n");
+    expect(dated).toMatch(/'PUBLISHED', 4321/);
+    // created_at/updated_at stay at retrieved_at — only the publication moment mirrors the source.
+    expect(dated).toMatch(/'PUBLISHED', 4321, NULL, NULL, '.*', 5000, 5000/);
   });
 
   it("rejects duplicate keys loudly", () => {

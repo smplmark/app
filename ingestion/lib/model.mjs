@@ -34,11 +34,15 @@
  * @property {object} observationSchema the benchmark's observation_schema (metrics/derived/chart)
  * @property {boolean} [closed] true when the source dataset is final (frozen leaderboards) — the
  *   benchmark imports pre-closed, so nothing new can be appended beneath it
+ * @property {number} [published_at] epoch-ms — when the SOURCE published this dataset; omitted
+ *   when the archive carries no usable publication date (the importer falls back to retrieved_at)
  * @property {IngestTarget[]} targets
  *
  * @typedef {Object} SourceMeta
  * @property {string} key archive directory name, e.g. "blender"
  * @property {string} name attribution display name, e.g. "Blender Open Data"
+ * @property {string} description what kinds of benchmark results the source publishes (display
+ *   copy for the /sources catalog via the external_source table)
  * @property {string} url link back to the source
  * @property {string} license e.g. "CC0-1.0"
  * @property {string} licenseUrl where the license statement lives
@@ -82,11 +86,19 @@ export function uniqueSlug(raw, seen, maxLen = 80) {
 }
 
 /**
- * Parse an ISO-8601 or "YYYY-MM-DD" source date to epoch-ms, or null.
+ * Parse an ISO-8601 or "YYYY-MM-DD" source date to epoch-ms, or null. Timestamps without an
+ * explicit offset (OpenML's "YYYY-MM-DD HH:MM:SS", study creation_date) are read as UTC —
+ * Date.parse would read them as machine-local time, making imports machine-dependent.
  * @param {unknown} value
  */
 export function epochMsOrNull(value) {
   if (typeof value !== "string" || value.length === 0) return null;
-  const ms = Date.parse(value.includes("T") || value.includes(" ") ? value : `${value}T00:00:00Z`);
+  let s = value.trim();
+  if (!s.includes("T") && !s.includes(" ")) s = `${s}T00:00:00Z`;
+  else {
+    s = s.replace(" ", "T");
+    if (!/(Z|[+-]\d\d:?\d\d)$/.test(s)) s += "Z";
+  }
+  const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }

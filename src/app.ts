@@ -12,6 +12,7 @@ import { apiKeys } from "./routes/api_keys";
 import { auth } from "./routes/auth";
 import { benchmarks } from "./routes/benchmarks";
 import { emails } from "./routes/emails";
+import { externalSources } from "./routes/external_sources";
 import { invitations } from "./routes/invitations";
 import { jobs } from "./routes/jobs";
 import { observations } from "./routes/observations";
@@ -101,6 +102,7 @@ export function createApp() {
   app.route("/api/v1/targets", targets);
   app.route("/api/v1/runs", runs);
   app.route("/api/v1/observations", observations);
+  app.route("/api/v1/external_sources", externalSources);
   app.route("/api/v1/publisher_identities", publisherIdentities);
   app.route("/api/v1/publisher_domains", publisherDomains);
   // System triggers for the Smpl Jobs scheduler (shared-secret auth; not in the public spec).

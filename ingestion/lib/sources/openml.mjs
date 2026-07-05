@@ -10,6 +10,7 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 export const meta = {
   key: "openml",
   name: "OpenML",
+  description: "Machine-learning results from OpenML: best predictive accuracy per flow on curated task suites.",
   url: "https://www.openml.org",
   license: "CC-BY-4.0",
   licenseUrl: "https://www.openml.org/terms",
@@ -204,7 +205,10 @@ export function adapt(archive, options = {}) {
   const topFlows = options.topFlows ?? 50;
   const retrievedAt = archive.manifest.retrieved_at;
 
-  const taskIds = studyTaskIds(archive.readJson("study-99.json"));
+  const study = archive.readJson("study-99.json");
+  const taskIds = studyTaskIds(study);
+  // The CC18 study's creation on OpenML is the suite's publication moment (all cc18-* benchmarks).
+  const cc18PublishedAt = epochMsOrNull(/** @type {any} */ (study)?.study?.creation_date);
 
   /** @type {{ taskId: number, dataName: string, flows: EvalRow[] }[]} */
   const tasks = [];
@@ -235,7 +239,7 @@ export function adapt(archive, options = {}) {
   const benchmarkSeen = new Map();
   const benchmarks = tasks
     .slice(0, topTasks)
-    .map((task) => cc18Benchmark(task, topFlows, retrievedAt, benchmarkSeen));
+    .map((task) => cc18Benchmark(task, topFlows, retrievedAt, cc18PublishedAt, benchmarkSeen));
 
   const amlb = amlbBenchmark(archive, retrievedAt);
   if (amlb) benchmarks.push(amlb);
@@ -247,10 +251,11 @@ export function adapt(archive, options = {}) {
  * @param {{ taskId: number, dataName: string, flows: EvalRow[] }} task
  * @param {number} topFlows
  * @param {number} retrievedAt
+ * @param {number | null} publishedAt the CC18 study's creation date on OpenML
  * @param {Map<string, number>} benchmarkSeen keyspace shared by all CC18 benchmark keys
  * @returns {import("../model.mjs").IngestBenchmark}
  */
-function cc18Benchmark(task, topFlows, retrievedAt, benchmarkSeen) {
+function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) {
   const flows = [...task.flows]
     .sort((a, z) => z.value - a.value || a.flowId - z.flowId)
     .slice(0, topFlows);
@@ -263,6 +268,7 @@ function cc18Benchmark(task, topFlows, retrievedAt, benchmarkSeen) {
     about:
       `Community results for the ${task.dataName} classification task from OpenML-CC18, OpenML's curated suite of 72 classification tasks (www.openml.org/t/${task.taskId}). Each target is a flow — a specific algorithm or pipeline — shown with the best predictive accuracy recorded for it on this task in OpenML's public evaluation listing, under the task's fixed estimation procedure.`,
     methodology: null,
+    published_at: publishedAt ?? undefined,
     category: "ML_AI",
     tags: ["openml", "cc18", "classification"],
     observationSchema: CC18_SCHEMA,
@@ -357,6 +363,14 @@ function amlbBenchmark(archive, retrievedAt) {
   }
   if (byRun.size === 0) return null;
 
+  // No study-level metadata is archived for AMLB (study 226); the earliest upload is the proxy
+  // for when its results were published on OpenML.
+  let publishedAt = null;
+  for (const entry of byRun.values()) {
+    const t = epochMsOrNull(entry.uploadTime);
+    if (t !== null && (publishedAt === null || t < publishedAt)) publishedAt = t;
+  }
+
   /** @type {Map<string, AmlbEntry[]>} */
   const frameworks = new Map();
   for (const entry of byRun.values()) {
@@ -375,6 +389,7 @@ function amlbBenchmark(archive, retrievedAt) {
     about:
       "Results of the AutoML Benchmark (AMLB), which ran automated machine-learning frameworks on a shared set of classification tasks and published the evaluations on OpenML as study 226 (www.openml.org/s/226, 2019). Each target is one framework; each run is one dataset, with the predictive accuracy and ROC AUC recorded there (0-1, higher is better).",
     methodology: null,
+    published_at: publishedAt ?? undefined,
     category: "ML_AI",
     tags: ["openml", "automl"],
     observationSchema: AMLB_SCHEMA,
