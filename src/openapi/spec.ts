@@ -1178,6 +1178,77 @@ registry.registerPath({
   },
 });
 
+const LeaderboardResponse = registry.register(
+  "LeaderboardResponse",
+  z
+    .object({
+      data: z
+        .array(
+          z.object({
+            type: z.literal("leaderboard_entry"),
+            id: z.string().openapi({ description: "The target's id." }),
+            attributes: z.object({
+              key: z.string().openapi({ description: "The target's key." }),
+              name: z.string().openapi({ description: "The target's display name." }),
+              details: z
+                .record(z.unknown())
+                .nullable()
+                .openapi({ description: "The target's free-form details (sponsor, vendor, configuration, …)." }),
+              metrics: z
+                .record(z.number())
+                .openapi({ description: "The representative (latest) observation's metric values, keyed by metric name." }),
+              observed_at: z
+                .number()
+                .nullable()
+                .openapi({ description: "Epoch-ms of the representative observation, or null." }),
+            }),
+          }),
+        )
+        .openapi({ description: "The page of ranked targets." }),
+      meta: z.object({
+        pagination: z.object({
+          page: z.number(),
+          size: z.number(),
+          total: z.number().optional(),
+          total_pages: z.number().optional(),
+        }),
+        sort: z.string().openapi({ description: "The applied sort, e.g. -base_score." }),
+        facets: z
+          .array(
+            z.object({
+              field: z.string().openapi({ description: "The details field this facet ranges over." }),
+              values: z
+                .array(z.object({ value: z.string(), count: z.number() }))
+                .openapi({ description: "Distinct values with their counts over the current filter, most common first." }),
+              truncated: z.boolean().openapi({ description: "True when more distinct values exist than are returned." }),
+            }),
+          )
+          .openapi({ description: "Facetable details fields with value counts over the current filter." }),
+      }),
+    })
+    .openapi({ description: "A page of leaderboard entries with pagination, the applied sort, and filter facets." }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/benchmarks/{id}/leaderboard",
+  tags: ["Benchmarks"],
+  summary: "Rank a benchmark's targets",
+  description:
+    "A server-sorted, server-filtered page of a benchmark's targets, each with its representative (latest) observation's metrics — the read behind the viewer's large-benchmark mode. Sort by any metric declared in the benchmark's observation schema (default: the chart metric, descending). Narrow with filter[search] (free-text over target name and details) and filter[facet.<field>] (an exact match on a details field; repeat the parameter to OR several values, e.g. filter[facet.vendor]=AMD&filter[facet.vendor]=Intel). meta.facets lists each facetable details field with value counts over the current filter.",
+  parameters: [
+    { name: "id", in: "path", required: true, description: "The benchmark id.", schema: { type: "string" as const } },
+    filterParam("search", "Free-text: every term must match (AND) as a case-insensitive substring of the target's name or details. Double-quote a phrase to match it exactly."),
+    filterParam("facet.<field>", "Restrict to targets whose <field> details value equals the given value; repeat the parameter to OR several values."),
+    ...paginationParams,
+  ],
+  responses: {
+    "200": jsonResponse(LeaderboardResponse, "A page of ranked targets with facets."),
+    "400": errorJson("The query parameters were malformed, or the benchmark declares no metrics to rank by."),
+    "404": errorJson("No benchmark with that id is visible."),
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/api/v1/external_sources",

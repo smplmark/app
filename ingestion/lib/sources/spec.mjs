@@ -10,7 +10,7 @@
 // crawl needed): the four CPU2017 metric pages, SPECjbb2015, and SPEChpc2021. spec.org publishes a
 // site-wide `Crawl-delay: 10`; the pull spaces its requests accordingly. Robots-disallowed paths
 // (/cgi-bin/ etc.) are never touched — these static result pages are allowed.
-import { epochMsOrNull, uniqueSlug } from "../model.mjs";
+import { epochMsOrNull, uniqueSlug, vendorFromText } from "../model.mjs";
 
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
@@ -179,9 +179,9 @@ const setTimeoutFn = /** @type {(cb: (...a: unknown[]) => void, ms: number) => u
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => void setTimeoutFn(r, ms));
 
-// Platform cap is 5,000 targets/benchmark (src/limits.ts). CPU2017 lists ~11.8k results per metric,
-// so even --full keeps only the top 5,000 by base score; the default keeps a browsable 500.
-const PLATFORM_TARGET_CAP = 5000;
+// Platform cap is 20,000 targets/benchmark (src/limits.ts) — comfortably above CPU2017's ~11.8k
+// results per metric, so --full now keeps the whole page; the default keeps a browsable 500.
+const PLATFORM_TARGET_CAP = 20_000;
 
 /** `--full`: raise the per-benchmark cap to the platform maximum. */
 export const fullOptions = /** @type {{ topResults: number }} */ ({ topResults: PLATFORM_TARGET_CAP });
@@ -324,6 +324,9 @@ export function adapt(archive, options = {}) {
         const t = textOf(row.cells(cls));
         if (t !== "") details[key] = t;
       }
+      // The processor is embedded in the system name (SPEC has no separate CPU column).
+      const vendor = vendorFromText(row.system);
+      if (vendor !== null) details.vendor = vendor;
 
       /** @type {import("../model.mjs").IngestRun} */
       const run = {

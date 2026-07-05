@@ -70,7 +70,7 @@ describe("spec source metadata", () => {
   it("attributes SPEC under its Fair Use Rules and caps at the platform target limit", () => {
     expect(meta.key).toBe("spec");
     expect(meta.license).toBe("SPEC Fair Use Rules");
-    expect(fullOptions.topResults).toBe(5000);
+    expect(fullOptions.topResults).toBe(20_000);
     // Four CPU2017 pages + jbb2015 + hpc2021.
     expect(SUITES.map((s) => s.key).sort()).toEqual([
       "spec-cpu2017-fprate",

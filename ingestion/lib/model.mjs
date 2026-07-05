@@ -83,6 +83,33 @@ export function uniqueSlug(raw, seen, maxLen = 80) {
   return n === 0 ? base : `${base}-${n + 1}`;
 }
 
+// CPU-vendor detection for the leaderboard's `vendor` facet, matched against a processor/system
+// string. Order matters: check the more specific brands before generic words.
+const VENDOR_PATTERNS = /** @type {[RegExp, string][]} */ ([
+  [/\bamd\b|\bepyc\b|\bryzen\b|\bthreadripper\b/i, "AMD"],
+  [/\bintel\b|\bxeon\b|\bpentium\b|\bitanium\b|\bcore\s+(i[3579]|ultra)\b/i, "Intel"],
+  [/\bnvidia\b|\bgrace\b/i, "NVIDIA"],
+  [/\bibm\b|\bpower\d?\b|\bpowerpc\b/i, "IBM"],
+  [/\bapple\b|\bm[1-4]\b/i, "Apple"],
+  [/\bampere\b|\baltra\b|\bgraviton\b|\barm\b|\baarch64\b|\bkunpeng\b|\bneoverse\b/i, "Arm"],
+  [/\bfujitsu\b|\bsparc\b|\ba64fx\b/i, "Fujitsu"],
+  [/\bqualcomm\b|\bsnapdragon\b/i, "Qualcomm"],
+]);
+
+/**
+ * Best-effort CPU vendor from a processor or system string (e.g. "AMD EPYC 9754" → "AMD"), or null
+ * when nothing recognizable matches. Feeds the leaderboard `vendor` facet.
+ * @param {unknown} text
+ * @returns {string | null}
+ */
+export function vendorFromText(text) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  for (const [re, vendor] of VENDOR_PATTERNS) {
+    if (re.test(text)) return vendor;
+  }
+  return null;
+}
+
 /**
  * Parse an ISO-8601 or "YYYY-MM-DD" source date to epoch-ms, or null. Timestamps without an
  * explicit offset (OpenML's "YYYY-MM-DD HH:MM:SS", study creation_date) are read as UTC —

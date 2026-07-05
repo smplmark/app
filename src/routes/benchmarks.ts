@@ -50,8 +50,10 @@ import {
 } from "../http/body";
 import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
 import { getAuth, getOptionalAuth, optionalAuth, requireAuth, type AppBindings } from "../http/middleware";
+import { benchmarkLeaderboard } from "../data/leaderboard";
 import { paginationMeta } from "../query/pagination";
 import { parseSearchQuery } from "../query/search";
+import { parseSort } from "../query/sort";
 import {
   assertFrozenCompatible,
   parseObservationSchema,
@@ -268,6 +270,75 @@ benchmarks.post("/:id/actions/view", async (c) => {
   await recordBenchmarkView(c.env.DB, row.id);
   return noContentResponse();
 });
+
+// ── Leaderboard ──────────────────────────────────────────────────────────────
+
+// Server-driven slice of a benchmark's targets for the viewer's large-benchmark mode: each target
+// with its representative (latest) observation's metrics, sorted by any declared metric, filtered
+// by free text (filter[search]) or by a details facet (filter[facet.<field>], repeatable for OR),
+// paginated. meta.facets carries value→count for each facetable details field over the current
+// filter, so the browser never downloads the whole corpus to build filters.
+benchmarks.get("/:id/leaderboard", optionalAuth, async (c) => {
+  const auth = getOptionalAuth(c);
+  const row = await getBenchmarkById(c.env.DB, c.req.param("id"));
+  if (!row) throw new NotFoundError();
+  if (!isPublicStatus(row.status)) {
+    if (!auth || !covers(auth, { account_id: row.account_id, benchmark_id: row.id })) {
+      throw new NotFoundError();
+    }
+  }
+
+  const schema = parseObservationSchema(row.observation_schema);
+  const metricNames = schema.metrics.map((m) => m.name);
+  if (metricNames.length === 0) {
+    throw new BadRequestError("This benchmark declares no metrics to rank by.");
+  }
+  const defaultField = schema.chart?.y && metricNames.includes(schema.chart.y) ? schema.chart.y : metricNames[0];
+  const sort = parseSort(c.req.query("sort") ?? null, `-${defaultField}`, metricNames);
+
+  const pagination = readPagination(c);
+  const result = await benchmarkLeaderboard(c.env.DB, {
+    benchmarkId: row.id,
+    sortField: sort.field,
+    sortDesc: sort.desc,
+    search: c.req.query("filter[search]") ?? undefined,
+    facetFilters: readFacetFilters(c),
+    limit: pagination.limit,
+    offset: pagination.offset,
+  });
+
+  const resources = result.rows.map((r) => ({
+    type: "leaderboard_entry" as const,
+    id: r.target_id,
+    attributes: {
+      key: r.key,
+      name: r.name,
+      details: r.details ? JSON.parse(r.details) : null,
+      metrics: r.metrics ? JSON.parse(r.metrics) : {},
+      observed_at: r.observed_at,
+    },
+  }));
+
+  return collectionResponse(resources, {
+    meta: {
+      pagination: paginationMeta(pagination, result.total),
+      sort: (sort.desc ? "-" : "") + sort.field,
+      facets: result.facets,
+    },
+  });
+});
+
+/** Collect filter[facet.<field>] query params (repeat a key for OR values; commas stay literal). */
+function readFacetFilters(c: Context<AppBindings>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const key of Object.keys(c.req.query())) {
+    const m = /^filter\[facet\.([A-Za-z0-9_]+)\]$/.exec(key);
+    if (!m) continue;
+    const values = c.req.queries(key) ?? [];
+    if (values.length > 0) out[m[1]] = values;
+  }
+  return out;
+}
 
 // ── Draft workflow (§2) ──────────────────────────────────────────────────────
 

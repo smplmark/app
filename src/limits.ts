@@ -8,8 +8,9 @@
 export const LIMITS = {
   /** Benchmarks one account may own. */
   benchmarksPerAccount: 100,
-  /** Targets one benchmark may hold. */
-  targetsPerBenchmark: 5000,
+  /** Targets one benchmark may hold. Raised to 20k for large ingested corpora (e.g. SPEC CPU2017's
+   *  ~11.8k results/metric); the viewer switches to a server-driven leaderboard above ~300 targets. */
+  targetsPerBenchmark: 20_000,
   /** Runs one target may hold. */
   runsPerTarget: 100,
   /** key fields (benchmark, target, run) — URL-safe identifiers. */

@@ -13,7 +13,7 @@
 // `.xlsx` URL is served as an HTML page by tpc.org — so it falls back to the `.txt` variant with
 // an embedded-comma guard (rows whose field count exceeds the header are skipped, never
 // mis-parsed).
-import { epochMsOrNull, uniqueSlug } from "../model.mjs";
+import { epochMsOrNull, uniqueSlug, vendorFromText } from "../model.mjs";
 
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
@@ -328,6 +328,8 @@ export function adapt(archive, options = {}) {
       if (company !== "") details.sponsor = company;
       const cpu = clean(row.get("Server CPU Type")) || clean(row.get("CPU Type"));
       if (cpu !== "") details.cpu = cpu;
+      const vendor = vendorFromText(cpu);
+      if (vendor !== null) details.vendor = vendor;
       const db = clean(row.get("Database Software"));
       if (db !== "") details.database = db;
       const os = clean(row.get("Operating System"));
