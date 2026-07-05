@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adapt, fullOptions, meta, parseSuite, SUITES } from "../../ingestion/lib/sources/spec.mjs";
+import { adapt, discoverQuarters, fullOptions, meta, parseSuite, SUITES } from "../../ingestion/lib/sources/spec.mjs";
 
 // Miniature result pages shaped like SPEC's real tables: repeating header rows (no result link),
 // class-keyed data cells, the system name ahead of a <br> + disclosures span, and "--" for a
@@ -48,6 +48,24 @@ const JBB = `
 </tr>
 </tbody></table>`;
 
+// A crawled quarter page (power_ssj2008): result links are BARE (no resYYYYqN/ prefix), and the
+// quarter comes from the file name the pull saved it under.
+const POWER_LANDING = `<html><body>
+<a href="res2024q3/">2024 Q3</a> | <a href="res2024q4/">2024 Q4</a> | <a href="res2024q4">dupe</a> | <a href="/other/">x</a>
+</body></html>`;
+const POWER_Q = `
+<table><tbody>
+<tr>
+  <td class="wkld_ssj_global_config_hw_vendor">Dell Inc.</td>
+  <td class="wkld_ssj_global_config_hw_model">PowerEdge R7725<br /><span class="disclosures"><a href="power_ssj2008-20241007-01464.html">HTML</a></span></td>
+  <td class="hwnodes">1</td>
+  <td class="wkld_ssj_global_config_hw_cpu">AMD EPYC 9965</td>
+  <td class="aggregate_config_cpu_chips">2</td>
+  <td class="aggregate_config_cpu_cores">384</td>
+  <td class="metric_performance_power_ratio">35,920</td>
+</tr>
+</tbody></table>`;
+
 const T_RETRIEVED = Date.UTC(2026, 6, 5);
 const archive = {
   manifest: { retrieved_at: T_RETRIEVED, files: [] },
@@ -61,6 +79,18 @@ const archive = {
   },
 };
 
+// A crawl-suite archive: manifest.files lists the quarter files, readText serves them.
+const crawlArchive = {
+  manifest: { retrieved_at: T_RETRIEVED, files: [{ name: "power_ssj2008-res2024q4.html", url: "", sha256: "", bytes: 0 }] },
+  readText: (name: string) => {
+    if (name === "power_ssj2008-res2024q4.html") return POWER_Q;
+    throw new Error(`fixture missing: ${name}`);
+  },
+  readJson: () => {
+    throw new Error("no json");
+  },
+};
+
 type Schema = { metrics: { name: string; unit?: string }[]; chart: { y: string } };
 const schemaOf = (b: { observationSchema: object }) => b.observationSchema as Schema;
 const metaOf = (o: { meta?: Record<string, unknown> }) => o.meta as Record<string, unknown>;
@@ -71,7 +101,7 @@ describe("spec source metadata", () => {
     expect(meta.key).toBe("spec");
     expect(meta.license).toBe("SPEC Fair Use Rules");
     expect(fullOptions.topResults).toBe(20_000);
-    // Four CPU2017 pages + jbb2015 + hpc2021.
+    // Four CPU2017 pages + jbb2015 + hpc2021 (aggregate) + power_ssj2008 + storage2020 (crawled).
     expect(SUITES.map((s) => s.key).sort()).toEqual([
       "spec-cpu2017-fprate",
       "spec-cpu2017-fpspeed",
@@ -79,7 +109,13 @@ describe("spec source metadata", () => {
       "spec-cpu2017-intspeed",
       "spec-hpc2021",
       "spec-jbb2015",
+      "spec-power-ssj2008",
+      "spec-storage2020",
     ]);
+    // Aggregate suites carry a single page path; crawl suites carry a landing to enumerate quarters.
+    expect(SUITES.find((s) => s.key === "spec-cpu2017-intrate")!.path).toBeDefined();
+    expect(SUITES.find((s) => s.key === "spec-power-ssj2008")!.landing).toBe("/power_ssj2008/results/");
+    expect(SUITES.find((s) => s.key === "spec-storage2020")!.category).toBe("STORAGE");
   });
 });
 
@@ -92,6 +128,38 @@ describe("parseSuite", () => {
     expect(rows[0].date).toBe("2024-07-01");
     expect(rows[0].system).toBe("Box 9000 AMD EPYC 9754, 3.1GHz"); // text before <br>, entity-free
     expect(rows[1].sponsor).toBe("Smith & Sons"); // &amp; decoded
+  });
+
+  it("reads BARE result links on a crawled quarter page, tagging the caller-supplied quarter", () => {
+    const suite = SUITES.find((s) => s.key === "spec-power-ssj2008")!;
+    const rows = parseSuite(POWER_Q, suite, "2024q4");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].resultBase).toBe("power_ssj2008-20241007-01464");
+    expect(rows[0].quarter).toBe("2024q4");
+    expect(rows[0].date).toBe("2024-10-07");
+    expect(rows[0].sponsor).toBe("Dell Inc.");
+  });
+});
+
+describe("discoverQuarters", () => {
+  it("extracts distinct, sorted quarter directories from a landing page", () => {
+    expect(discoverQuarters(POWER_LANDING)).toEqual(["res2024q3", "res2024q4"]);
+  });
+});
+
+describe("spec adapt — crawl suite", () => {
+  it("reads every quarter file listed in the manifest and cites the quarter-qualified result URL", () => {
+    const power = byKey(adapt(crawlArchive, { topResults: 5000 })).get("spec-power-ssj2008")!;
+    expect(power.category).toBe("HARDWARE");
+    expect(schemaOf(power).metrics.map((m) => m.name)).toEqual(["overall_ssj_ops_per_watt"]);
+    expect(power.targets).toHaveLength(1);
+    const t = power.targets[0];
+    expect(t.name).toBe("PowerEdge R7725 (Dell Inc.)");
+    expect(t.runs[0].observations[0].metrics).toEqual({ overall_ssj_ops_per_watt: 35920 });
+    expect(metaOf(t.runs[0].observations[0]).source_url).toBe(
+      "https://www.spec.org/power_ssj2008/results/res2024q4/power_ssj2008-20241007-01464.html",
+    );
+    expect(t.details).toMatchObject({ cpu: "AMD EPYC 9965", chips: "2", cores: "384", nodes: "1" });
   });
 });
 

@@ -36,15 +36,17 @@ const ROOT = "https://www.spec.org";
  * @typedef {Object} Suite
  * @property {string} key benchmark key
  * @property {string} suiteDir spec.org sub-site + the result-file name prefix (e.g. "cpu2017")
- * @property {string} file archive file name
- * @property {string} path page path under ROOT
+ * @property {string} [file] archive file name (aggregate-page suites)
+ * @property {string} [path] page path under ROOT (aggregate-page suites)
+ * @property {string} [landing] results-landing path under ROOT (crawl suites — quarter dirs beneath)
  * @property {string} name benchmark display name
  * @property {string} tagline
  * @property {string} about factual citation
+ * @property {"HARDWARE"|"STORAGE"} [category] defaults to HARDWARE
  * @property {string[]} tags
  * @property {string} sponsorCls test-sponsor cell class
  * @property {string} systemCls system-name cell class (holds the disclosure links)
- * @property {SpecMetric[]} metrics first entry is the headline (chart) metric; all higher-is-better
+ * @property {SpecMetric[]} metrics first entry is the headline (chart) metric
  * @property {Record<string, string>} [details] extra display columns: detailKey → cell class
  */
 
@@ -166,10 +168,67 @@ export const SUITES = [
     metrics: [RATE_BASE, RATE_PEAK],
     details: { nodes: "node_compute_count", ranks: "max_ranks", threads: "base_threads" },
   },
+  {
+    key: "spec-power-ssj2008",
+    suiteDir: "power_ssj2008",
+    landing: "/power_ssj2008/results/",
+    name: "SPECpower_ssj2008 — server energy efficiency",
+    tagline: "Audited server power efficiency (overall ssj_ops per watt) for tested systems.",
+    about:
+      "Published SPECpower_ssj2008 results from the Standard Performance Evaluation Corporation (www.spec.org). SPECpower_ssj2008 measures the energy efficiency of server-class computers — the overall server-side Java operations per second per watt (ssj_ops/watt) across graduated load levels. Each result is an audited, compliant run for a specific system, with the overall efficiency as published by SPEC. Each result links to its SPEC result page. SPEC® and SPECpower® are trademarks of the Standard Performance Evaluation Corporation.",
+    tags: ["spec", "power", "energy-efficiency", "server"],
+    sponsorCls: "wkld_ssj_global_config_hw_vendor",
+    systemCls: "wkld_ssj_global_config_hw_model",
+    metrics: [
+      {
+        cls: "metric_performance_power_ratio",
+        name: "overall_ssj_ops_per_watt",
+        unit: "ssj_ops/watt",
+        description:
+          "SPECpower_ssj2008 overall ssj_ops/watt: server-side Java operations per second per watt, summed across the graduated load levels, as published by SPEC. Higher is better.",
+      },
+    ],
+    details: {
+      cpu: "wkld_ssj_global_config_hw_cpu",
+      chips: "aggregate_config_cpu_chips",
+      cores: "aggregate_config_cpu_cores",
+      nodes: "hwnodes",
+    },
+  },
+  {
+    key: "spec-storage2020",
+    suiteDir: "storage2020",
+    landing: "/storage2020/results/",
+    name: "SPECstorage Solution 2020 — storage performance",
+    tagline: "Audited storage-solution throughput and response time across workload types.",
+    about:
+      "Published SPECstorage Solution 2020 results from the Standard Performance Evaluation Corporation (www.spec.org). SPECstorage Solution 2020 measures storage-system performance under several real-world workloads (AI image, EDA, genomics, software build, video data acquisition). Each result reports the workload's business metric (the peak load sustained) and the overall response time, as published by SPEC, for one storage solution running one workload. Results are only comparable within the same workload — the workload is a column on each result. Each result links to its SPEC result page. SPEC® and SPECstorage® are trademarks of the Standard Performance Evaluation Corporation.",
+    category: "STORAGE",
+    tags: ["spec", "storage", "nas", "filesystem"],
+    sponsorCls: "Tested_By",
+    systemCls: "Solution_Name",
+    metrics: [
+      {
+        cls: "Throughput_Max",
+        name: "business_metric",
+        description:
+          "The peak load the solution sustained for its workload (the SPECstorage business metric — job sets, builds, jobs, or streams depending on the workload), as published by SPEC. Higher is better; comparable only within the same workload (see the workload in the result details).",
+      },
+      {
+        cls: "Overall_Response_Time",
+        name: "overall_response_time_ms",
+        unit: "ms",
+        description:
+          "Overall response time in milliseconds at the peak load, as published by SPEC. Lower is better.",
+      },
+    ],
+    details: { workload: "NAS_Type", memory_gb: "Total_Memory", exported_capacity: "Exported_Capacity" },
+  },
 ];
 
-/** Robots preflight: every result page this source fetches. */
-export const robotsPaths = SUITES.map((s) => s.path);
+/** Robots preflight: every result page/landing this source fetches (quarter pages sit under the
+ * landing path, so the prefix check covers them). */
+export const robotsPaths = SUITES.map((s) => s.path || s.landing);
 
 // spec.org publishes Crawl-delay: 10. The shared pull spacing is only 600 ms, so add the balance.
 const CRAWL_DELAY_MS = 10_000;
@@ -187,20 +246,39 @@ const PLATFORM_TARGET_CAP = 20_000;
 export const fullOptions = /** @type {{ topResults: number }} */ ({ topResults: PLATFORM_TARGET_CAP });
 
 /**
- * Stage A: one HTML result page per benchmark (6 requests; CPU2017 pages are ~10 MB each). Spaced
- * by the site's Crawl-delay.
+ * Stage A. Aggregate-page suites (CPU2017, jbb2015, hpc2021) fetch one HTML page each; crawl suites
+ * (power_ssj2008, storage2020, which publish no all-results page) fetch a results landing page,
+ * enumerate its quarter directories, and fetch each quarter page. Every request is spaced by the
+ * site's Crawl-delay: 10.
  * @param {{ fetchText: (url: string) => Promise<string>, writeText: (name: string, text: string) => Promise<void> }} ctx
  */
 export async function pull(ctx) {
   let first = true;
-  for (const suite of SUITES) {
+  const gap = async () => {
     if (!first) await sleep(CRAWL_DELAY_MS);
     first = false;
-    const html = await ctx.fetchText(`${ROOT}${suite.path}`);
-    if (!/<table/i.test(html)) {
-      throw new Error(`spec: ${suite.path} has no result table — the page may have moved`);
+  };
+  for (const suite of SUITES) {
+    if (suite.landing) {
+      await gap();
+      const landing = await ctx.fetchText(`${ROOT}${suite.landing}`);
+      const quarters = discoverQuarters(landing);
+      if (quarters.length === 0) {
+        throw new Error(`spec: no quarter directories found at ${suite.landing}`);
+      }
+      for (const q of quarters) {
+        await gap();
+        const html = await ctx.fetchText(`${ROOT}${suite.landing}${q}/`);
+        await ctx.writeText(`${suite.suiteDir}-${q}.html`, html);
+      }
+    } else {
+      await gap();
+      const html = await ctx.fetchText(`${ROOT}${suite.path}`);
+      if (!/<table/i.test(html)) {
+        throw new Error(`spec: ${suite.path} has no result table — the page may have moved`);
+      }
+      await ctx.writeText(String(suite.file), html);
     }
-    await ctx.writeText(suite.file, html);
   }
 }
 
@@ -254,22 +332,29 @@ function cell(row, cls) {
 
 /**
  * Parse one SPEC result page into rows (pure — the adapter is unit-tested against fixtures).
- * A data row is any `<tr>` carrying a `<suiteDir>-YYYYMMDD-NNN` result link.
+ * A data row is any `<tr>` carrying a `<suiteDir>-YYYYMMDD-NNN` result link. On an aggregate page
+ * the link is quarter-qualified (`res2024q3/cpu2017-…`) and the quarter comes from it; on a crawled
+ * quarter page the link is bare (`power_ssj2008-…`) so the caller passes the quarter it fetched.
  * @param {string} html
  * @param {Suite} suite
+ * @param {string} [quarter] e.g. "2024q3" — supplied for crawled quarter pages
  * @returns {{ resultBase: string, quarter: string, date: string, sponsor: string, system: string, cells: (cls: string) => string }[]}
  */
-export function parseSuite(html, suite) {
-  const linkRe = new RegExp(`res(\\d{4}q\\d)/(${esc(suite.suiteDir)}-(\\d{8})-\\d+)\\.`, "i");
+export function parseSuite(html, suite, quarter) {
+  const linkRe = quarter
+    ? new RegExp(`(${esc(suite.suiteDir)}-(\\d{8})-\\d+)\\.`, "i")
+    : new RegExp(`res(\\d{4}q\\d)/(${esc(suite.suiteDir)}-(\\d{8})-\\d+)\\.`, "i");
   const rows = [];
   for (const chunk of html.split(/<tr[ >]/i).slice(1)) {
     const row = chunk.slice(0, chunk.search(/<\/tr>/i) >= 0 ? chunk.search(/<\/tr>/i) : undefined);
     const link = linkRe.exec(row);
     if (!link) continue; // header-repeat rows and layout rows carry no result link
-    const [, quarter, resultBase, ymd] = link;
+    const q = quarter ?? link[1];
+    const resultBase = quarter ? link[1] : link[2];
+    const ymd = quarter ? link[2] : link[3];
     rows.push({
       resultBase,
-      quarter,
+      quarter: q,
       date: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`,
       sponsor: textOf(cell(row, suite.sponsorCls)),
       system: textOf(cell(row, suite.systemCls)),
@@ -277,6 +362,16 @@ export function parseSuite(html, suite) {
     });
   }
   return rows;
+}
+
+/**
+ * Distinct `resYYYYqN` quarter-directory names linked from a suite's results landing page.
+ * @param {string} html
+ */
+export function discoverQuarters(html) {
+  const set = new Set();
+  for (const m of html.matchAll(/href="(res\d{4}q\d)\/?"/gi)) set.add(m[1]);
+  return [...set].sort();
 }
 
 /**
@@ -294,17 +389,29 @@ export function adapt(archive, options = {}) {
   const benchmarks = [];
 
   for (const suite of SUITES) {
-    let html;
-    try {
-      html = archive.readText(suite.file);
-    } catch {
-      continue; // page absent from this archive — skip the benchmark
+    // Aggregate suites read one page; crawl suites read every quarter file the pull saved
+    // (`<suiteDir>-resYYYYqN.html`), tagging each row with the quarter from its file name.
+    /** @type {{ html: string, quarter?: string }[]} */
+    let sources = [];
+    if (suite.landing) {
+      for (const f of archive.manifest.files ?? []) {
+        const m = new RegExp(`^${esc(suite.suiteDir)}-(res\\d{4}q\\d)\\.html$`).exec(f.name);
+        if (m) sources.push({ html: archive.readText(f.name), quarter: m[1].slice(3) });
+      }
+    } else {
+      try {
+        sources = [{ html: archive.readText(String(suite.file)) }];
+      } catch {
+        // page absent from this archive
+      }
     }
+    if (sources.length === 0) continue;
     const primary = suite.metrics[0];
 
+    const allRows = sources.flatMap((s) => parseSuite(s.html, suite, s.quarter));
     /** @type {{ score: number, earliest: number | null, target: import("../model.mjs").IngestTarget }[]} */
     const parsed = [];
-    for (const row of parseSuite(html, suite)) {
+    for (const row of allRows) {
       const score = numOf(row.cells(primary.cls));
       if (score === null || row.system === "") continue; // no headline score → unusable
 
@@ -373,7 +480,7 @@ export function adapt(archive, options = {}) {
       about: suite.about,
       methodology: null,
       published_at: publishedAt ?? undefined,
-      category: "HARDWARE",
+      category: suite.category ?? "HARDWARE",
       tags: suite.tags,
       observationSchema: {
         metrics: suite.metrics.map((m) => ({ name: m.name, type: "number", unit: m.unit, description: m.description })),

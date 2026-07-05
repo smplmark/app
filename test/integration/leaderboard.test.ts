@@ -137,6 +137,23 @@ describe("benchmark leaderboard", () => {
     expect(page2.total).toBe(4);
   });
 
+  it("downloads the entire current filter as CSV or JSON (not just a page)", async () => {
+    const { benchmark } = await seed();
+    const csv = await apiGet(`/api/v1/benchmarks/${benchmark.id}/leaderboard`, { Accept: "text/csv" });
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get("content-type")).toContain("text/csv");
+    const text = await csv.text();
+    const lines = text.trim().split(/\r?\n/);
+    expect(lines[0]).toContain("key,name,score"); // header: fixed cols + metric + detail cols
+    expect(lines).toHaveLength(5); // header + all 4 systems (not paginated)
+    expect(text).toContain('"Acme, Inc"'); // a comma-bearing value is RFC-4180 quoted
+
+    const json = await apiGet(`/api/v1/benchmarks/${benchmark.id}/leaderboard?page[size]=2&format=json`);
+    expect(json.status).toBe(200);
+    expect(json.headers.get("content-disposition")).toContain(".json");
+    expect(((await json.json()) as { data: unknown[] }).data).toHaveLength(4); // full set, page[size] ignored
+  });
+
   it("rejects an unknown sort field and 404s a private/absent benchmark", async () => {
     const { benchmark } = await seed();
     expect((await apiGet(`/api/v1/benchmarks/${benchmark.id}/leaderboard?sort=nonsuch`)).status).toBe(400);

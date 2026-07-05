@@ -48,7 +48,9 @@ import {
   optionalStringOrNull,
   requireString,
 } from "../http/body";
+import { wantsCsv } from "../http/content_negotiation";
 import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
+import { leaderboardToCsv } from "../serialize/csv";
 import { getAuth, getOptionalAuth, optionalAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { benchmarkLeaderboard } from "../data/leaderboard";
 import { paginationMeta } from "../query/pagination";
@@ -296,6 +298,11 @@ benchmarks.get("/:id/leaderboard", optionalAuth, async (c) => {
   const defaultField = schema.chart?.y && metricNames.includes(schema.chart.y) ? schema.chart.y : metricNames[0];
   const sort = parseSort(c.req.query("sort") ?? null, `-${defaultField}`, metricNames);
 
+  // A download (CSV via Accept, or ?format=json) returns the WHOLE current filter (up to the target
+  // cap), not one page; the interactive view paginates.
+  const csv = wantsCsv(c.req.header("Accept"));
+  const jsonDownload = c.req.query("format") === "json";
+  const download = csv || jsonDownload;
   const pagination = readPagination(c);
   const result = await benchmarkLeaderboard(c.env.DB, {
     benchmarkId: row.id,
@@ -303,9 +310,36 @@ benchmarks.get("/:id/leaderboard", optionalAuth, async (c) => {
     sortDesc: sort.desc,
     search: c.req.query("filter[search]") ?? undefined,
     facetFilters: readFacetFilters(c),
-    limit: pagination.limit,
-    offset: pagination.offset,
+    limit: download ? LIMITS.targetsPerBenchmark : pagination.limit,
+    offset: download ? 0 : pagination.offset,
   });
+
+  if (csv) {
+    return new Response(leaderboardToCsv(result.rows, metricNames), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${row.key}-leaderboard.csv"`,
+        Vary: "Accept",
+      },
+    });
+  }
+  if (jsonDownload) {
+    const data = result.rows.map((r) => ({
+      key: r.key,
+      name: r.name,
+      details: r.details ? JSON.parse(r.details) : null,
+      metrics: r.metrics ? JSON.parse(r.metrics) : {},
+      observed_at: r.observed_at,
+    }));
+    return new Response(JSON.stringify({ data }, null, 2), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${row.key}-leaderboard.json"`,
+      },
+    });
+  }
 
   const resources = result.rows.map((r) => ({
     type: "leaderboard_entry" as const,
