@@ -114,6 +114,7 @@ export interface ExternalSourceRow {
   description: string | null;
   url: string;
   license: string | null;
+  license_url: string | null;
   benchmark_count: number;
   /** When we last retrieved data from the source (the imported archive's pull time). */
   retrieved_at: number;

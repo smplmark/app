@@ -400,6 +400,7 @@ const externalSource = registerEntity(
     description: z.string().nullable().openapi({ description: "What kinds of benchmark results the source publishes." }),
     url: z.string().openapi({ description: "Link to the source." }),
     license: z.string().nullable().openapi({ description: "The license the source publishes its results under, or null when the source states none." }),
+    license_url: z.string().nullable().openapi({ description: "Link to the license statement, or null when there is none to link." }),
     benchmark_count: z.number().int().openapi({ description: "How many published benchmarks on smplmark were ingested from this source." }),
     retrieved_at: dateTime("When data was last retrieved from the source."),
   }),

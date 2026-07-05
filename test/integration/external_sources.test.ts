@@ -9,12 +9,13 @@ async function seedSource(key: string, name: string, over: Record<string, unknow
     description: `${name} results.`,
     url: `https://example.org/${key}`,
     license: "CC0-1.0",
+    license_url: `https://example.org/${key}/license`,
     benchmark_count: 1,
     retrieved_at: 1_783_000_000_000,
     ...over,
   };
   await env.DB.prepare(
-    "INSERT INTO external_source (id, key, name, description, url, license, benchmark_count, retrieved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO external_source (id, key, name, description, url, license, license_url, benchmark_count, retrieved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
     .bind(
       `src-${key}`,
@@ -23,6 +24,7 @@ async function seedSource(key: string, name: string, over: Record<string, unknow
       row.description,
       row.url,
       row.license,
+      row.license_url,
       row.benchmark_count,
       row.retrieved_at,
       row.retrieved_at,
@@ -34,7 +36,7 @@ async function seedSource(key: string, name: string, over: Record<string, unknow
 describe("external sources catalog", () => {
   it("lists sources anonymously, ordered by name", async () => {
     await seedSource("zeta", "Zeta Bench");
-    await seedSource("alpha", "Alpha Data", { license: null, benchmark_count: 21 });
+    await seedSource("alpha", "Alpha Data", { license: null, license_url: null, benchmark_count: 21 });
 
     const res = await apiGet("/api/v1/external_sources");
     expect(res.status).toBe(200);
@@ -50,6 +52,7 @@ describe("external sources catalog", () => {
       description: "Alpha Data results.",
       url: "https://example.org/alpha",
       license: null,
+      license_url: null,
       benchmark_count: 21,
       retrieved_at: new Date(1_783_000_000_000).toISOString(),
     });

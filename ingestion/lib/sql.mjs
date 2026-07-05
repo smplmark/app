@@ -144,7 +144,7 @@ export function buildInsertSql(entries) {
   }
   for (const { source, retrievedAt, count } of bySource.values()) {
     statements.push(
-      `INSERT INTO external_source (id, key, name, description, url, license, benchmark_count, retrieved_at, created_at, updated_at) VALUES (${q(`src-${source.key}`)}, ${q(source.key)}, ${q(source.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${q(source.license ?? null)}, ${count}, ${n(retrievedAt)}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+      `INSERT INTO external_source (id, key, name, description, url, license, license_url, benchmark_count, retrieved_at, created_at, updated_at) VALUES (${q(`src-${source.key}`)}, ${q(source.key)}, ${q(source.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${q(source.license ?? null)}, ${q(source.licenseUrl ?? null)}, ${count}, ${n(retrievedAt)}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
     );
     counts.sources += 1;
   }

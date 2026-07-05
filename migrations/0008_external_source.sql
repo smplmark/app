@@ -11,6 +11,7 @@ CREATE TABLE external_source (
   description     TEXT,
   url             TEXT    NOT NULL,
   license         TEXT,
+  license_url     TEXT,
   benchmark_count INTEGER NOT NULL DEFAULT 0,
   -- When we last retrieved data from the source (the imported archive's pull time, epoch-ms).
   retrieved_at    INTEGER NOT NULL,

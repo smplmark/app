@@ -328,6 +328,7 @@ export function serializeExternalSource(row: ExternalSourceRow): ResourceObject 
       description: row.description,
       url: row.url,
       license: row.license,
+      license_url: row.license_url,
       benchmark_count: row.benchmark_count,
       retrieved_at: iso(row.retrieved_at),
     },

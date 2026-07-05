@@ -165,7 +165,7 @@ describe("sql builders", () => {
     // The source catalog is rebuilt alongside the benchmark subtree, on retrieved_at stamps.
     expect(joined).toContain("DELETE FROM external_source");
     expect(joined).toContain(
-      "INSERT INTO external_source (id, key, name, description, url, license, benchmark_count, retrieved_at, created_at, updated_at) VALUES ('src-demo-src', 'demo-src', 'Demo Source', 'Demo results.', 'https://example.org', 'CC0-1.0', 1, 5000, 5000, 5000)",
+      "INSERT INTO external_source (id, key, name, description, url, license, license_url, benchmark_count, retrieved_at, created_at, updated_at) VALUES ('src-demo-src', 'demo-src', 'Demo Source', 'Demo results.', 'https://example.org', 'CC0-1.0', 'https://example.org/license', 1, 5000, 5000, 5000)",
     );
     // Identical input → identical output (reviewable diffs).
     expect(buildInsertSql([{ benchmark: bench() as never, source, retrievedAt: 5000 }]).statements).toEqual(statements);
