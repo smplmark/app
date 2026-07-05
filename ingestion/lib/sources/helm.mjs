@@ -199,8 +199,6 @@ export function adapt(archive, options = {}) {
   return [
     {
       key: "helm-capabilities",
-      // The source is retired/frozen — the dataset is final, so it imports pre-closed.
-      closed: true,
       published_at: publishedAt ?? undefined,
       name: "HELM Capabilities",
       description: "Language models scored on five scenarios by the Stanford HELM Capabilities leaderboard.",

@@ -6,8 +6,10 @@
 // Invariants:
 //   • The wipe is scoped by account_id = SYSTEM_ACCOUNT_ID — a bottom-up cascade (D1 enforces the
 //     logical FKs), NEVER a table truncate. Real accounts and their benchmarks are untouchable.
-//   • Ingested benchmarks are born PUBLISHED with published_as_kind = 'INGESTED' and a frozen
-//     attribution snapshot; there is no API path that writes that kind.
+//   • Ingested benchmarks are born PUBLISHED and CLOSED with published_as_kind = 'INGESTED' and a
+//     frozen attribution snapshot; there is no API path that writes that kind. Closed because every
+//     ingested benchmark is a point-in-time snapshot of an external source — smplmark receives no
+//     continuous feed for it, so nothing new is ever appended (a re-import rebuilds it wholesale).
 //   • Ids are deterministic functions of the keys, so re-importing the same archive produces
 //     byte-identical SQL (reviewable diffs, stable cross-run references).
 //   • Every statement stays under D1's ~100 KB statement cap via row- and byte-bounded chunking.
@@ -173,7 +175,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${b.closed === true ? n(retrievedAt) : "NULL"})`,
+      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
     );
     counts.benchmarks += 1;
 

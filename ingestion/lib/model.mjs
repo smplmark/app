@@ -32,8 +32,6 @@
  * @property {"HARDWARE"|"DATABASE"|"ML_AI"|"STORAGE"|"NETWORK"|"OTHER"} category
  * @property {string[]} tags lowercase slugs
  * @property {object} observationSchema the benchmark's observation_schema (metrics/derived/chart)
- * @property {boolean} [closed] true when the source dataset is final (frozen leaderboards) — the
- *   benchmark imports pre-closed, so nothing new can be appended beneath it
  * @property {number} [published_at] epoch-ms — when the SOURCE published this dataset; omitted
  *   when the archive carries no usable publication date (the importer falls back to retrieved_at)
  * @property {IngestTarget[]} targets

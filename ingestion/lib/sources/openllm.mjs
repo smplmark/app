@@ -354,8 +354,6 @@ export function adapt(archive, options = {}) {
   return [
     {
       key: "open-llm-leaderboard",
-      // The source is retired/frozen — the dataset is final, so it imports pre-closed.
-      closed: true,
       published_at: datasetPublishedAt(archive) ?? undefined,
       name: "Open LLM Leaderboard (archived)",
       description:

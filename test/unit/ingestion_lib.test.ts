@@ -161,6 +161,9 @@ describe("sql builders", () => {
     expect(joined).toContain("Target 1 with ''quote''");
     // Benchmarks are born PUBLISHED, non-draft, under the system account.
     expect(joined).toMatch(/'PUBLISHED', 5000/);
+    // …and CLOSED unconditionally (closed_at = retrievedAt): an ingested benchmark is a snapshot,
+    // never a live feed, regardless of what the adapter emitted. The trailing column is closed_at.
+    expect(joined).toContain("'HARDWARE', 5000)");
     expect(joined).toContain("INSERT OR IGNORE INTO account");
     // The source catalog is rebuilt alongside the benchmark subtree, on retrieved_at stamps.
     expect(joined).toContain("DELETE FROM external_source");
