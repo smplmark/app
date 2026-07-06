@@ -65,30 +65,33 @@ function assertSafeKey(key: string): void {
   }
 }
 
-/**
- * Build the shared WHERE (search + facet filters) and its binds. The rep CTE already scopes to the
- * benchmark, so the outer query needs no benchmark predicate.
- */
-function buildFilters(input: LeaderboardInput): { sql: string; binds: unknown[] } {
+interface Clause {
+  sql: string;
+  binds: unknown[];
+}
+
+/** The free-text search predicate (AND of terms over name + details), or null when empty. */
+function searchClause(search: string | undefined): Clause | null {
   const clauses: string[] = [];
   const binds: unknown[] = [];
-
-  for (const term of parseSearchQuery(input.search ?? "")) {
+  for (const term of parseSearchQuery(search ?? "")) {
     const like = `%${likePattern(term.toLowerCase())}%`;
-    // Match the visible name or any value in the details JSON (stored as text).
     clauses.push("(lower(target.name) LIKE ? ESCAPE '\\' OR lower(target.details) LIKE ? ESCAPE '\\')");
     binds.push(like, like);
   }
+  return clauses.length ? { sql: clauses.join(" AND "), binds } : null;
+}
 
-  for (const [field, values] of Object.entries(input.facetFilters)) {
+/** One `json_extract(details,'$.field') IN (…)` predicate per actively-filtered facet field. */
+function facetClauses(facetFilters: Record<string, string[]>): { field: string; clause: Clause }[] {
+  const out: { field: string; clause: Clause }[] = [];
+  for (const [field, values] of Object.entries(facetFilters)) {
     if (values.length === 0) continue;
     assertSafeKey(field);
     const placeholders = values.map(() => "?").join(",");
-    clauses.push(`json_extract(target.details, '$.${field}') IN (${placeholders})`);
-    binds.push(...values);
+    out.push({ field, clause: { sql: `json_extract(target.details, '$.${field}') IN (${placeholders})`, binds: [...values] } });
   }
-
-  return { sql: clauses.length ? `AND ${clauses.join(" AND ")}` : "", binds };
+  return out;
 }
 
 export async function benchmarkLeaderboard(
@@ -96,61 +99,99 @@ export async function benchmarkLeaderboard(
   input: LeaderboardInput,
 ): Promise<LeaderboardResult> {
   assertSafeKey(input.sortField);
-  const filters = buildFilters(input);
+  const search = searchClause(input.search);
+  const facets = facetClauses(input.facetFilters);
+  const activeFields = facets.map((f) => f.field);
+
+  // A WHERE built from search + every facet filter, optionally with one facet's own filter removed
+  // (that "excludeField" pass is what makes a facet's counts DISJUNCTIVE — it can still show the
+  // other values you could add within that same facet).
+  const whereFor = (excludeField?: string): Clause => {
+    const parts: Clause[] = [];
+    if (search) parts.push(search);
+    for (const f of facets) if (f.field !== excludeField) parts.push(f.clause);
+    return {
+      sql: parts.length ? `AND ${parts.map((p) => p.sql).join(" AND ")}` : "",
+      binds: parts.flatMap((p) => p.binds),
+    };
+  };
+
+  const full = whereFor();
   const dir = input.sortDesc ? "DESC" : "ASC";
   // json_extract yields NULL for a target missing the sort metric; SQLite orders NULL first, so for
   // DESC (the common "highest first") the metric-less rows land last, as a reader expects.
   const orderExpr = `CAST(json_extract(rep.metrics, '$.${input.sortField}') AS REAL)`;
+  const FROM = "FROM target JOIN rep ON rep.target_id = target.id AND rep.rn = 1";
 
   const rowsSql =
     `${REP_CTE} SELECT target.id AS target_id, target.key AS key, target.name AS name,` +
     ` target.details AS details, rep.metrics AS metrics, rep.observed_at AS observed_at` +
-    ` FROM target JOIN rep ON rep.target_id = target.id AND rep.rn = 1` +
-    ` WHERE 1=1 ${filters.sql}` +
-    ` ORDER BY ${orderExpr} ${dir}, target.id ${dir} LIMIT ? OFFSET ?`;
+    ` ${FROM} WHERE 1=1 ${full.sql} ORDER BY ${orderExpr} ${dir}, target.id ${dir} LIMIT ? OFFSET ?`;
+  const countSql = `${REP_CTE} SELECT COUNT(*) AS n ${FROM} WHERE 1=1 ${full.sql}`;
 
-  const countSql =
-    `${REP_CTE} SELECT COUNT(*) AS n` +
-    ` FROM target JOIN rep ON rep.target_id = target.id AND rep.rn = 1` +
-    ` WHERE 1=1 ${filters.sql}`;
-
-  // Every (field, value) count over the filtered set in one pass; JS groups + trims to facetable
-  // fields. Numeric/text scalar detail values only (json_each 'type' filter excludes nested objects).
-  const facetSql =
+  // Base facet pass: every (field, value) count over the full filter, in one json_each sweep. This
+  // gives the correct counts for every UNfiltered facet; actively-filtered facets are overridden
+  // below by their own disjunctive pass. (Scalar detail values only — json_each 'type' filter.)
+  const baseFacetSql =
     `${REP_CTE} SELECT je.key AS field, je.value AS value, COUNT(*) AS n` +
-    ` FROM target JOIN rep ON rep.target_id = target.id AND rep.rn = 1, json_each(target.details) je` +
-    ` WHERE je.type IN ('text','integer','real') ${filters.sql}` +
+    ` ${FROM}, json_each(target.details) je WHERE je.type IN ('text','integer','real') ${full.sql}` +
     ` GROUP BY je.key, je.value`;
 
-  const [rowsRes, countRes, facetRes] = await db.batch([
-    db.prepare(rowsSql).bind(input.benchmarkId, ...filters.binds, input.limit, input.offset),
-    db.prepare(countSql).bind(input.benchmarkId, ...filters.binds),
-    db.prepare(facetSql).bind(input.benchmarkId, ...filters.binds),
+  // One extra pass per actively-filtered facet: count its values with its OWN filter dropped.
+  const perFacet = facets.map((f) => {
+    const w = whereFor(f.field);
+    return db
+      .prepare(
+        `${REP_CTE} SELECT json_extract(target.details, '$.${f.field}') AS value, COUNT(*) AS n` +
+          ` ${FROM} WHERE json_extract(target.details, '$.${f.field}') IS NOT NULL ${w.sql}` +
+          ` GROUP BY value`,
+      )
+      .bind(input.benchmarkId, ...w.binds);
+  });
+
+  // Everything in one D1 round-trip: rows + count + base facets + (one per active facet).
+  const results = await db.batch([
+    db.prepare(rowsSql).bind(input.benchmarkId, ...full.binds, input.limit, input.offset),
+    db.prepare(countSql).bind(input.benchmarkId, ...full.binds),
+    db.prepare(baseFacetSql).bind(input.benchmarkId, ...full.binds),
+    ...perFacet,
   ]);
 
-  const rows = (rowsRes.results ?? []) as unknown as LeaderboardRow[];
-  const total = ((countRes.results?.[0] as { n?: number } | undefined)?.n ?? 0) as number;
-  const facets = buildFacets(
-    (facetRes.results ?? []) as unknown as { field: string; value: unknown; n: number }[],
-  );
-  return { rows, total, facets };
+  const rows = (results[0].results ?? []) as unknown as LeaderboardRow[];
+  const total = ((results[1].results?.[0] as { n?: number } | undefined)?.n ?? 0) as number;
+  const baseFacetRows = (results[2].results ?? []) as unknown as { field: string; value: unknown; n: number }[];
+  const disjunctive = new Map<string, { value: unknown; n: number }[]>();
+  activeFields.forEach((field, i) => {
+    disjunctive.set(field, (results[3 + i].results ?? []) as unknown as { value: unknown; n: number }[]);
+  });
+
+  return { rows, total, facets: buildFacets(baseFacetRows, disjunctive, new Set(activeFields)) };
 }
 
-/** Group the flat (field,value,count) rows into facets, dropping degenerate/high-cardinality ones. */
+/**
+ * Assemble the facet list. Unfiltered fields take their counts from the base pass; each actively-
+ * filtered field is overridden with its disjunctive pass (its own filter removed), so its other
+ * values stay visible for OR-selection. Actively-filtered fields are always shown (so they can be
+ * un-selected) even if they'd otherwise be dropped as single-valued or fall past the field cap.
+ */
 function buildFacets(
-  rows: { field: string; value: unknown; n: number }[],
+  baseRows: { field: string; value: unknown; n: number }[],
+  disjunctive: Map<string, { value: unknown; n: number }[]>,
+  activeFields: Set<string>,
 ): LeaderboardFacet[] {
   const byField = new Map<string, { value: string; count: number }[]>();
-  for (const r of rows) {
-    if (r.value === null || r.value === undefined) continue;
-    const list = byField.get(r.field) ?? [];
-    list.push({ value: String(r.value), count: r.n });
-    byField.set(r.field, list);
-  }
+  const add = (field: string, value: unknown, count: number) => {
+    if (value === null || value === undefined) return;
+    const list = byField.get(field) ?? [];
+    list.push({ value: String(value), count });
+    byField.set(field, list);
+  };
+  for (const r of baseRows) if (!activeFields.has(r.field)) add(r.field, r.value, r.n);
+  for (const [field, vals] of disjunctive) for (const v of vals) add(field, v.value, v.n);
 
   const facets: LeaderboardFacet[] = [];
   for (const [field, values] of byField) {
-    if (values.length < 2) continue; // a single-value field is not a useful filter
+    if (values.length < 2 && !activeFields.has(field)) continue; // not a useful filter
     values.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
     facets.push({
       field,
@@ -158,7 +199,14 @@ function buildFacets(
       truncated: values.length > MAX_FACET_VALUES,
     });
   }
-  // Show the most-populated facets first; bound how many we return.
+  // Most-populated first, but never drop an actively-filtered facet when trimming to the field cap.
   facets.sort((a, b) => b.values.length - a.values.length || a.field.localeCompare(b.field));
-  return facets.slice(0, MAX_FACET_FIELDS);
+  const kept = facets.filter((f) => activeFields.has(f.field));
+  for (const f of facets) {
+    if (kept.length >= MAX_FACET_FIELDS) break;
+    if (!activeFields.has(f.field)) kept.push(f);
+  }
+  // Restore the population order for the final list.
+  kept.sort((a, b) => b.values.length - a.values.length || a.field.localeCompare(b.field));
+  return kept;
 }

@@ -116,6 +116,26 @@ describe("benchmark leaderboard", () => {
     expect(both.total).toBe(4);
   });
 
+  it("computes disjunctive facet counts: a filtered facet keeps its other values", async () => {
+    const { benchmark } = await seed();
+    // Filter vendor=AMD. The Vendor facet must still show BOTH vendors (its own filter is excluded
+    // when counting it), so you can add Intel — while Sponsor (unfiltered) reflects the AMD filter.
+    const r = await board(benchmark.id, "?filter[facet.vendor]=AMD");
+    const vendor = r.facets.find((f) => f.field === "vendor")!;
+    expect(Object.fromEntries(vendor.values.map((v) => [v.value, v.count]))).toEqual({ AMD: 2, Intel: 2 });
+    const sponsor = r.facets.find((f) => f.field === "sponsor")!;
+    // Only the two AMD rows (alpha=Dell, charlie=HPE) remain in the sponsor breakdown.
+    expect(Object.fromEntries(sponsor.values.map((v) => [v.value, v.count]))).toEqual({ Dell: 1, HPE: 1 });
+
+    // Cross-facet still ANDs: vendor=AMD AND sponsor=Dell → just alpha; the vendor facet, counted
+    // with its own filter removed, now reflects the sponsor=Dell narrowing (Dell has 1 AMD, 1 Intel).
+    const both = await board(benchmark.id, "?filter[facet.vendor]=AMD&filter[facet.sponsor]=Dell&meta[total]=true");
+    expect(both.total).toBe(1);
+    expect(both.keys).toEqual(["alpha"]);
+    const v2 = both.facets.find((f) => f.field === "vendor")!;
+    expect(Object.fromEntries(v2.values.map((v) => [v.value, v.count]))).toEqual({ AMD: 1, Intel: 1 });
+  });
+
   it("treats a facet value with a comma literally (repeated params, no comma-splitting)", async () => {
     const { benchmark } = await seed();
     const r = await board(benchmark.id, `?filter[facet.sponsor]=${encodeURIComponent("Acme, Inc")}&meta[total]=true`);
