@@ -1169,7 +1169,7 @@ registry.registerPath({
     filterParam("key", "Limit results to the benchmark with this key."),
     filterParam("tag", "Limit results to benchmarks carrying this tag (exact match on the tag's lowercase slug)."),
     filterParam("category", "Limit results to benchmarks in this category: HARDWARE, DATABASE, ML_AI, STORAGE, NETWORK, or OTHER."),
-    filterParam("search", "Free-text search. Every term must match (AND) as a case-insensitive substring of the benchmark's key, name, description, about, methodology, category, tags, or ingested source name. Double-quote a phrase to match it exactly, e.g. \"blender 4.2\". At most 8 terms."),
+    filterParam("search", "Free-text search. Every term must match (AND) as a case-insensitive substring of the benchmark's key, name, description, about, methodology, category, tags, ingested source name, or the name or key of any of its targets — so searching for a model or system (e.g. \"llama 3\") finds the benchmark that contains it. Double-quote a phrase to match it exactly, e.g. \"blender 4.2\". At most 8 terms."),
     ...paginationParams,
   ],
   responses: {

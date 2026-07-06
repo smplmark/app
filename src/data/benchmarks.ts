@@ -195,8 +195,14 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
   }
   if (input.searchTerms !== undefined) {
     for (const term of input.searchTerms) {
-      clauses.push("search_text LIKE ? ESCAPE '\\'");
-      binds.push(likePattern(term));
+      // Each term matches the benchmark's own text OR any of its targets' name/key, so searching a
+      // model or system (e.g. "llama 3") surfaces the benchmark that contains it — targets are only
+      // stored per-benchmark, not in search_text. EXISTS short-circuits and uses the
+      // target(benchmark_id) index, and keeps the outer query join-free so COUNT stays correct.
+      clauses.push(
+        "(search_text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM target WHERE target.benchmark_id = benchmark.id AND (lower(target.name) LIKE ? ESCAPE '\\' OR lower(target.key) LIKE ? ESCAPE '\\')))",
+      );
+      binds.push(likePattern(term), likePattern(term), likePattern(term));
     }
   }
   if (input.tag !== undefined) {

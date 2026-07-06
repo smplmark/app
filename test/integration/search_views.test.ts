@@ -82,6 +82,36 @@ describe("filter[search]", () => {
     expect((await apiGet("/api/v1/benchmarks?filter[search]=" + "x".repeat(200))).status).toBe(400);
   });
 
+  it("matches a target's name or key, so a model or system finds its benchmark", async () => {
+    const owner = await register();
+    const llm = await makeBenchmark(owner.token, { key: "llm-bench", name: "LLM Bench", category: "ML_AI" });
+    const db = await makeBenchmark(owner.token, { key: "db-bench", name: "DB Bench", category: "DATABASE" });
+    // Target NAME differs from its key, to prove the name (not only the key) is searched.
+    const t1 = await apiPost(
+      "/api/v1/targets",
+      { data: { type: "target", attributes: { benchmark: llm.id, key: "model-a", name: "Meta Llama-3.1-70B Instruct" } } },
+      bearer(owner.token),
+    );
+    expect(t1.status).toBe(201);
+    const t2 = await apiPost(
+      "/api/v1/targets",
+      { data: { type: "target", attributes: { benchmark: db.id, key: "postgres-16", name: "PostgreSQL 16" } } },
+      bearer(owner.token),
+    );
+    expect(t2.status).toBe(201);
+    await publish(owner.token, owner.user_id, llm.id);
+    await publish(owner.token, owner.user_id, db.id);
+
+    // Neither benchmark's own text contains "llama" — only the target's name does (case-insensitive).
+    expect(await keysFor("/api/v1/benchmarks?filter[search]=llama")).toEqual(["llm-bench"]);
+    // Multi-term "llama 3" still ANDs to the one benchmark whose target name carries both words.
+    expect(await keysFor("/api/v1/benchmarks?filter[search]=llama%203")).toEqual(["llm-bench"]);
+    // A target key matches too.
+    expect(await keysFor("/api/v1/benchmarks?filter[search]=postgres")).toEqual(["db-bench"]);
+    // A term in neither the benchmark nor any of its targets still finds nothing.
+    expect(await keysFor("/api/v1/benchmarks?filter[search]=nonexistentxyz")).toEqual([]);
+  });
+
   it("search_text follows updates and tag changes", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token, { key: "b", name: "Original", tags: ["oldtag"] });
