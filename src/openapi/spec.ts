@@ -1564,7 +1564,8 @@ registry.registerPath({
   ],
   responses: {
     "200": domainResponse(run.ListResponse, "A page of runs."),
-    "400": errorJson("The query parameters were malformed, or filter[benchmark] was missing."),
+    "400": errorJson("The query parameters were malformed."),
+    "404": errorJson("filter[benchmark] was missing, or no benchmark with that id is visible."),
   },
 });
 
@@ -1590,6 +1591,7 @@ registry.registerPath({
   responses: {
     "200": domainResponse(run.Response, "The updated run."),
     ...commonErrors,
+    "409": errorJson("The run's started_at is frozen once its benchmark is published."),
   },
 });
 
@@ -1603,6 +1605,7 @@ registry.registerPath({
   responses: {
     "204": { description: "The run was deleted." },
     ...commonErrors,
+    "409": errorJson("Published benchmark data is append-only; a run cannot be deleted. Invalidate it instead."),
   },
 });
 
@@ -1630,13 +1633,20 @@ registry.registerPath({
   security: bearerSecurity,
   request: {
     params: runIdParam,
+    // JSON:API envelope (data.type.attributes), matching how the handler reads the body — a flat
+    // { invalidation_reason } is not accepted, so the spec must advertise the wrapped shape.
     body: domainBody(
       z
         .object({
-          invalidation_reason: z
-            .string()
-            .optional()
-            .openapi({ description: "An optional reason the run is being invalidated." }),
+          data: z.object({
+            type: z.literal("run").openapi({ description: 'Always "run".' }),
+            attributes: z.object({
+              invalidation_reason: z
+                .string()
+                .optional()
+                .openapi({ description: "An optional reason the run is being invalidated." }),
+            }),
+          }),
         })
         .openapi("RunInvalidateRequest", { description: "Details for invalidating a run." }),
       "The invalidation reason.",
@@ -1695,6 +1705,7 @@ registry.registerPath({
       },
     },
     "400": errorJson("The query parameters were malformed, or not exactly one resource filter was provided."),
+    "404": errorJson("The scoped run, target, or benchmark does not exist or is not visible."),
   },
 });
 
