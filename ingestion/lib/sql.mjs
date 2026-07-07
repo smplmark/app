@@ -1,11 +1,17 @@
 // @ts-check
 // Archive → SQL. Pure string building (no D1 binding, no fs) so every statement the importer will
-// run is unit-testable. Two products: the scoped wipe of everything the system account owns, and
-// chunked INSERTs for a set of adapted benchmark trees.
+// run is unit-testable. Two products: the scoped wipe of every ingested benchmark, and chunked
+// INSERTs for a set of adapted benchmark trees.
 //
 // Invariants:
-//   • The wipe is scoped by account_id = SYSTEM_ACCOUNT_ID — a bottom-up cascade (D1 enforces the
-//     logical FKs), NEVER a table truncate. Real accounts and their benchmarks are untouchable.
+//   • Each source publishes under its own account (id `acct-<publisher-slug>`, key the slug),
+//     created idempotently with INSERT OR IGNORE — a re-ingest never recreates or clobbers it, so
+//     a person from the source can claim the account later and keep their edits. Benchmark keys are
+//     therefore unique per publisher (the DB's (account_id, key) index), and the id folds the slug
+//     in (`ing-<slug>-<key>`) so two publishers may share a key without colliding.
+//   • The wipe is scoped by published_as_kind = 'INGESTED' — a bottom-up cascade (D1 enforces the
+//     logical FKs), NEVER a table truncate. Real accounts, publisher accounts, and any
+//     human-authored benchmark are untouchable.
 //   • Ingested benchmarks are born PUBLISHED and CLOSED with published_as_kind = 'INGESTED' and a
 //     frozen attribution snapshot; there is no API path that writes that kind. Closed because every
 //     ingested benchmark is a point-in-time snapshot of an external source — smplmark receives no
@@ -16,7 +22,14 @@
 
 import { LIMITS } from "./limits.mjs";
 
+// The legacy shared owner. No longer created or written; the wipe prunes it if it is left orphaned
+// by the transition from single-account to per-publisher ownership.
 export const SYSTEM_ACCOUNT_ID = "acct-system";
+
+/** Deterministic account id for a publisher slug. @param {string} slug */
+export function publisherAccountId(slug) {
+  return `acct-${slug}`;
+}
 
 /**
  * Display strings over the platform limit are clamped with an ellipsis (identity keys are never
@@ -60,22 +73,25 @@ export function n(value) {
 }
 
 /**
- * The scoped destructive wipe: delete the system account's entire benchmark subtree, child-first,
- * then prune orphaned tags (tags carry no data beyond their key; recreation is lossless).
+ * The scoped destructive wipe: delete every ingested benchmark's subtree, child-first, then prune
+ * orphaned tags (tags carry no data beyond their key; recreation is lossless). Publisher accounts
+ * are left intact — they are claimable and outlive any single import — but the legacy shared
+ * `acct-system` owner is dropped once the transition has left it owning nothing.
  * benchmark_view_day is deliberately NOT wiped — benchmark ids are deterministic, so view history
  * survives a re-ingest and buildInsertSql recomputes views_total from it (stale buckets for
  * benchmarks that disappear for good are pruned there too).
  * @returns {string[]}
  */
 export function buildWipeSql() {
-  const owned = `SELECT id FROM benchmark WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`;
+  const owned = `SELECT id FROM benchmark WHERE published_as_kind = 'INGESTED'`;
   return [
     `DELETE FROM observation WHERE run_id IN (SELECT run.id FROM run JOIN target ON target.id = run.target_id WHERE target.benchmark_id IN (${owned}))`,
     `DELETE FROM run WHERE target_id IN (SELECT id FROM target WHERE benchmark_id IN (${owned}))`,
     `DELETE FROM target WHERE benchmark_id IN (${owned})`,
     `DELETE FROM benchmark_tag WHERE benchmark_id IN (${owned})`,
-    `DELETE FROM benchmark WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`,
+    `DELETE FROM benchmark WHERE published_as_kind = 'INGESTED'`,
     `DELETE FROM tag WHERE id NOT IN (SELECT DISTINCT tag_id FROM benchmark_tag)`,
+    `DELETE FROM account WHERE id = ${q(SYSTEM_ACCOUNT_ID)} AND NOT EXISTS (SELECT 1 FROM benchmark WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)})`,
   ];
 }
 
@@ -117,26 +133,26 @@ function chunkInsert(head, rows) {
 
 /**
  * Build the INSERT statements for a set of adapted benchmarks (no wipe — compose with
- * buildWipeSql). Also re-asserts the system account so the importer is standalone-safe on a
- * freshly wiped local DB.
+ * buildWipeSql). Idempotently asserts one publisher account per source (INSERT OR IGNORE, so a
+ * claimed account is never clobbered) before the benchmarks that hang off it, keeping the importer
+ * standalone-safe on a freshly wiped local DB.
  * @param {ImportEntry[]} entries
  * @returns {{ statements: string[], counts: Record<string, number> }}
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, sources: 0, clamped: 0 };
+  const counts = { accounts: 0, benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, sources: 0, clamped: 0 };
   if (entries.length > LIMITS.benchmarksPerAccount) {
     throw new Error(
       `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
     );
   }
 
-  statements.push(
-    `INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES (${q(SYSTEM_ACCOUNT_ID)}, 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, 1783123200000, 0)`,
-  );
-
-  // The external-source catalog mirrors exactly what this import carries — rebuilt like the
-  // benchmark subtree (timestamps are the archive's retrieved_at, keeping the SQL deterministic).
+  // One account per source, plus the external-source catalog — both keyed off the distinct sources
+  // in this import. The account is idempotent (INSERT OR IGNORE on the deterministic id) so a
+  // re-ingest picks up new benchmarks without recreating or clobbering a possibly-claimed account;
+  // the catalog is rebuilt wholesale like the benchmark subtree. All timestamps are the archive's
+  // retrieved_at, keeping the SQL deterministic.
   statements.push("DELETE FROM external_source");
   const bySource = new Map();
   for (const { source, retrievedAt } of entries) {
@@ -145,6 +161,10 @@ export function buildInsertSql(entries) {
     else bySource.set(source.key, { source, retrievedAt, count: 1 });
   }
   for (const { source, retrievedAt, count } of bySource.values()) {
+    statements.push(
+      `INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES (${q(publisherAccountId(source.publisher.slug))}, ${q(source.publisher.slug)}, ${q(source.publisher.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${n(retrievedAt)}, 0)`,
+    );
+    counts.accounts += 1;
     statements.push(
       `INSERT INTO external_source (id, key, name, description, url, license, license_url, benchmark_count, retrieved_at, created_at, updated_at) VALUES (${q(`src-${source.key}`)}, ${q(source.key)}, ${q(source.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${q(source.license ?? null)}, ${q(source.licenseUrl ?? null)}, ${count}, ${n(retrievedAt)}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
     );
@@ -159,15 +179,19 @@ export function buildInsertSql(entries) {
   const seenBenchKeys = new Set();
 
   for (const { benchmark: b, source, retrievedAt } of entries) {
-    if (seenBenchKeys.has(b.key)) throw new Error(`duplicate benchmark key: ${b.key}`);
-    seenBenchKeys.add(b.key);
+    const slug = source.publisher.slug;
+    // Keys are unique per publisher, not globally — dedup within the owning account, and fold the
+    // slug into the id so two publishers may share a key without colliding.
+    const dedupKey = `${slug} ${b.key}`;
+    if (seenBenchKeys.has(dedupKey)) throw new Error(`duplicate benchmark key for publisher ${slug}: ${b.key}`);
+    seenBenchKeys.add(dedupKey);
     assertKeyLength(b.key, "benchmark");
     if (b.targets.length > LIMITS.targetsPerBenchmark) {
       throw new Error(
         `${b.key}: ${b.targets.length} targets exceeds the platform limit of ${LIMITS.targetsPerBenchmark} (see src/limits.ts) — tighten the adapter's curation cap`,
       );
     }
-    const bid = `ing-${b.key}`;
+    const bid = `ing-${slug}-${b.key}`;
     const attribution = JSON.stringify({
       source_name: source.name,
       source_url: source.url,
@@ -175,7 +199,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(SYSTEM_ACCOUNT_ID)}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
+      `(${q(bid)}, ${q(publisherAccountId(slug))}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
     );
     counts.benchmarks += 1;
 
@@ -250,11 +274,11 @@ export function buildInsertSql(entries) {
   coalesce((SELECT group_concat(t.key, ' ') FROM benchmark_tag bt JOIN tag t ON t.id = bt.tag_id
             WHERE bt.benchmark_id = benchmark.id), '') || ' ' ||
   coalesce(json_extract(attribution_snapshot, '$.source_name'), '')
-) WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`,
+) WHERE published_as_kind = 'INGESTED'`,
     // Popularity survives the wipe-and-rebuild: ids are deterministic, so the untouched per-day
     // view buckets still apply — recompute the all-time counter from them, then drop buckets for
     // ingested benchmarks that no longer exist (source removed for good).
-    `UPDATE benchmark SET views_total = coalesce((SELECT SUM(views) FROM benchmark_view_day WHERE benchmark_id = benchmark.id), 0) WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)}`,
+    `UPDATE benchmark SET views_total = coalesce((SELECT SUM(views) FROM benchmark_view_day WHERE benchmark_id = benchmark.id), 0) WHERE published_as_kind = 'INGESTED'`,
     `DELETE FROM benchmark_view_day WHERE benchmark_id LIKE 'ing-%' AND benchmark_id NOT IN (SELECT id FROM benchmark)`,
   );
 

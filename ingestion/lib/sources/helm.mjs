@@ -10,6 +10,7 @@ import { epochMsOrNull, slugify, uniqueSlug } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "helm",
+  publisher: { slug: "stanford-helm", name: "Stanford HELM" },
   name: "Stanford HELM",
   description: "Language-model capability scores from the frozen Stanford HELM Capabilities leaderboard.",
   url: "https://crfm.stanford.edu/helm/capabilities/latest/",

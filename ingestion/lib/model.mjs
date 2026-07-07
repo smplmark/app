@@ -39,6 +39,9 @@
  * @typedef {Object} SourceMeta
  * @property {string} key archive directory name, e.g. "blender"
  * @property {string} name attribution display name, e.g. "Blender Open Data"
+ * @property {{ slug: string, name: string }} publisher the owning account (URL slug +
+ *   display name) that this source's benchmarks are published under — one per source, so a
+ *   person from the source can claim it later. e.g. { slug: "stanford-helm", name: "Stanford HELM" }
  * @property {string} description what kinds of benchmark results the source publishes (display
  *   copy for the /sources catalog via the external_source table)
  * @property {string} url link back to the source

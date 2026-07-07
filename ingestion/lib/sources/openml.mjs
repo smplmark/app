@@ -9,6 +9,7 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "openml",
+  publisher: { slug: "openml", name: "OpenML" },
   name: "OpenML",
   description: "Machine-learning results from OpenML: best predictive accuracy per flow on curated task suites.",
   url: "https://www.openml.org",

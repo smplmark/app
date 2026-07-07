@@ -97,9 +97,10 @@ describe("sql builders", () => {
     expect(() => n("12" as unknown as number)).toThrow(/finite/);
   });
 
-  it("wipe is scoped to the system account and never truncates", () => {
+  it("wipe is scoped to ingested benchmarks, prunes the legacy account, and never truncates", () => {
     const wipe = buildWipeSql();
-    // Child-first order: observation → run → target → benchmark_tag → benchmark → orphan tags.
+    // Child-first order: observation → run → target → benchmark_tag → benchmark → orphan tags →
+    // the now-orphaned legacy shared account.
     expect(wipe.map((s) => s.split(" ")[2])).toEqual([
       "observation",
       "run",
@@ -107,10 +108,16 @@ describe("sql builders", () => {
       "benchmark_tag",
       "benchmark",
       "tag",
+      "account",
     ]);
+    // The subtree is scoped by kind, not by owner — every publisher account is left intact.
     for (const s of wipe.slice(0, 5)) {
-      expect(s).toContain(SYSTEM_ACCOUNT_ID);
+      expect(s).toContain("published_as_kind = 'INGESTED'");
     }
+    // Only the legacy shared account is touched, and only when it owns nothing.
+    expect(wipe[6]).toContain("DELETE FROM account");
+    expect(wipe[6]).toContain(SYSTEM_ACCOUNT_ID);
+    expect(wipe[6]).toContain("NOT EXISTS");
     expect(wipe.join(" ")).not.toMatch(/DELETE FROM (observation|run|target|benchmark)\s*$/m);
   });
 
@@ -139,6 +146,7 @@ describe("sql builders", () => {
   });
   const source = {
     key: "demo-src",
+    publisher: { slug: "demo-pub", name: "Demo Publisher" },
     name: "Demo Source",
     description: "Demo results.",
     url: "https://example.org",
@@ -152,19 +160,24 @@ describe("sql builders", () => {
       { benchmark: bench() as never, source, retrievedAt: 5000 },
     ]);
     const joined = statements.join("\n");
-    expect(counts).toEqual({ benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, sources: 1, clamped: 0 });
+    expect(counts).toEqual({ accounts: 1, benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, sources: 1, clamped: 0 });
     expect(joined).toContain("'INGESTED'");
     expect(joined).toContain('\'{"source_name":"Demo Source","source_url":"https://example.org","license":"CC0-1.0","retrieved_at":5000}\'');
-    expect(joined).toContain("'ing-demo'");
-    expect(joined).toContain("'ing-demo-t-t1'");
-    expect(joined).toContain("'ing-demo-t-t1-r-r1'");
+    // Ids fold the publisher slug in so keys need only be unique per publisher.
+    expect(joined).toContain("'ing-demo-pub-demo'");
+    expect(joined).toContain("'ing-demo-pub-demo-t-t1'");
+    expect(joined).toContain("'ing-demo-pub-demo-t-t1-r-r1'");
     expect(joined).toContain("Target 1 with ''quote''");
-    // Benchmarks are born PUBLISHED, non-draft, under the system account.
+    // Benchmarks are born PUBLISHED, non-draft, owned by the publisher account.
     expect(joined).toMatch(/'PUBLISHED', 5000/);
+    expect(joined).toContain("'ing-demo-pub-demo', 'acct-demo-pub', 'demo',");
     // …and CLOSED unconditionally (closed_at = retrievedAt): an ingested benchmark is a snapshot,
     // never a live feed, regardless of what the adapter emitted. The trailing column is closed_at.
     expect(joined).toContain("'HARDWARE', 5000)");
-    expect(joined).toContain("INSERT OR IGNORE INTO account");
+    // One idempotent publisher account per source, created before its benchmarks.
+    expect(joined).toContain(
+      "INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES ('acct-demo-pub', 'demo-pub', 'Demo Publisher', 'Demo results.', 'https://example.org', 5000, 0)",
+    );
     // The source catalog is rebuilt alongside the benchmark subtree, on retrieved_at stamps.
     expect(joined).toContain("DELETE FROM external_source");
     expect(joined).toContain(
@@ -204,6 +217,24 @@ describe("sql builders", () => {
         },
       ]),
     ).toThrow(/duplicate target key/);
+  });
+
+  it("scopes benchmark-key uniqueness to the publisher: the same key under two sources coexists", () => {
+    const other = {
+      ...source,
+      key: "other-src",
+      publisher: { slug: "other-pub", name: "Other Publisher" },
+    };
+    const { statements, counts } = buildInsertSql([
+      { benchmark: bench() as never, source, retrievedAt: 1 },
+      { benchmark: bench() as never, source: other, retrievedAt: 1 },
+    ]);
+    expect(counts.benchmarks).toBe(2);
+    expect(counts.accounts).toBe(2);
+    const joined = statements.join("\n");
+    // One shared key ("demo"), two distinct owners and slug-folded ids — no collision.
+    expect(joined).toContain("'ing-demo-pub-demo', 'acct-demo-pub', 'demo',");
+    expect(joined).toContain("'ing-other-pub-demo', 'acct-other-pub', 'demo',");
   });
 
   it("enforces the platform count limits and key lengths, and clamps display strings", () => {

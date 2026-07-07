@@ -11,6 +11,7 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "clickbench",
+  publisher: { slug: "clickhouse", name: "ClickHouse" },
   name: "ClickBench",
   description: "Analytical-database runtimes for a fixed SQL workload over a ~100M-row web-analytics dataset.",
   url: "https://github.com/ClickHouse/ClickBench",

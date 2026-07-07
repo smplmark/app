@@ -18,6 +18,7 @@ import { epochMsOrNull, uniqueSlug, vendorFromText } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "tpc",
+  publisher: { slug: "tpc", name: "TPC" },
   name: "TPC (Transaction Processing Performance Council)",
   description:
     "Audited transaction-processing and decision-support results: OLTP throughput (TPC-C, TPC-E) and query throughput (TPC-H, TPC-DS) for priced, availability-dated system configurations.",

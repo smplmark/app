@@ -9,6 +9,7 @@ import { epochMsOrNull, uniqueSlug } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "openllm",
+  publisher: { slug: "hugging-face", name: "Hugging Face" },
   name: "Hugging Face Open LLM Leaderboard",
   description: "Final scores for open-weight language models from the retired Hugging Face Open LLM Leaderboard.",
   url: "https://huggingface.co/datasets/open-llm-leaderboard/contents",

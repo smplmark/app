@@ -15,6 +15,7 @@ import { epochMsOrNull, uniqueSlug, vendorFromText } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "spec",
+  publisher: { slug: "spec", name: "SPEC" },
   name: "SPEC (Standard Performance Evaluation Corporation)",
   description:
     "Audited, compliant performance results: SPEC CPU 2017 (integer & floating-point, rate & speed), SPECjbb 2015 (Java), and SPEC HPC 2021.",

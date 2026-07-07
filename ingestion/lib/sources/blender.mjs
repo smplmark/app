@@ -7,6 +7,7 @@ import { slugify, uniqueSlug } from "../model.mjs";
 /** @type {import("../model.mjs").SourceMeta} */
 export const meta = {
   key: "blender",
+  publisher: { slug: "blender", name: "Blender" },
   name: "Blender Open Data",
   description: "Community Blender Benchmark results: median rendering performance per CPU and GPU device.",
   url: "https://opendata.blender.org",
