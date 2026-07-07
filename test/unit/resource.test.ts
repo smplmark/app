@@ -14,6 +14,7 @@ import {
   serializeTarget,
   serializeUser,
 } from "../../src/serialize/resource";
+import type { BenchmarkRowWithPublisher } from "../../src/data/benchmarks";
 import type {
   AccountRow,
   AccountUserRow,
@@ -136,8 +137,8 @@ describe("serializeApiKey", () => {
 });
 
 describe("serializeBenchmark", () => {
-  const priv: BenchmarkRow = {
-    id: "b1", account_id: "a1", key: "sched", name: "Sched",
+  const priv: BenchmarkRowWithPublisher = {
+    id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
     description: null, about: null, methodology: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
     observation_schema: "{}",
@@ -152,6 +153,7 @@ describe("serializeBenchmark", () => {
     const out = serializeBenchmark(priv, []);
     expect(out.type).toBe("benchmark");
     expect(out.attributes.account).toBe("a1");
+    expect(out.attributes.publisher_slug).toBe("acme");
     expect(out.attributes.draft).toBe(true);
     expect(out.attributes.created_by).toBe("u1");
     expect(out.attributes.category).toBe("OTHER");
@@ -178,7 +180,7 @@ describe("serializeBenchmark", () => {
   });
 
   it("renders a PERSONAL attribution badge from the frozen snapshot", () => {
-    const row: BenchmarkRow = {
+    const row: BenchmarkRowWithPublisher = {
       ...priv, status: "PUBLISHED", draft: 0, published_at: T0,
       published_by_user_id: "u1", published_as_kind: "PERSONAL",
       attribution_snapshot: JSON.stringify({ display_name: "Ada", email_sha256: "abc123" }),
@@ -192,7 +194,7 @@ describe("serializeBenchmark", () => {
   });
 
   it("renders an ORGANIZATION attribution badge, parsing observation_schema and keeping a soft identity ref", () => {
-    const row: BenchmarkRow = {
+    const row: BenchmarkRowWithPublisher = {
       ...priv, about: "long", methodology: "how", status: "WITHDRAWN", draft: 0,
       published_at: T0, withdrawn_at: T0, withdrawal_reason: "bad data",
       observation_schema: JSON.stringify({ metrics: [], derived: [] }),
@@ -211,7 +213,7 @@ describe("serializeBenchmark", () => {
   });
 
   it("renders an INGESTED attribution badge with source provenance and an ISO retrieved_at", () => {
-    const row: BenchmarkRow = {
+    const row: BenchmarkRowWithPublisher = {
       ...priv, status: "PUBLISHED", draft: 0, published_at: T0, category: "HARDWARE",
       published_by_user_id: null, published_as_kind: "INGESTED",
       attribution_snapshot: JSON.stringify({

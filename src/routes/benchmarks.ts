@@ -13,6 +13,7 @@ import {
 import { sha256Hex } from "../auth/crypto";
 import { accountHasVerifiedUser, getAccountById } from "../data/accounts";
 import {
+  type BenchmarkRowWithPublisher,
   countBenchmarksForAccount,
   createBenchmark,
   setBenchmarkClosed,
@@ -104,7 +105,7 @@ function readCategoryFilter(value: string | undefined): Category | undefined {
 export const benchmarks = new Hono<AppBindings>();
 
 /** Load a benchmark or 404; enforce that the credential covers it (else 404 — no existence leak). */
-async function loadOwned(c: Context<AppBindings>, id: string): Promise<BenchmarkRow> {
+async function loadOwned(c: Context<AppBindings>, id: string): Promise<BenchmarkRowWithPublisher> {
   const auth = getAuth(c);
   requireWrite(auth); // loadOwned backs only mutating handlers — gate viewers here.
   const row = await getBenchmarkById(c.env.DB, id);
@@ -167,6 +168,7 @@ benchmarks.get("/", optionalAuth, async (c) => {
   const pagination = readPagination(c);
   const sort = readSort(c, "-created_at", SORT_ALLOWED);
   const filterAccount = c.req.query("filter[account]");
+  const filterPublisher = c.req.query("filter[publisher]");
   const filterKey = c.req.query("filter[key]");
   const filterTag = c.req.query("filter[tag]");
   const filterCategory = readCategoryFilter(c.req.query("filter[category]"));
@@ -184,6 +186,7 @@ benchmarks.get("/", optionalAuth, async (c) => {
   const { rows, total } = await listBenchmarks(c.env.DB, {
     statuses: ownerView ? undefined : PUBLIC_STATUSES,
     accountId: filterAccount,
+    publisherSlug: filterPublisher,
     filterKey,
     tag: filterTag !== undefined ? normalizeTagKey(filterTag) : undefined,
     category: filterCategory,
@@ -246,7 +249,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   });
   await setBenchmarkTags(c.env.DB, existing.id, tags);
   await refreshBenchmarkSearchText(c.env.DB, existing.id);
-  return resourceResponse(serializeBenchmark(row as BenchmarkRow, tags));
+  return resourceResponse(serializeBenchmark(row as BenchmarkRowWithPublisher, tags));
 });
 
 benchmarks.delete("/:id", requireAuth, async (c) => {
@@ -385,7 +388,7 @@ benchmarks.post("/:id/actions/mark_ready", requireAuth, async (c) => {
   }
   const row = await setBenchmarkDraft(c.env.DB, existing.id, 0);
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });
 
@@ -400,7 +403,7 @@ benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
   const reason = optionalStringOrNull(attrs, "reason") ?? null;
   const row = await setBenchmarkDraft(c.env.DB, existing.id, 1);
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
     reason !== null ? { meta: { reason } } : {},
   );
 });
@@ -420,7 +423,7 @@ benchmarks.post("/:id/actions/close", requireAuth, async (c) => {
   }
   const row = await setBenchmarkClosed(c.env.DB, existing.id, Date.now());
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });
 
@@ -433,7 +436,7 @@ benchmarks.post("/:id/actions/reopen", requireAuth, async (c) => {
   }
   const row = await setBenchmarkClosed(c.env.DB, existing.id, null);
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });
 
@@ -479,7 +482,7 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
       attribution_snapshot: JSON.stringify(snapshot),
     });
     return resourceResponse(
-      serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+      serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
     );
   }
 
@@ -500,7 +503,7 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
     attribution_snapshot: JSON.stringify(snapshot),
   });
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });
 
@@ -533,6 +536,6 @@ benchmarks.post("/:id/actions/withdraw", requireAuth, async (c) => {
   }
   const row = await withdrawBenchmark(c.env.DB, existing.id, Date.now(), reason);
   return resourceResponse(
-    serializeBenchmark(row as BenchmarkRow, await listTagsForBenchmark(c.env.DB, existing.id)),
+    serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
 });

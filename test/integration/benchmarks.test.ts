@@ -69,6 +69,29 @@ describe("benchmark create + read", () => {
     expect(owner.data.map((r) => r.attributes.key).sort()).toEqual(["priv", "pub"]);
     void priv;
   });
+
+  it("exposes publisher_slug and narrows the list by it via filter[publisher]", async () => {
+    const me = await register();
+    const pub = await makeBenchmark(me.token, { key: "pub" });
+    await publish(me.token, me.user_id, pub.id);
+
+    // The owning account's key rides on the (create/read) benchmark payload.
+    const slug = pub.attributes.publisher_slug as string;
+    expect(typeof slug).toBe("string");
+    expect(slug.length).toBeGreaterThan(0);
+
+    const byPublisher = (await (
+      await apiGet(`/api/v1/benchmarks?filter[publisher]=${encodeURIComponent(slug)}`)
+    ).json()) as { data: Resource[] };
+    expect(byPublisher.data.map((r) => r.attributes.key)).toContain("pub");
+    for (const r of byPublisher.data) expect(r.attributes.publisher_slug).toBe(slug);
+
+    // An unknown slug matches nothing rather than erroring.
+    const none = (await (
+      await apiGet("/api/v1/benchmarks?filter[publisher]=no-such-publisher")
+    ).json()) as { data: Resource[] };
+    expect(none.data).toEqual([]);
+  });
 });
 
 describe("publish gate + lifecycle", () => {

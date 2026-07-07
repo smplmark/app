@@ -412,6 +412,7 @@ const benchmark = registerEntity(
   "benchmark",
   z.object({
     account: idRef("The account that owns the benchmark."),
+    publisher_slug: z.string().openapi({ description: "The owning account's URL-safe key. Together with the benchmark's own key it forms the benchmark's public path, /{publisher_slug}/{key}." }),
     key: z.string().openapi({ description: "The benchmark's human-readable, URL-safe identifier, unique within its account." }),
     name: z.string().openapi({ description: "The benchmark's display name." }),
     description: z.string().nullable().openapi({ description: "A one-line summary of the benchmark, or null." }),
@@ -1166,6 +1167,7 @@ registry.registerPath({
     "Sortable by name, created_at, updated_at, published_at, and popularity: views (all-time) or the rolling windows views_today, views_week, views_month, views_year (prefix with - for descending, e.g. sort=-published_at for the most recently published).",
   parameters: [
     filterParam("account", "Limit results to benchmarks owned by this account id."),
+    filterParam("publisher", "Limit results to benchmarks published by the account with this key (URL slug), e.g. stanford-helm."),
     filterParam("key", "Limit results to the benchmark with this key."),
     filterParam("tag", "Limit results to benchmarks carrying this tag (exact match on the tag's lowercase slug)."),
     filterParam("category", "Limit results to benchmarks in this category: HARDWARE, DATABASE, ML_AI, STORAGE, NETWORK, or OTHER."),

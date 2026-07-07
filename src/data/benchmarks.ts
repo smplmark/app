@@ -10,6 +10,36 @@ import type {
 } from "../types";
 import { isUniqueViolation } from "./d1";
 
+/**
+ * A benchmark row plus its owning account's key — the publisher slug that forms the first path
+ * segment of its public URL (`/{publisher_slug}/{key}`). Read paths resolve it (JOIN for a single
+ * row, a batched lookup for a list) so the API never leaks the internal account id as the only
+ * handle on the owner.
+ */
+export type BenchmarkRowWithPublisher = BenchmarkRow & { publisher_slug: string };
+
+/**
+ * Stamp each row with its owning account's key, resolved in one batched lookup over the distinct
+ * account ids (a public list spans many publishers). Mirrors the tags-batching pattern and keeps
+ * the list query free of an account JOIN, which would make `key`/`name`/`created_at` ambiguous in
+ * the shared WHERE/ORDER builders.
+ */
+async function attachPublisherSlug<T extends { account_id: string }>(
+  db: D1Database,
+  rows: T[],
+): Promise<(T & { publisher_slug: string })[]> {
+  const ids = [...new Set(rows.map((r) => r.account_id))];
+  const keyById = new Map<string, string>();
+  if (ids.length > 0) {
+    const res = await db
+      .prepare(`SELECT id, key FROM account WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .bind(...ids)
+      .all<{ id: string; key: string }>();
+    for (const a of res.results) keyById.set(a.id, a.key);
+  }
+  return rows.map((r) => ({ ...r, publisher_slug: keyById.get(r.account_id) ?? "" }));
+}
+
 export interface CreateBenchmarkInput {
   account_id: string;
   key: string;
@@ -26,7 +56,7 @@ export interface CreateBenchmarkInput {
 export async function createBenchmark(
   db: D1Database,
   input: CreateBenchmarkInput,
-): Promise<BenchmarkRow> {
+): Promise<BenchmarkRowWithPublisher> {
   const now = Date.now();
   const row: BenchmarkRow = {
     id: crypto.randomUUID(),
@@ -85,7 +115,13 @@ export async function createBenchmark(
     }
     throw e;
   }
-  return row;
+  // Round out the in-memory row with the owning account's key so it serializes like the read
+  // paths; the account is guaranteed to exist (the INSERT's FK would have failed otherwise).
+  const acct = await db
+    .prepare("SELECT key FROM account WHERE id = ?")
+    .bind(input.account_id)
+    .first<{ key: string }>();
+  return { ...row, publisher_slug: acct?.key ?? "" };
 }
 
 // The one search_text expression, shared verbatim with migration 0005's backfill and the
@@ -127,12 +163,14 @@ export async function countBenchmarksForAccount(
 export async function getBenchmarkById(
   db: D1Database,
   id: string,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   return (
     (await db
-      .prepare("SELECT * FROM benchmark WHERE id = ?")
+      .prepare(
+        "SELECT benchmark.*, account.key AS publisher_slug FROM benchmark JOIN account ON account.id = benchmark.account_id WHERE benchmark.id = ?",
+      )
       .bind(id)
-      .first<BenchmarkRow>()) ?? null
+      .first<BenchmarkRowWithPublisher>()) ?? null
   );
 }
 
@@ -140,6 +178,8 @@ export interface ListBenchmarksInput {
   /** Restrict to these statuses (e.g. public browse = [PUBLISHED, WITHDRAWN]). */
   statuses?: Status[];
   accountId?: string;
+  /** filter[publisher]: the owning account's key (URL slug), e.g. "stanford-helm". */
+  publisherSlug?: string;
   filterKey?: string;
   /** Exact-match on a tag key (normalized slug). */
   tag?: string;
@@ -185,6 +225,12 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
     clauses.push("account_id = ?");
     binds.push(input.accountId);
   }
+  if (input.publisherSlug !== undefined) {
+    // Slug → owner via a subquery (no account JOIN, so the outer query's bare `key`/`created_at`
+    // stay benchmark-scoped). An unknown slug simply matches nothing.
+    clauses.push("account_id IN (SELECT id FROM account WHERE key = ?)");
+    binds.push(input.publisherSlug);
+  }
   if (input.filterKey !== undefined) {
     clauses.push("key = ?");
     binds.push(input.filterKey);
@@ -218,7 +264,7 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
 export async function listBenchmarks(
   db: D1Database,
   input: ListBenchmarksInput,
-): Promise<{ rows: BenchmarkRow[]; total?: number }> {
+): Promise<{ rows: BenchmarkRowWithPublisher[]; total?: number }> {
   const where = benchmarkWhere(input);
   // Windowed popularity sorts join the per-day view buckets; everything else orders on a column.
   const windowDays = VIEW_WINDOW_DAYS[input.sort.field];
@@ -233,12 +279,13 @@ export async function listBenchmarks(
   } else {
     order = orderByClause(input.sort, (f) => BENCHMARK_COLUMNS[f], "id");
   }
-  const rows = (
+  const rawRows = (
     await db
       .prepare(`SELECT benchmark.* FROM benchmark${join} ${where.sql} ${order} LIMIT ? OFFSET ?`)
       .bind(...joinBinds, ...where.binds, input.limit, input.offset)
       .all<BenchmarkRow>()
   ).results;
+  const rows = await attachPublisherSlug(db, rawRows);
 
   let total: number | undefined;
   if (input.includeTotal) {
@@ -266,10 +313,10 @@ export async function updateBenchmark(
   db: D1Database,
   id: string,
   input: UpdateBenchmarkInput,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   const existing = await getBenchmarkById(db, id);
   if (!existing) return null;
-  const updated: BenchmarkRow = {
+  const updated: BenchmarkRowWithPublisher = {
     ...existing,
     name: input.name,
     description: input.description,
@@ -302,7 +349,7 @@ export async function setBenchmarkClosed(
   db: D1Database,
   id: string,
   closedAt: number | null,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   await db
     .prepare("UPDATE benchmark SET closed_at=?, updated_at=? WHERE id=?")
     .bind(closedAt, Date.now(), id)
@@ -315,7 +362,7 @@ export async function setBenchmarkDraft(
   db: D1Database,
   id: string,
   draft: number,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   await db
     .prepare("UPDATE benchmark SET draft=?, updated_at=? WHERE id=?")
     .bind(draft, Date.now(), id)
@@ -337,7 +384,7 @@ export async function publishBenchmark(
   id: string,
   now: number,
   attribution: PublishAttribution,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   await db
     .prepare(
       "UPDATE benchmark SET status='PUBLISHED', published_at=?, published_by_user_id=?, published_as_kind=?, published_identity_id=?, attribution_snapshot=?, updated_at=? WHERE id=?",
@@ -360,7 +407,7 @@ export async function withdrawBenchmark(
   id: string,
   now: number,
   reason: string | null,
-): Promise<BenchmarkRow | null> {
+): Promise<BenchmarkRowWithPublisher | null> {
   await db
     .prepare(
       "UPDATE benchmark SET status='WITHDRAWN', withdrawn_at=?, withdrawal_reason=?, updated_at=? WHERE id=?",

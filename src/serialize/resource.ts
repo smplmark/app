@@ -184,13 +184,18 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
   };
 }
 
-/** `tags` comes from the benchmark_tag join — callers fetch it alongside the row(s). */
+/**
+ * `tags` comes from the benchmark_tag join — callers fetch it alongside the row(s). The row carries
+ * `publisher_slug` (the owning account's key) from the read-path resolution; it pairs with `key` to
+ * form the benchmark's public URL, `/{publisher_slug}/{key}`.
+ */
 export function serializeBenchmark(
-  row: BenchmarkRow,
+  row: BenchmarkRow & { publisher_slug: string },
   tags: readonly string[],
 ): ResourceObject {
   const attributes: Record<string, unknown> = {
     account: row.account_id,
+    publisher_slug: row.publisher_slug,
     key: row.key,
     name: row.name,
     description: row.description,
