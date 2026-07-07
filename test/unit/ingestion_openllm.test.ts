@@ -184,6 +184,12 @@ describe("openllm adapter", () => {
       "official-low-org-model-bfloat16",
     ]);
 
+    // One benchmark-level run: the shared "final" leaderboard result, deduped across all targets.
+    expect(b.runs).toEqual([{ key: "final", name: "Final leaderboard result" }]);
+    // One measurement per target, each referencing the shared run.
+    expect(b.measurements).toHaveLength(5);
+    expect(b.measurements.every((m) => m.run_key === "final")).toBe(true);
+
     const llama = b.targets[0];
     expect(llama.name).toBe("meta-llama/Llama-3.1-70B-Instruct"); // single precision → no suffix
     expect(llama.details).toEqual({
@@ -193,31 +199,31 @@ describe("openllm adapter", () => {
       params_b: 70.554,
       hub_license: "llama3.1",
     });
-    expect(llama.runs).toHaveLength(1);
-    const run = llama.runs[0];
-    expect(run.key).toBe("final");
-    expect(run.started_at).toBe(Date.UTC(2024, 5, 26));
-    expect(run.observations).toEqual([
-      {
-        created_at: Date.UTC(2024, 5, 26),
-        metrics: {
-          average: 43.5,
-          ifeval: 86.7,
-          bbh: 55.9,
-          math_lvl_5: 28.9,
-          gpqa: 14.2,
-          musr: 17.7,
-          mmlu_pro: 46.8,
-        },
-        meta: { official_providers: true, model_sha: "abc123", moe: false, merged: false },
+    const llamaMeasurement = b.measurements.find(
+      (m) => m.run_key === "final" && m.target_key === llama.key,
+    );
+    expect(llamaMeasurement).toBeDefined();
+    expect(llamaMeasurement).toEqual({
+      run_key: "final",
+      target_key: llama.key,
+      created_at: Date.UTC(2024, 5, 26),
+      metrics: {
+        average: 43.5,
+        ifeval: 86.7,
+        bbh: 55.9,
+        math_lvl_5: 28.9,
+        gpqa: 14.2,
+        musr: 17.7,
+        mmlu_pro: 46.8,
       },
-    ]);
+      meta: { official_providers: true, model_sha: "abc123", moe: false, merged: false },
+    });
 
-    // Every observation metric key is declared in the observation schema.
+    // Every measurement metric key is declared in the observation schema.
     const schema = b.observationSchema as { metrics: { name: string }[] };
     const declared = new Set(schema.metrics.map((m) => m.name));
-    for (const t of b.targets) {
-      for (const key of Object.keys(t.runs[0].observations[0].metrics)) {
+    for (const measurement of b.measurements) {
+      for (const key of Object.keys(measurement.metrics)) {
         expect(declared.has(key)).toBe(true);
       }
     }
@@ -236,10 +242,12 @@ describe("openllm adapter", () => {
     const [b] = adapt(archive as never);
     const tiny = b.targets.find((t) => t.key === "tiny-model-4bit");
     expect(tiny).toBeDefined();
-    const run = tiny!.runs[0];
-    expect(run.started_at).toBeUndefined(); // null Submission Date
-    expect(run.observations[0].created_at).toBe(T_RETRIEVED);
-    expect(run.observations[0].metrics).toEqual({
+    const measurement = b.measurements.find(
+      (m) => m.run_key === "final" && m.target_key === tiny!.key,
+    );
+    expect(measurement).toBeDefined();
+    expect(measurement!.created_at).toBe(T_RETRIEVED); // null Submission Date → retrieved_at
+    expect(measurement!.metrics).toEqual({
       average: 5,
       ifeval: 50,
       bbh: 40,

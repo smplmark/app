@@ -439,7 +439,7 @@ const benchmark = registerEntity(
       .number()
       .int()
       .openapi({ description: "All-time page-view count for the benchmark. A raw, best-effort popularity signal — not an audited metric." }),
-    closed: z.boolean().openapi({ description: "Whether the publisher has marked the benchmark complete. A closed benchmark accepts no new targets, runs, or observations; existing data stays public. Reversible." }),
+    closed: z.boolean().openapi({ description: "Whether the publisher has marked the benchmark complete. A closed benchmark accepts no new targets, runs, or measurements; existing data stays public. Reversible." }),
     closed_at: dateTime("When the benchmark was closed, or null while open.").nullable(),
     created_at: dateTime("When the benchmark was created."),
     updated_at: dateTime("When the benchmark was last updated."),
@@ -470,7 +470,7 @@ const target = registerEntity(
     key: z.string().openapi({ description: "The target's human-readable identifier, unique within its benchmark." }),
     name: z.string().openapi({ description: "The target's display name." }),
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the target, or null.", type: "object" }),
-    closed: z.boolean().openapi({ description: "Whether the publisher has marked the target complete. A closed target accepts no new runs or observations. Reversible." }),
+    closed: z.boolean().openapi({ description: "Whether the publisher has marked the target complete. A closed target accepts no new measurements. Reversible." }),
     closed_at: dateTime("When the target was closed, or null while open.").nullable(),
     created_at: dateTime("When the target was created."),
     updated_at: dateTime("When the target was last updated."),
@@ -487,13 +487,13 @@ const run = registerEntity(
   "Run",
   "run",
   z.object({
-    target: idRef("The target this run belongs to."),
-    key: z.string().openapi({ description: "The run's human-readable identifier, unique within its target." }),
+    benchmark: idRef("The benchmark this run belongs to."),
+    key: z.string().openapi({ description: "The run's human-readable identifier, unique within its benchmark." }),
     name: z.string().nullable().openapi({ description: "The run's display name, or null." }),
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the run, or null.", type: "object" }),
     started_at: dateTime("When the run started, or null if not yet started.").nullable(),
     ended_at: dateTime("When the run ended, or null if still live.").nullable(),
-    live: z.boolean().openapi({ description: "Whether the run is still accepting observations." }),
+    live: z.boolean().openapi({ description: "Whether the run is still accepting measurements." }),
     invalidated: z.boolean().openapi({ description: "Whether the run has been marked invalid and excluded from results." }),
     invalidated_at: dateTime("When the run was invalidated, or null.").nullable(),
     invalidation_reason: z.string().nullable().openapi({ description: "The stated reason the run was invalidated, or null." }),
@@ -502,7 +502,7 @@ const run = registerEntity(
     updated_at: dateTime("When the run was last updated."),
   }),
   z.object({
-    target: idRef("The target to attach the run to."),
+    benchmark: idRef("The benchmark to attach the run to."),
     key: z.string().max(100).openapi({ description: "The run's human-readable identifier. At most 100 characters." }),
     name: z.string().max(200).optional().openapi({ description: "The run's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the run.", type: "object" }),
@@ -510,30 +510,32 @@ const run = registerEntity(
   }),
 );
 
-const observation = registerEntity(
-  "Observation",
-  "observation",
+const measurement = registerEntity(
+  "Measurement",
+  "measurement",
   z.object({
-    run: idRef("The run this observation belongs to."),
-    created_at: dateTime("When the observation was recorded."),
+    run: idRef("The run (occasion) this measurement belongs to."),
+    target: idRef("The target this measurement is of."),
+    created_at: dateTime("When the measurement was recorded."),
     metrics: z
       .record(z.number())
       .optional()
       .openapi({
         description:
-          "A flat map of metric name to numeric value. Stored and derived metrics are merged into one map; the derived values are computed when the observation is read.",
+          "A flat map of metric name to numeric value. Stored and derived metrics are merged into one map; the derived values are computed when the measurement is read.",
         type: "object",
       }),
-    meta: jsonObject("Arbitrary structured metadata attached to the observation.").optional(),
+    meta: jsonObject("Arbitrary structured metadata attached to the measurement.").optional(),
   }),
   z.object({
-    run: idRef("The run to attach the observation to."),
-    created_at: dateTime("When the observation occurred. Defaults to the time of ingest.").optional(),
+    run: idRef("The run (occasion) to attach the measurement to."),
+    target: idRef("The target being measured. Must belong to the same benchmark as the run."),
+    created_at: dateTime("When the measurement occurred. Defaults to the time of ingest.").optional(),
     metrics: z
       .record(z.number())
       .optional()
       .openapi({ description: "A flat map of stored metric name to numeric value.", type: "object" }),
-    meta: jsonObject("Arbitrary structured metadata to attach to the observation.").optional(),
+    meta: jsonObject("Arbitrary structured metadata to attach to the measurement.").optional(),
   }),
 );
 
@@ -1198,11 +1200,11 @@ const LeaderboardResponse = registry.register(
                 .openapi({ description: "The target's free-form details (sponsor, vendor, configuration, …)." }),
               metrics: z
                 .record(z.number())
-                .openapi({ description: "The representative (latest) observation's metric values, keyed by metric name." }),
+                .openapi({ description: "The representative (latest) measurement's metric values, keyed by metric name." }),
               observed_at: z
                 .number()
                 .nullable()
-                .openapi({ description: "Epoch-ms of the representative observation, or null." }),
+                .openapi({ description: "Epoch-ms of the representative measurement, or null." }),
             }),
           }),
         )
@@ -1237,7 +1239,7 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "Rank a benchmark's targets",
   description:
-    "A server-sorted, server-filtered page of a benchmark's targets, each with its representative (latest) observation's metrics — the read behind the viewer's large-benchmark mode. Sort by any metric declared in the benchmark's observation schema (default: the chart metric, descending). Narrow with filter[search] (free-text over target name and details) and filter[facet.<field>] (an exact match on a details field; repeat the parameter to OR several values, e.g. filter[facet.vendor]=AMD&filter[facet.vendor]=Intel). meta.facets lists each facetable details field with value counts; counts are disjunctive — a facet is counted with its own selection excluded (but every other filter applied), so its other values stay visible and countable for OR-selection within that field. Request `Accept: text/csv` (or add `format=json`) to download the entire current filter as a file instead of a page — up to the benchmark's target limit, without facets.",
+    "A server-sorted, server-filtered page of a benchmark's targets, each with its representative (latest) measurement's metrics — the read behind the viewer's large-benchmark mode. Sort by any metric declared in the benchmark's observation schema (default: the chart metric, descending). Narrow with filter[search] (free-text over target name and details) and filter[facet.<field>] (an exact match on a details field; repeat the parameter to OR several values, e.g. filter[facet.vendor]=AMD&filter[facet.vendor]=Intel). meta.facets lists each facetable details field with value counts; counts are disjunctive — a facet is counted with its own selection excluded (but every other filter applied), so its other values stay visible and countable for OR-selection within that field. Request `Accept: text/csv` (or add `format=json`) to download the entire current filter as a file instead of a page — up to the benchmark's target limit, without facets.",
   parameters: [
     { name: "id", in: "path", required: true, description: "The benchmark id.", schema: { type: "string" as const } },
     filterParam("search", "Free-text: every term must match (AND) as a case-insensitive substring of the target's name or details. Double-quote a phrase to match it exactly."),
@@ -1278,8 +1280,8 @@ registry.registerPath({
 });
 
 for (const [action, summary, description] of [
-  ["close", "Close a benchmark", "Marks the benchmark complete: no new targets, runs, or observations may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
-  ["reopen", "Reopen a benchmark", "Clears the complete mark so new targets, runs, and observations may be added again."],
+  ["close", "Close a benchmark", "Marks the benchmark complete: no new targets, runs, or measurements may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
+  ["reopen", "Reopen a benchmark", "Clears the complete mark so new targets, runs, and measurements may be added again."],
 ] as const) {
   registry.registerPath({
     method: "post",
@@ -1513,8 +1515,8 @@ registry.registerPath({
 // ── Paths: Runs ──────────────────────────────────────────────────────────────
 
 for (const [action, summary, description] of [
-  ["close", "Close a target", "Marks the target complete: no new runs or observations may be added beneath it. Reversible via actions/reopen."],
-  ["reopen", "Reopen a target", "Clears the complete mark so new runs and observations may be added again."],
+  ["close", "Close a target", "Marks the target complete: no new measurements may be added for it. Reversible via actions/reopen."],
+  ["reopen", "Reopen a target", "Clears the complete mark so new measurements may be added for it again."],
 ] as const) {
   registry.registerPath({
     method: "post",
@@ -1546,7 +1548,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(run.Response, "The created run."),
     ...commonErrors,
-    "409": errorJson("A run with that key already exists in the target, or the target has reached its limit of 100 runs."),
+    "409": errorJson("A run with that key already exists in the benchmark, or the benchmark has reached its run limit."),
   },
 });
 
@@ -1556,14 +1558,13 @@ registry.registerPath({
   tags: ["Runs"],
   summary: "List runs",
   parameters: [
-    filterParam("target", "Limit results to runs of this target id. Exactly one of filter[target] and filter[benchmark] is required."),
-    filterParam("benchmark", "Limit results to every run under this benchmark id, across all of its targets — one request for a whole leaderboard. Exactly one of filter[target] and filter[benchmark] is required."),
+    filterParam("benchmark", "Limit results to runs of this benchmark id — one request for a whole leaderboard. Required.", true),
     filterParam("key", "Limit results to the run with this key."),
     ...paginationParams,
   ],
   responses: {
     "200": domainResponse(run.ListResponse, "A page of runs."),
-    "400": errorJson("The query parameters were malformed, or neither/both of filter[target] and filter[benchmark] were provided."),
+    "400": errorJson("The query parameters were malformed, or filter[benchmark] was missing."),
   },
 });
 
@@ -1610,7 +1611,7 @@ registry.registerPath({
   path: "/api/v1/runs/{id}/actions/end",
   tags: ["Runs"],
   summary: "End a run",
-  description: "Marks the run as no longer live; it stops accepting new observations.",
+  description: "Marks the run as no longer live; it stops accepting new measurements.",
   security: bearerSecurity,
   request: { params: runIdParam },
   responses: {
@@ -1647,32 +1648,33 @@ registry.registerPath({
   },
 });
 
-// ── Paths: Observations ──────────────────────────────────────────────────────
+// ── Paths: Measurements ──────────────────────────────────────────────────────
 
 registry.registerPath({
   method: "post",
-  path: "/api/v1/observations",
-  tags: ["Observations"],
-  summary: "Record an observation",
+  path: "/api/v1/measurements",
+  tags: ["Measurements"],
+  summary: "Record a measurement",
   security: bearerSecurity,
-  request: { body: domainBody(observation.Request, "The observation to record.") },
+  request: { body: domainBody(measurement.Request, "The measurement to record.") },
   responses: {
-    "201": domainResponse(observation.Response, "The recorded observation, with derived metrics computed."),
+    "201": domainResponse(measurement.Response, "The recorded measurement, with derived metrics computed."),
     ...commonErrors,
+    "409": errorJson("The run and target belong to different benchmarks, or the benchmark/target is closed or the run has ended."),
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/observations",
-  tags: ["Observations"],
-  summary: "List observations",
+  path: "/api/v1/measurements",
+  tags: ["Measurements"],
+  summary: "List measurements",
   description:
-    "Reads observations for exactly one of a run, target, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data.",
+    "Reads measurements for exactly one of a run, target, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data.",
   parameters: [
-    filterParam("run", "Read observations for this run id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
-    filterParam("target", "Read observations for this target id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
-    filterParam("benchmark", "Read observations for this benchmark id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
+    filterParam("run", "Read measurements for this run id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
+    filterParam("target", "Read measurements for this target id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
+    filterParam("benchmark", "Read measurements for this benchmark id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
     filterParam(
       "created_at",
       "Restrict to a time interval using the grammar [start,end) — a half-open range where start is inclusive and end is exclusive; use * for an open edge, e.g. [2026-01-01T00:00:00Z,*).",
@@ -1681,13 +1683,13 @@ registry.registerPath({
   ],
   responses: {
     "200": {
-      description: "A page of observations, as JSON or CSV depending on the Accept header.",
+      description: "A page of measurements, as JSON or CSV depending on the Accept header.",
       content: {
-        "application/vnd.api+json": { schema: observation.ListResponse },
+        "application/vnd.api+json": { schema: measurement.ListResponse },
         "text/csv": {
           schema: {
             type: "string",
-            description: "A CSV export with one row per observation and one column per metric.",
+            description: "A CSV export with one row per measurement and one column per metric.",
           },
         },
       },
@@ -1856,7 +1858,7 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       title: "smplmark API",
       version: "1.0.0",
       description:
-        "The smplmark benchmark-hosting API. Publish benchmarks, upload observations, and read any published benchmark's data as JSON or CSV.",
+        "The smplmark benchmark-hosting API. Publish benchmarks, upload measurements, and read any published benchmark's data as JSON or CSV.",
     },
     servers: [{ url: serverUrl }],
     // Alphabetized tag list.
@@ -1869,7 +1871,7 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       { name: "Contact" },
       { name: "External sources" },
       { name: "Invitations" },
-      { name: "Observations" },
+      { name: "Measurements" },
       { name: "Publisher domains" },
       { name: "Publisher identities" },
       { name: "Runs" },

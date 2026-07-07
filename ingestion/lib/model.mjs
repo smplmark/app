@@ -4,27 +4,29 @@
 // against fixture archives.
 
 /**
- * @typedef {Object} IngestObservation
+ * @typedef {Object} IngestMeasurement a single (run, target) data point
+ * @property {string} run_key the key of the run (occasion) — must be a run of the same benchmark
+ * @property {string} target_key the key of the target measured — must be a target of the same benchmark
  * @property {number} created_at epoch-ms (source timestamp, or the archive's retrieved_at)
  * @property {Record<string, number>} metrics numeric measures (keys must match the observation_schema)
  * @property {Record<string, unknown>} [meta] non-numeric context
  *
- * @typedef {Object} IngestRun
- * @property {string} key unique within its target
+ * @typedef {Object} IngestRun a measurement occasion; a benchmark child that spans whatever targets
+ *   have measurements in it (one comparative sweep, or one run per independent result)
+ * @property {string} key unique within its benchmark
  * @property {string} [name]
  * @property {Record<string, unknown>} [details]
  * @property {number} [started_at] epoch-ms
- * @property {number} [ended_at] epoch-ms — ingested runs are completed measurements, not live
- * @property {IngestObservation[]} observations
+ * @property {number} [ended_at] epoch-ms — ingested runs are completed, not live
  *
  * @typedef {Object} IngestTarget
  * @property {string} key unique within its benchmark
  * @property {string} name
  * @property {Record<string, unknown>} [details]
- * @property {IngestRun[]} runs
  *
- * @typedef {Object} IngestBenchmark
- * @property {string} key unique within the system account
+ * @typedef {Object} IngestBenchmark benchmark → { targets, runs } → measurements (each measurement
+ *   names one run + one target, both benchmark children)
+ * @property {string} key unique within the owning publisher account
  * @property {string} name
  * @property {string} description one-line tagline
  * @property {string} about
@@ -35,6 +37,8 @@
  * @property {number} [published_at] epoch-ms — when the SOURCE published this dataset; omitted
  *   when the archive carries no usable publication date (the importer falls back to retrieved_at)
  * @property {IngestTarget[]} targets
+ * @property {IngestRun[]} runs
+ * @property {IngestMeasurement[]} measurements
  *
  * @typedef {Object} SourceMeta
  * @property {string} key archive directory name, e.g. "blender"

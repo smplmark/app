@@ -58,6 +58,17 @@ type Schema = { metrics: { name: string; unit?: string }[]; chart: { y: string }
 const schemaOf = (b: { observationSchema: object }) => b.observationSchema as Schema;
 const metaOf = (o: { meta?: Record<string, unknown> }) => o.meta as Record<string, unknown>;
 
+// The flat model: measurements name a run + a target. TPC is 1:1:1, so find the single measurement
+// (and its run) for a given target by matching target_key, then run_key.
+type Bench = ReturnType<typeof adapt>[number];
+const measurementFor = (b: Bench, targetKey: string) => {
+  const m = b.measurements.find((x) => x.target_key === targetKey);
+  if (!m) throw new Error(`no measurement for target ${targetKey}`);
+  const run = b.runs.find((r) => r.key === m.run_key);
+  if (!run) throw new Error(`no run ${m.run_key} for target ${targetKey}`);
+  return { measurement: m, run };
+};
+
 describe("tpc source metadata", () => {
   it("attributes TPC under its Fair Use policy", () => {
     expect(meta.key).toBe("tpc");
@@ -104,21 +115,21 @@ describe("tpc adapt", () => {
     // Sorted by throughput desc → PolarDB first.
     const top = c.targets[0];
     expect(top.name).toBe("PolarDB Limitless (Alibaba)");
-    const obs = top.runs[0].observations[0];
-    expect(obs.metrics).toEqual({ tpmc: 2055076649, price_per_tpmc: 0.8 });
-    expect(metaOf(obs)).toMatchObject({
+    const { measurement: topMeas, run: topRun } = measurementFor(c, top.key);
+    expect(topMeas.metrics).toEqual({ tpmc: 2055076649, price_per_tpmc: 0.8 });
+    expect(metaOf(topMeas)).toMatchObject({
       tpc_status: "active",
       source_url: "https://www.tpc.org/1813",
       total_system_cost: 1626643837,
       currency: "CNY",
     });
     // A TPC result is a completed, audited measurement.
-    expect(top.runs[0].started_at).toBe(Date.UTC(2025, 0, 27));
-    expect(top.runs[0].ended_at).toBe(Date.UTC(2025, 0, 27));
+    expect(topRun.started_at).toBe(Date.UTC(2025, 0, 27));
+    expect(topRun.ended_at).toBe(Date.UTC(2025, 0, 27));
 
     // The historical Bull result keeps its lifecycle status; earliest date drives published_at.
     const bull = c.targets.find((t) => t.name.includes("Escala"))!;
-    expect(metaOf(bull.runs[0].observations[0]).tpc_status).toBe("historical");
+    expect(metaOf(measurementFor(c, bull.key).measurement).tpc_status).toBe("historical");
     expect(c.published_at).toBe(Date.UTC(2001, 4, 28));
   });
 
@@ -127,10 +138,10 @@ describe("tpc adapt", () => {
     expect(schemaOf(h).metrics.map((m) => m.name)).toEqual(["qphh", "price_per_qphh", "scale_factor_gb"]);
     // Only the clean HPE row survives; the "Super, System" row is dropped (currency read "5000").
     expect(h.targets).toHaveLength(1);
-    const obs = h.targets[0].runs[0].observations[0];
-    expect(obs.metrics).toEqual({ qphh: 1184211.5, price_per_qphh: 263.13, scale_factor_gb: 1000 });
-    expect(metaOf(obs).source_url).toBe("https://www.tpc.org/3401");
-    expect(h.targets[0].runs[0].name).toBe("Scale factor 1000 GB");
+    const { measurement: hMeas, run: hRun } = measurementFor(h, h.targets[0].key);
+    expect(hMeas.metrics).toEqual({ qphh: 1184211.5, price_per_qphh: 263.13, scale_factor_gb: 1000 });
+    expect(metaOf(hMeas).source_url).toBe("https://www.tpc.org/3401");
+    expect(hRun.name).toBe("Scale factor 1000 GB");
   });
 
   it("honors the per-family default cap, keeping the highest-throughput slice", () => {

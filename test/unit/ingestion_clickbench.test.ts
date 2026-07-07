@@ -87,7 +87,7 @@ describe("clickbench adapter", () => {
     expect(meta.robotsOrigin).toBe("https://raw.githubusercontent.com");
   });
 
-  it("maps one benchmark: target per system+machine, one dated run, summed metrics", () => {
+  it("maps one benchmark: target per system+machine, one leaderboard run, per-target measurements", () => {
     const benchmarks = adapt(archive as never);
     expect(benchmarks).toHaveLength(1);
     const [b] = benchmarks;
@@ -98,15 +98,22 @@ describe("clickbench adapter", () => {
     expect(b.category).toBe("DATABASE");
     expect(b.tags).toEqual(["olap", "sql", "analytics", "databases"]);
     expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });
+    // One benchmark-level run: the whole leaderboard is one comparative sweep.
+    expect(b.runs).toHaveLength(1);
+    expect(b.runs[0]).toEqual({ key: "leaderboard", name: "ClickBench leaderboard" });
     // Every emitted metric key is declared in the observation schema.
     const declared = new Set((b.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name));
-    for (const t of b.targets) {
-      for (const r of t.runs) {
-        for (const o of r.observations) {
-          for (const k of Object.keys(o.metrics)) expect(declared).toContain(k);
-        }
-      }
+    for (const m of b.measurements) {
+      for (const k of Object.keys(m.metrics)) expect(declared).toContain(k);
     }
+    // Every measurement references the single benchmark-level run and a real target.
+    const targetKeys = new Set(b.targets.map((t: { key: string }) => t.key));
+    for (const m of b.measurements) {
+      expect(m.run_key).toBe("leaderboard");
+      expect(targetKeys).toContain(m.target_key);
+    }
+    // One measurement per curated target.
+    expect(b.measurements).toHaveLength(b.targets.length);
 
     // Malformed rows (error stub, missing result/date/system, non-object) are skipped.
     expect(b.targets).toHaveLength(4);
@@ -118,6 +125,13 @@ describe("clickbench adapter", () => {
       "clickhouse-c6a-4xlarge",
     ]);
 
+    // Each target's measurement carries its own created_at (the entry date) and meta.
+    const measurementFor = (targetKey: string) =>
+      b.measurements.find(
+        (m: { run_key: string; target_key: string }) =>
+          m.run_key === "leaderboard" && m.target_key === targetKey,
+      );
+
     const ch = b.targets[3];
     expect(ch.name).toBe("ClickHouse (c6a.4xlarge)");
     expect(ch.details).toEqual({
@@ -128,39 +142,37 @@ describe("clickbench adapter", () => {
       tuned: "no",
       hardware: "cpu",
     });
-    expect(ch.runs).toHaveLength(1);
-    expect(ch.runs[0].key).toBe("r-2026-06-24");
-    expect(ch.runs[0].started_at).toBe(Date.UTC(2026, 5, 24));
-    expect(ch.runs[0].observations).toEqual([
-      {
-        created_at: Date.UTC(2026, 5, 24),
-        metrics: {
-          load_time_s: 294,
-          data_size_bytes: 15267535124,
-          cold_total_s: 1.01,
-          hot_total_s: 2.502,
-          concurrent_qps: 0.745,
-        },
-        meta: {
-          result: [
-            [0.01, 0.002, 0.003],
-            [1, 0.5, 0.6],
-            [null, 2, null],
-          ],
-          source: "clickhouse/results/20260624/c6a.4xlarge.json",
-          missing_queries: 1,
-        },
+    expect(measurementFor(ch.key)).toEqual({
+      run_key: "leaderboard",
+      target_key: ch.key,
+      created_at: Date.UTC(2026, 5, 24),
+      metrics: {
+        load_time_s: 294,
+        data_size_bytes: 15267535124,
+        cold_total_s: 1.01,
+        hot_total_s: 2.502,
+        concurrent_qps: 0.745,
       },
-    ]);
+      meta: {
+        result: [
+          [0.01, 0.002, 0.003],
+          [1, 0.5, 0.6],
+          [null, 2, null],
+        ],
+        source: "clickhouse/results/20260624/c6a.4xlarge.json",
+        missing_queries: 1,
+      },
+    });
 
     // Emoji survives in the display name; "serverless" cluster_size is stringly kept; the null
-    // concurrent_qps is NOT emitted as a metric; the comment lands in observation meta.
+    // concurrent_qps is NOT emitted as a metric; the comment lands in measurement meta.
     const md = b.targets[2];
     expect(md.name).toBe("MotherDuck ☁️ (serverless-tier)");
     expect(md.details).toEqual({ tags: [], machine: "serverless-tier", cluster_size: "serverless" });
-    const obs = md.runs[0].observations[0];
-    expect(obs.metrics).toEqual({ load_time_s: 0, data_size_bytes: 123, cold_total_s: 1.6, hot_total_s: 1.1 });
-    expect(obs.meta).toMatchObject({ comment: "Managed service.", missing_queries: 0 });
+    const mdMeasurement = measurementFor(md.key);
+    expect(mdMeasurement!.created_at).toBe(Date.UTC(2026, 4, 1));
+    expect(mdMeasurement!.metrics).toEqual({ load_time_s: 0, data_size_bytes: 123, cold_total_s: 1.6, hot_total_s: 1.1 });
+    expect(mdMeasurement!.meta).toMatchObject({ comment: "Managed service.", missing_queries: 0 });
   });
 
   it("caps at the 300 fastest targets by hot_total_s by default; fullOptions lifts it", () => {

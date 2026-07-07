@@ -4,6 +4,7 @@ import {
   apiPost,
   bearer,
   makeBenchmark,
+  makeMeasurement,
   makeRun,
   publish,
   register,
@@ -34,7 +35,7 @@ const SYSTEMS: Sys[] = [
   { key: "delta", name: "Delta", details: { vendor: "Intel", sponsor: "Acme, Inc" }, score: 350 },
 ];
 
-/** Build a published benchmark with SYSTEMS as targets (one run + one observation each). */
+/** Build a published benchmark with SYSTEMS as targets (one run + one measurement each). */
 async function seed(): Promise<{ owner: Registered; benchmark: Resource }> {
   const owner = await register();
   const benchmark = await makeBenchmark(owner.token, {
@@ -51,13 +52,9 @@ async function seed(): Promise<{ owner: Registered; benchmark: Resource }> {
     );
     expect(t.status).toBe(201);
     const target = ((await t.json()) as { data: Resource }).data;
-    const run = await makeRun(owner.token, target.id);
-    const o = await apiPost(
-      "/api/v1/observations",
-      { data: { type: "observation", attributes: { run: run.id, metrics: { score: s.score } } } },
-      bearer(owner.token),
-    );
-    expect(o.status).toBe(201);
+    // Runs are benchmark children now; a run key is unique within the benchmark, so key it per system.
+    const run = await makeRun(owner.token, benchmark.id, { key: s.key });
+    await makeMeasurement(owner.token, run.id, target.id, { metrics: { score: s.score } });
   }
   await publish(owner.token, owner.user_id, benchmark.id);
   return { owner, benchmark };

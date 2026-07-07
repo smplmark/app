@@ -177,27 +177,32 @@ export function adapt(archive, options = {}) {
  * @returns {import("../model.mjs").IngestBenchmark}
  */
 function buildBenchmark({ key, name, description, tags, slices, archive, topDevices }) {
-  /** @type {Map<string, { name: string, runs: any[], totalCount: number }>} */
+  /** @type {Map<string, { name: string, entries: { runKey: string, metrics: Record<string, number> }[], totalCount: number }>} */
   const devices = new Map();
+  // One run per DISTINCT slice, deduped by slice runKey across every device.
+  /** @type {Map<string, import("../model.mjs").IngestRun>} */
+  const runsByKey = new Map();
   const retrievedAt = archive.manifest.retrieved_at;
 
   for (const slice of slices) {
+    if (!runsByKey.has(slice.runKey)) {
+      runsByKey.set(slice.runKey, {
+        key: slice.runKey,
+        name: slice.compute === "CPU" ? `Blender ${slice.version}` : `Blender ${slice.version} (${slice.compute})`,
+        details: { blender_version: slice.version, compute_type: slice.compute },
+      });
+    }
     const rows = parseSlice(archive.readJson(fileName(slice.version, slice.compute)));
     for (const row of rows) {
       let device = devices.get(row.device);
       if (!device) {
-        device = { name: row.device, runs: [], totalCount: 0 };
+        device = { name: row.device, entries: [], totalCount: 0 };
         devices.set(row.device, device);
       }
       /** @type {Record<string, number>} */
       const metrics = { median_score: row.score };
       if (row.count !== null) metrics.submission_count = row.count;
-      device.runs.push({
-        key: slice.runKey,
-        name: slice.compute === "CPU" ? `Blender ${slice.version}` : `Blender ${slice.version} (${slice.compute})`,
-        details: { blender_version: slice.version, compute_type: slice.compute },
-        observations: [{ created_at: retrievedAt, metrics }],
-      });
+      device.entries.push({ runKey: slice.runKey, metrics });
       device.totalCount += row.count ?? 0;
     }
   }
@@ -209,6 +214,28 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     .slice(0, topDevices);
 
   const seen = new Map();
+  /** @type {import("../model.mjs").IngestTarget[]} */
+  const targets = [];
+  /** @type {import("../model.mjs").IngestMeasurement[]} */
+  const measurements = [];
+  // Only runs actually referenced by a surviving measurement are emitted.
+  /** @type {Set<string>} */
+  const usedRunKeys = new Set();
+
+  for (const d of ranked) {
+    const targetKey = uniqueSlug(d.name, seen);
+    targets.push({ key: targetKey, name: d.name, details: undefined });
+    for (const entry of d.entries) {
+      usedRunKeys.add(entry.runKey);
+      measurements.push({
+        run_key: entry.runKey,
+        target_key: targetKey,
+        created_at: retrievedAt,
+        metrics: entry.metrics,
+      });
+    }
+  }
+
   return {
     key,
     name,
@@ -218,11 +245,8 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     category: "HARDWARE",
     tags,
     observationSchema: SCHEMA,
-    targets: ranked.map((d) => ({
-      key: uniqueSlug(d.name, seen),
-      name: d.name,
-      details: undefined,
-      runs: d.runs,
-    })),
+    targets,
+    runs: [...runsByKey.values()].filter((r) => usedRunKeys.has(r.key)),
+    measurements,
   };
 }

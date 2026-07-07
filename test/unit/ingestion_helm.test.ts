@@ -135,31 +135,35 @@ describe("helm adapter", () => {
       access: "limited",
       release_date: "2025-04-30",
     });
-    expect(nova.runs).toHaveLength(1);
-    expect(nova.runs[0].key).toBe("v1-15-0");
-    expect(nova.runs[0].name).toBe("HELM Capabilities v1.15.0");
-    expect(nova.runs[0].details).toEqual({ release: "v1.15.0" });
-    // Exact metrics: the unknown FutureBench column must NOT leak in, and created_at is the
-    // release's publication date from summary.json.
-    expect(nova.runs[0].observations).toEqual([
-      {
-        created_at: T_RELEASE,
-        metrics: {
-          mean_score: 0.665,
-          mmlu_pro: 0.702,
-          gpqa: 0.463,
-          ifeval: 0.851,
-          wildbench: 0.712,
-          omni_math: 0.44,
-        },
-      },
+    // One release = one comparative run spanning every model.
+    expect(bench.runs).toEqual([
+      { key: "v1-15-0", name: "HELM Capabilities v1.15.0", details: { release: "v1.15.0" } },
     ]);
+    // Each model's score is a measurement naming that run + its target. The unknown FutureBench
+    // column must NOT leak in, and created_at is the release's publication date from summary.json.
+    const measFor = (targetKey: string) =>
+      bench.measurements.find((m: { target_key: string }) => m.target_key === targetKey);
+    expect(measFor("amazon-nova-premier-v1-0")).toEqual({
+      run_key: "v1-15-0",
+      target_key: "amazon-nova-premier-v1-0",
+      created_at: T_RELEASE,
+      metrics: {
+        mean_score: 0.665,
+        mmlu_pro: 0.702,
+        gpqa: 0.463,
+        ifeval: 0.851,
+        wildbench: 0.712,
+        omni_math: 0.44,
+      },
+    });
   });
 
   it("omits null or absent score cells instead of inventing zeros", () => {
     const [bench] = adapt(archive as never);
-    const gpt4o = bench.targets.find((t: { key: string }) => t.key === "openai-gpt-4o-2024-11-20");
-    expect(gpt4o!.runs[0].observations[0].metrics).toEqual({
+    const gpt4o = bench.measurements.find(
+      (m: { target_key: string }) => m.target_key === "openai-gpt-4o-2024-11-20",
+    );
+    expect(gpt4o!.metrics).toEqual({
       mean_score: 0.61,
       mmlu_pro: 0.68,
       ifeval: 0.83,
@@ -182,12 +186,8 @@ describe("helm adapter", () => {
     const declared = new Set(
       (bench.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name),
     );
-    for (const target of bench.targets) {
-      for (const run of target.runs) {
-        for (const obs of run.observations) {
-          for (const key of Object.keys(obs.metrics)) expect(declared.has(key)).toBe(true);
-        }
-      }
+    for (const m of bench.measurements) {
+      for (const key of Object.keys(m.metrics)) expect(declared.has(key)).toBe(true);
     }
   });
 
@@ -200,7 +200,7 @@ describe("helm adapter", () => {
     const { "summary.json": _dropped, ...withoutSummary } = FILES;
     const bare = makeArchive(withoutSummary, { "release.txt": "v1.15.0" });
     const [bench] = adapt(bare as never);
-    expect(bench.targets[0].runs[0].observations[0].created_at).toBe(T_RETRIEVED);
+    expect(bench.measurements[0].created_at).toBe(T_RETRIEVED);
     expect(bench.published_at).toBeUndefined(); // importer then falls back to retrieved_at
   });
 

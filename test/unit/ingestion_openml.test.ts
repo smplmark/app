@@ -180,28 +180,39 @@ describe("openml adapter", () => {
     const svm = krvskp.targets[0];
     expect(svm.name).toBe("mlr.classif.svm(6)");
     expect(svm.details).toEqual({ openml_flow_id: 10 });
-    expect(svm.runs).toHaveLength(1);
-    expect(svm.runs[0].key).toBe("best");
-    expect(svm.runs[0].started_at).toBe(T_SVM_UPLOAD);
-    // Dedupe kept flow 10's max (run 1 at 0.998123), not the later 0.9953.
-    expect(svm.runs[0].observations).toEqual([
-      {
-        created_at: T_SVM_UPLOAD,
-        metrics: { predictive_accuracy: 0.998123 },
-        meta: {
-          openml_run_id: 1,
-          openml_setup_id: 4007069,
-          source_url: "https://www.openml.org/r/1",
-        },
+    // The task has one shared "best" run; targets carry no runs of their own now.
+    expect(svm).not.toHaveProperty("runs");
+    expect(krvskp.runs.map((r: { key: string }) => r.key)).toEqual(["best"]);
+    // The "best" run started at the earliest flow upload; the svm flow's is the earliest here.
+    expect(krvskp.runs[0].started_at).toBe(T_SVM_UPLOAD);
+    // Dedupe kept flow 10's max (run 1 at 0.998123), not the later 0.9953. One measurement per
+    // flow, on the shared "best" run.
+    const svmMeasurement = krvskp.measurements.find(
+      (m: { run_key: string; target_key: string }) =>
+        m.run_key === "best" && m.target_key === svm.key,
+    );
+    expect(svmMeasurement).toEqual({
+      run_key: "best",
+      target_key: "mlr-classif-svm-6",
+      created_at: T_SVM_UPLOAD,
+      metrics: { predictive_accuracy: 0.998123 },
+      meta: {
+        openml_run_id: 1,
+        openml_setup_id: 4007069,
+        source_url: "https://www.openml.org/r/1",
       },
-    ]);
+    });
 
-    // Missing upload_time: no started_at, observation timestamped at retrieval.
+    // Missing upload_time: measurement falls back to retrieved_at.
     const letter = benchmarks[1];
     const rf = letter.targets.find((t: { key: string }) => t.key === "weka-randomforest-1");
     expect(rf).toBeDefined();
-    expect(rf!.runs[0].started_at).toBeUndefined();
-    expect(rf!.runs[0].observations[0].created_at).toBe(T_RETRIEVED);
+    const rfMeasurement = letter.measurements.find(
+      (m: { run_key: string; target_key: string }) =>
+        m.run_key === "best" && m.target_key === "weka-randomforest-1",
+    );
+    expect(rfMeasurement).toBeDefined();
+    expect(rfMeasurement!.created_at).toBe(T_RETRIEVED);
   });
 
   it("maps AMLB study 226 to frameworks with per-dataset runs merging both metrics", () => {
@@ -226,20 +237,50 @@ describe("openml adapter", () => {
 
     const ask = amlb.targets.find((t: { key: string }) => t.key === "autosklearn")!;
     expect(ask.details).toEqual({ openml_flow_id: 15509 });
-    expect(ask.runs.map((r: { key: string }) => r.key).sort()).toEqual(["adult", "credit-g"]);
-    const adult = ask.runs.find((r: { key: string }) => r.key === "adult")!;
-    expect(adult.started_at).toBe(T_AMLB_UPLOAD);
-    expect(adult.observations).toEqual([
-      {
-        created_at: T_AMLB_UPLOAD,
-        metrics: { predictive_accuracy: 0.87, area_under_roc_curve: 0.8879 },
-        meta: { openml_run_id: 100, data_name: "adult" },
-      },
+    // Datasets are benchmark-wide shared runs, not per-framework: "adult" is one run shared by
+    // autosklearn and tpot, keyed identically for both.
+    expect(amlb.runs.map((r: { key: string }) => r.key).sort()).toEqual([
+      "adult",
+      "credit-g",
+      "kc1",
     ]);
+    // autosklearn measured on adult and credit-g, each naming the shared dataset run.
+    const askRunKeys = amlb.measurements
+      .filter((m: { target_key: string }) => m.target_key === "autosklearn")
+      .map((m: { run_key: string }) => m.run_key)
+      .sort();
+    expect(askRunKeys).toEqual(["adult", "credit-g"]);
+    const adultRun = amlb.runs.find((r: { key: string }) => r.key === "adult")!;
+    expect(adultRun.name).toBe("adult");
+    // The shared "adult" run started at the EARLIEST upload across all its measurements.
+    // autosklearn's adult uploaded 2019-08-22; tpot's adult inherits the fixture default
+    // 2017-07-16, which is earlier — so the shared run's started_at is that.
+    expect(adultRun.started_at).toBe(T_SVM_UPLOAD);
+    const askAdult = amlb.measurements.find(
+      (m: { run_key: string; target_key: string }) =>
+        m.run_key === "adult" && m.target_key === "autosklearn",
+    )!;
+    expect(askAdult).toEqual({
+      run_key: "adult",
+      target_key: "autosklearn",
+      created_at: T_AMLB_UPLOAD,
+      metrics: { predictive_accuracy: 0.87, area_under_roc_curve: 0.8879 },
+      meta: { openml_run_id: 100, data_name: "adult" },
+    });
+    // tpot's "adult" measurement names the SAME shared run key.
+    const tpotAdult = amlb.measurements.find(
+      (m: { run_key: string; target_key: string }) =>
+        m.run_key === "adult" && m.target_key === "tpot",
+    )!;
+    expect(tpotAdult).toBeDefined();
+    expect(tpotAdult.run_key).toBe("adult");
 
-    // Accuracy-only run (no AUC counterpart) still lands, with just the one metric.
+    // Accuracy-only cell (no AUC counterpart) still lands, with just the one metric.
     const h2o = amlb.targets.find((t: { key: string }) => t.key === "h2oautoml")!;
-    expect(h2o.runs[0].observations[0].metrics).toEqual({ predictive_accuracy: 0.5 });
+    const h2oMeasurement = amlb.measurements.find(
+      (m: { target_key: string }) => m.target_key === h2o.key,
+    )!;
+    expect(h2oMeasurement.metrics).toEqual({ predictive_accuracy: 0.5 });
   });
 
   it("caps tasks by distinct-flow count and flows by value", () => {

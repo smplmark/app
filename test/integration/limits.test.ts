@@ -6,7 +6,6 @@ import {
   apiPost,
   bearer,
   makeBenchmark,
-  makeTarget,
   publish,
   register,
   resetDb,
@@ -53,13 +52,12 @@ describe("string-size limits (400)", () => {
       bearer(token),
     );
     expect(t.status).toBe(400);
-    const target = await makeTarget(token, bench.id);
     const r = await apiPost(
       "/api/v1/runs",
       {
         data: {
           type: "run",
-          attributes: { target: target.id, key: "r", name: "n".repeat(LIMITS.nameLength + 1) },
+          attributes: { benchmark: bench.id, key: "r", name: "n".repeat(LIMITS.nameLength + 1) },
         },
       },
       bearer(token),
@@ -110,42 +108,31 @@ describe("count ceilings (409)", () => {
     expect(res.status).toBe(409);
   });
 
-  it("caps runs per target", async () => {
+  // Runs are per-benchmark now; the count ceiling (LIMITS.runsPerBenchmark = 20k) is too large to
+  // bulk-insert, so the collision this test guards is run-key uniqueness *within a benchmark* (409).
+  // runsPerTarget no longer exists — a run is a benchmark child, not a target child.
+  it("rejects a duplicate run key within a benchmark", async () => {
     const { token } = await register();
     const bench = await makeBenchmark(token);
-    const target = await makeTarget(token, bench.id);
-    const now = Date.now();
-    await bulkInsert(
-      "run",
-      "id, target_id, key, created_at, updated_at",
-      Array.from(
-        { length: LIMITS.runsPerTarget },
-        (_, i) => `('bulk-r-${i}', '${target.id}', 'bulk-r-${i}', ${now}, ${now})`,
-      ),
-    );
-    const res = await apiPost(
-      "/api/v1/runs",
-      { data: { type: "run", attributes: { target: target.id, key: "extra" } } },
-      bearer(token),
-    );
-    expect(res.status).toBe(409);
+    const post = () =>
+      apiPost(
+        "/api/v1/runs",
+        { data: { type: "run", attributes: { benchmark: bench.id, key: "dup" } } },
+        bearer(token),
+      );
+    expect((await post()).status).toBe(201);
+    expect((await post()).status).toBe(409);
   });
 });
 
 describe("GET /runs?filter[benchmark]", () => {
-  it("lists every run under a public benchmark across targets, in one request", async () => {
+  it("lists every run under a public benchmark in one request", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
-    const t1 = await makeTarget(owner.token, bench.id, "t1");
-    const t2 = await makeTarget(owner.token, bench.id, "t2");
-    for (const [t, key] of [
-      [t1, "r1"],
-      [t1, "r2"],
-      [t2, "r3"],
-    ] as [Resource, string][]) {
+    for (const key of ["r1", "r2", "r3"]) {
       const res = await apiPost(
         "/api/v1/runs",
-        { data: { type: "run", attributes: { target: t.id, key } } },
+        { data: { type: "run", attributes: { benchmark: bench.id, key } } },
         bearer(owner.token),
       );
       expect(res.status).toBe(201);
@@ -156,21 +143,20 @@ describe("GET /runs?filter[benchmark]", () => {
     expect(res.status).toBe(200);
     const doc = (await res.json()) as { data: Resource[] };
     expect(doc.data.length).toBe(3);
-    expect(new Set(doc.data.map((r) => r.attributes.target))).toEqual(new Set([t1.id, t2.id]));
+    expect(new Set(doc.data.map((r) => r.attributes.key))).toEqual(new Set(["r1", "r2", "r3"]));
   });
 
-  it("400s on neither/both scope filters", async () => {
-    expect((await apiGet("/api/v1/runs")).status).toBe(400);
-    expect((await apiGet("/api/v1/runs?filter[target]=x&filter[benchmark]=y")).status).toBe(400);
+  it("404s when the benchmark scope filter is missing", async () => {
+    // Runs are benchmark-scoped: filter[benchmark] is required, and its absence 404s (mirrors targets.ts).
+    expect((await apiGet("/api/v1/runs")).status).toBe(404);
   });
 
   it("hides private benchmarks from anonymous callers but serves the owner", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
-    const target = await makeTarget(owner.token, bench.id);
     await apiPost(
       "/api/v1/runs",
-      { data: { type: "run", attributes: { target: target.id, key: "r" } } },
+      { data: { type: "run", attributes: { benchmark: bench.id, key: "r" } } },
       bearer(owner.token),
     );
 

@@ -1,9 +1,9 @@
-// Serialize observation resources to CSV (§9 / ADR-014 content negotiation). Columns: id, created_at,
-// run, then one column per metric name (union across the page, sorted), then meta (a JSON cell).
-// RFC-4180 quoting; rows separated by CRLF. Empty input yields a header-only document.
+// Serialize measurement resources to CSV (§9 / ADR-014 content negotiation). Columns: id, created_at,
+// run, target, then one column per metric name (union across the page, sorted), then meta (a JSON
+// cell). RFC-4180 quoting; rows separated by CRLF. Empty input yields a header-only document.
 import type { ResourceObject } from "../http/jsonapi";
 
-const FIXED_LEADING = ["id", "created_at", "run"];
+const FIXED_LEADING = ["id", "created_at", "run", "target"];
 
 function quote(cell: string): string {
   if (/[",\r\n]/.test(cell)) {
@@ -66,7 +66,7 @@ export function leaderboardToCsv(
   return lines.join("\r\n");
 }
 
-export function observationsToCsv(resources: ResourceObject[]): string {
+export function measurementsToCsv(resources: ResourceObject[]): string {
   const metricKeys = new Set<string>();
   for (const r of resources) {
     for (const k of Object.keys(metricsOf(r))) metricKeys.add(k);
@@ -81,6 +81,7 @@ export function observationsToCsv(resources: ResourceObject[]): string {
       r.id,
       cellFor(r.attributes.created_at),
       cellFor(r.attributes.run),
+      cellFor(r.attributes.target),
       ...sortedMetricKeys.map((k) => cellFor(metrics[k])),
       cellFor(r.attributes.meta),
     ];

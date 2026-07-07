@@ -1,5 +1,5 @@
 // The benchmark leaderboard read: a paginated, server-sorted, server-filtered projection of a
-// benchmark's targets, each joined to its representative (latest) observation's metrics. This is
+// benchmark's targets, each joined to its representative (latest) measurement's metrics. This is
 // what lets the viewer slice a 10k+ target benchmark (e.g. SPEC CPU2017) without shipping every row
 // to the browser — sort by any declared metric, filter by free text or by a `details` facet, and
 // get value→count facets computed over the current filter in the same round-trip.
@@ -48,15 +48,16 @@ export interface LeaderboardResult {
 const MAX_FACET_VALUES = 60;
 const MAX_FACET_FIELDS = 12;
 
-/** Latest observation per target within the benchmark → one representative metrics row per target. */
+/** Latest measurement per target within the benchmark → one representative metrics row per target.
+ *  A measurement names its target directly; its benchmark is its run's (run.benchmark_id), so a
+ *  target's representative is its most recent measurement across every run that measured it. */
 const REP_CTE =
   "WITH rep AS (" +
-  " SELECT r.target_id AS target_id, o.metrics AS metrics, o.created_at AS observed_at," +
-  "  ROW_NUMBER() OVER (PARTITION BY r.target_id ORDER BY o.created_at DESC, o.id DESC) AS rn" +
-  " FROM observation o" +
-  " JOIN run r ON r.id = o.run_id" +
-  " JOIN target t ON t.id = r.target_id" +
-  " WHERE t.benchmark_id = ?" +
+  " SELECT m.target_id AS target_id, m.metrics AS metrics, m.created_at AS observed_at," +
+  "  ROW_NUMBER() OVER (PARTITION BY m.target_id ORDER BY m.created_at DESC, m.id DESC) AS rn" +
+  " FROM measurement m" +
+  " JOIN run r ON r.id = m.run_id" +
+  " WHERE r.benchmark_id = ?" +
   ")";
 
 function assertSafeKey(key: string): void {

@@ -23,8 +23,8 @@ import {
 
 beforeEach(resetDb);
 
-const obs = (runId: string, attrs: Record<string, unknown> = {}) => ({
-  data: { type: "observation", attributes: { run: runId, ...attrs } },
+const measurement = (runId: string, targetId: string, attrs: Record<string, unknown> = {}) => ({
+  data: { type: "measurement", attributes: { run: runId, target: targetId, ...attrs } },
 });
 
 describe("list params", () => {
@@ -47,10 +47,10 @@ describe("list params", () => {
     expect(((await byKey.json()) as { data: Resource[] }).data.length).toBe(1);
 
     const t = await makeTarget(me.token, b1.id, "tk");
-    await makeRun(me.token, t.id);
+    await makeRun(me.token, b1.id);
     const targets = await apiGet(`/api/v1/targets?filter[benchmark]=${b1.id}&filter[key]=tk&meta[total]=true&sort=-created_at`, bearer(me.token));
     expect(((await targets.json()) as { data: Resource[] }).data.length).toBe(1);
-    const runs = await apiGet(`/api/v1/runs?filter[target]=${t.id}&filter[key]=default&meta[total]=true&sort=key`, bearer(me.token));
+    const runs = await apiGet(`/api/v1/runs?filter[benchmark]=${b1.id}&filter[key]=default&meta[total]=true&sort=key`, bearer(me.token));
     expect(((await runs.json()) as { data: Resource[] }).data.length).toBe(1);
 
     await mintKey(me.token, { scope_type: "ACCOUNT", name: "k1" });
@@ -89,14 +89,14 @@ describe("edge + not-found paths", () => {
     expect((await authPost("/api/v1/auth/resend-verification", undefined, bearer(me.token))).status).toBe(200);
   });
 
-  it("accepts ISO created_at and a meta bag on observations", async () => {
+  it("accepts ISO created_at and a meta bag on measurements", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
     const res = await apiPost(
-      "/api/v1/observations",
-      obs(r.id, { created_at: "2026-07-01T10:00:00Z", meta: { commit: "abc" } }),
+      "/api/v1/measurements",
+      measurement(r.id, t.id, { created_at: "2026-07-01T10:00:00Z", meta: { commit: "abc" } }),
       bearer(me.token),
     );
     expect(res.status).toBe(201);
@@ -108,8 +108,7 @@ describe("api key scope resolution", () => {
   it("mints BENCHMARK/RUN keys, resolves reveal/rotate/delete 404s, and blocks cross-account refs", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
 
     const bench = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
     expect(bench.resource.attributes.scope_type).toBe("BENCHMARK");

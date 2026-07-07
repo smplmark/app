@@ -15,7 +15,7 @@ import { emails } from "./routes/emails";
 import { externalSources } from "./routes/external_sources";
 import { invitations } from "./routes/invitations";
 import { jobs } from "./routes/jobs";
-import { observations } from "./routes/observations";
+import { measurements } from "./routes/measurements";
 import { publisherDomains } from "./routes/publisher_domains";
 import { publisherIdentities } from "./routes/publisher_identities";
 import { runs } from "./routes/runs";
@@ -101,7 +101,7 @@ export function createApp() {
   app.route("/api/v1/benchmarks", benchmarks);
   app.route("/api/v1/targets", targets);
   app.route("/api/v1/runs", runs);
-  app.route("/api/v1/observations", observations);
+  app.route("/api/v1/measurements", measurements);
   app.route("/api/v1/external_sources", externalSources);
   app.route("/api/v1/publisher_identities", publisherIdentities);
   app.route("/api/v1/publisher_domains", publisherDomains);

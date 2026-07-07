@@ -140,8 +140,8 @@ const ABOUT =
 /**
  * Stage B: one benchmark from the release's core-scenarios accuracy table. Targets are models
  * (keyed by the schema.json model id, e.g. "amazon/nova-premier-v1:0" → "amazon-nova-premier-v1-0");
- * each has one run keyed by the release with one observation of the row's scores. Null or missing
- * cells are omitted rather than recorded as zeros. No curation caps (68 models).
+ * one release-keyed run spans them all, and each model's row of scores is a measurement naming that
+ * run + its target. Null or missing cells are omitted rather than recorded as zeros. No caps (68 models).
  * @param {import("../model.mjs").Archive & { readText: (name: string) => string }} archive
  * @param {object} [options] no options — the default is already the full dataset
  * @returns {import("../model.mjs").IngestBenchmark[]}
@@ -165,8 +165,12 @@ export function adapt(archive, options = {}) {
   const createdAt = publishedAt ?? archive.manifest.retrieved_at;
   const runKey = slugify(release);
 
+  // One release = one comparative run over every model; each model is a target, each score a
+  // measurement naming that single run + its target.
   /** @type {import("../model.mjs").IngestTarget[]} */
   const targets = [];
+  /** @type {import("../model.mjs").IngestMeasurement[]} */
+  const measurements = [];
   const seen = new Map();
   for (const row of table.rows) {
     if (!Array.isArray(row)) continue;
@@ -182,19 +186,13 @@ export function adapt(archive, options = {}) {
     if (Object.keys(metrics).length === 0) continue; // no scores at all — nothing to ingest
 
     const model = modelsByDisplayName.get(displayName);
+    const targetKey = uniqueSlug(model ? model.name : displayName, seen);
     targets.push({
-      key: uniqueSlug(model ? model.name : displayName, seen),
+      key: targetKey,
       name: displayName,
       details: model ? modelDetails(model) : undefined,
-      runs: [
-        {
-          key: runKey,
-          name: `HELM Capabilities ${release}`,
-          details: { release },
-          observations: [{ created_at: createdAt, metrics }],
-        },
-      ],
     });
+    measurements.push({ run_key: runKey, target_key: targetKey, created_at: createdAt, metrics });
   }
 
   return [
@@ -209,6 +207,8 @@ export function adapt(archive, options = {}) {
       tags: ["llm", "evaluation", "helm", "language-models"],
       observationSchema: SCHEMA,
       targets,
+      runs: [{ key: runKey, name: `HELM Capabilities ${release}`, details: { release } }],
+      measurements,
     },
   ];
 }

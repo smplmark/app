@@ -4,7 +4,7 @@ import type { RunRow } from "../types";
 import { isUniqueViolation, jsonOrNull } from "./d1";
 
 export interface CreateRunInput {
-  target_id: string;
+  benchmark_id: string;
   key: string;
   name: string | null;
   details: unknown | null;
@@ -18,7 +18,7 @@ export async function createRun(
   const now = Date.now();
   const row: RunRow = {
     id: crypto.randomUUID(),
-    target_id: input.target_id,
+    benchmark_id: input.benchmark_id,
     key: input.key,
     name: input.name,
     details: jsonOrNull(input.details),
@@ -33,11 +33,11 @@ export async function createRun(
   try {
     await db
       .prepare(
-        "INSERT INTO run (id, target_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,NULL,NULL,NULL,NULL,?,?)",
+        "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,NULL,NULL,NULL,NULL,?,?)",
       )
       .bind(
         row.id,
-        row.target_id,
+        row.benchmark_id,
         row.key,
         row.name,
         row.details,
@@ -49,7 +49,7 @@ export async function createRun(
   } catch (e) {
     if (isUniqueViolation(e)) {
       throw new ConflictError(
-        `A run with key ${JSON.stringify(input.key)} already exists for this target.`,
+        `A run with key ${JSON.stringify(input.key)} already exists for this benchmark.`,
       );
     }
     throw e;
@@ -57,14 +57,14 @@ export async function createRun(
   return row;
 }
 
-/** Serves the runs-per-target ceiling check on create. */
-export async function countRunsForTarget(
+/** Serves the runs-per-benchmark ceiling check on create. */
+export async function countRunsForBenchmark(
   db: D1Database,
-  targetId: string,
+  benchmarkId: string,
 ): Promise<number> {
   const r = await db
-    .prepare("SELECT COUNT(*) AS n FROM run WHERE target_id = ?")
-    .bind(targetId)
+    .prepare("SELECT COUNT(*) AS n FROM run WHERE benchmark_id = ?")
+    .bind(benchmarkId)
     .first<{ n: number }>();
   return r?.n ?? 0;
 }
@@ -79,9 +79,8 @@ export async function getRunById(
 }
 
 export interface ListRunsInput {
-  /** Exactly one of targetId / benchmarkId — the route enforces the exactly-one-of contract. */
-  targetId?: string;
-  benchmarkId?: string;
+  /** Runs are benchmark-owned; a listing is always scoped to one benchmark. */
+  benchmarkId: string;
   filterKey?: string;
   sort: Sort;
   limit: number;
@@ -102,14 +101,8 @@ export async function listRuns(
 ): Promise<{ rows: RunRow[]; total?: number }> {
   const clauses: string[] = [];
   const binds: unknown[] = [];
-  if (input.targetId !== undefined) {
-    clauses.push("target_id = ?");
-    binds.push(input.targetId);
-  } else {
-    // Benchmark-wide listing (one request for a whole leaderboard instead of one per target).
-    clauses.push("target_id IN (SELECT id FROM target WHERE benchmark_id = ?)");
-    binds.push(input.benchmarkId);
-  }
+  clauses.push("benchmark_id = ?");
+  binds.push(input.benchmarkId);
   if (input.filterKey !== undefined) {
     clauses.push("key = ?");
     binds.push(input.filterKey);
@@ -192,7 +185,7 @@ export async function invalidateRun(
 
 export async function deleteRunCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
-    db.prepare("DELETE FROM observation WHERE run_id = ?").bind(id),
+    db.prepare("DELETE FROM measurement WHERE run_id = ?").bind(id),
     db.prepare("DELETE FROM run WHERE id = ?").bind(id),
   ]);
 }

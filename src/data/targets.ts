@@ -149,15 +149,14 @@ export async function updateTarget(
   return updated;
 }
 
-/** Hard-delete a target and its subtree (the route guarantees the benchmark is PRIVATE). */
+/**
+ * Hard-delete a target and the measurements that name it (the route guarantees the benchmark is
+ * PRIVATE). Runs are NOT deleted: a run is a benchmark-level occasion that may span other targets, so
+ * removing one target only removes that target's measurements — the runs and other targets survive.
+ */
 export async function deleteTargetCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
-    db
-      .prepare(
-        "DELETE FROM observation WHERE run_id IN (SELECT id FROM run WHERE target_id = ?)",
-      )
-      .bind(id),
-    db.prepare("DELETE FROM run WHERE target_id = ?").bind(id),
+    db.prepare("DELETE FROM measurement WHERE target_id = ?").bind(id),
     db.prepare("DELETE FROM target WHERE id = ?").bind(id),
   ]);
 }

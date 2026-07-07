@@ -9,7 +9,6 @@ import {
   revokeApiKey,
 } from "../data/api_keys";
 import { getRunById } from "../data/runs";
-import { getTargetById } from "../data/targets";
 import { ForbiddenError, NotFoundError } from "../errors";
 import {
   optionalStringOrNull,
@@ -59,12 +58,10 @@ async function requestedScopeChain(
   // RUN
   const run = await getRunById(db, scopeRef);
   if (!run) throw new NotFoundError();
-  const target = await getTargetById(db, run.target_id);
-  if (!target) throw new NotFoundError();
-  const b = await getBenchmarkById(db, target.benchmark_id);
+  const b = await getBenchmarkById(db, run.benchmark_id);
   if (!b || b.account_id !== auth.account_id) throw new NotFoundError();
   return {
-    chain: { account_id: b.account_id, benchmark_id: b.id, target_id: target.id, run_id: run.id },
+    chain: { account_id: b.account_id, benchmark_id: b.id, run_id: run.id },
     scope_ref: run.id,
   };
 }

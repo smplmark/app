@@ -4,7 +4,7 @@
 export const LIMITS = {
   benchmarksPerAccount: 100,
   targetsPerBenchmark: 20_000,
-  runsPerTarget: 100,
+  runsPerBenchmark: 20_000,
   keyLength: 100,
   nameLength: 200,
   descriptionLength: 500,

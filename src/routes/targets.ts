@@ -45,7 +45,6 @@ async function loadOwned(
     !covers(auth, {
       account_id: benchmark.account_id,
       benchmark_id: benchmark.id,
-      target_id: target.id,
     })
   ) {
     throw new NotFoundError();
@@ -126,7 +125,6 @@ targets.get("/:id", optionalAuth, async (c) => {
       !covers(auth, {
         account_id: benchmark.account_id,
         benchmark_id: benchmark.id,
-        target_id: target.id,
       })
     ) {
       throw new NotFoundError();
@@ -157,7 +155,7 @@ targets.delete("/:id", requireAuth, async (c) => {
   return noContentResponse();
 });
 
-// The reversible per-target "complete" signal: a closed target accepts no new runs/observations.
+// The reversible per-target "complete" signal: a closed target accepts no new measurements.
 targets.post("/:id/actions/close", requireAuth, async (c) => {
   const { target, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);

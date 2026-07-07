@@ -6,7 +6,7 @@ import { getPrimaryMembershipForUser } from "../../src/data/account_users";
 import { createBenchmark, updateBenchmark } from "../../src/data/benchmarks";
 import { createTarget, updateTarget } from "../../src/data/targets";
 import { createRun, endRun, invalidateRun, updateRun } from "../../src/data/runs";
-import { insertObservation, listObservations } from "../../src/data/observations";
+import { insertMeasurement, listMeasurements } from "../../src/data/measurements";
 import { createApiKey, listApiKeys } from "../../src/data/api_keys";
 import { createUser } from "../../src/data/users";
 import { parseDateRange } from "../../src/query/daterange";
@@ -14,7 +14,7 @@ import { consumeVerification, createVerification } from "../../src/data/verifica
 import type { AccountRow, BenchmarkRow, RunRow, ObservationSchema, TargetRow } from "../../src/types";
 
 // D1 (miniflare) enforces foreign keys, so every child needs a real parent row.
-const TABLES = ["observation", "run", "target", "benchmark", "publisher_domain", "publisher_identity", "api_key", "email_verification", "account_user", "account", "user"];
+const TABLES = ["measurement", "run", "target", "benchmark", "publisher_domain", "publisher_identity", "api_key", "email_verification", "account_user", "account", "user"];
 beforeEach(async () => {
   for (const t of TABLES) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
@@ -28,7 +28,7 @@ async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; 
     account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null,
   });
   const target = await createTarget(env.DB, { benchmark_id: benchmark.id, key: "t", name: "T", details: null });
-  const run = await createRun(env.DB, { target_id: target.id, key: "r", name: null, details: null, started_at: null });
+  const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null });
   return { account, benchmark, target, run };
 }
 
@@ -50,7 +50,7 @@ describe("unique-violation → 409 on create", () => {
       createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null }),
     );
     await expectConflict(() => createTarget(env.DB, { benchmark_id: benchmark.id, key: "t", name: "T2", details: null }));
-    await expectConflict(() => createRun(env.DB, { target_id: target.id, key: "r", name: null, details: null, started_at: null }));
+    await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null }));
   });
 });
 
@@ -63,7 +63,7 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
       createTarget(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: "X", details: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
-      createRun(env.DB, { target_id: "ghost-target", key: "x", name: null, details: null, started_at: null }),
+      createRun(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: null, details: null, started_at: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
   });
 
@@ -73,12 +73,12 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
   });
 });
 
-describe("listObservations with a date range", () => {
+describe("listMeasurements with a date range", () => {
   it("applies the created_at predicate", async () => {
-    const { run } = await chain();
-    await insertObservation(env.DB, { run_id: run.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
-    await insertObservation(env.DB, { run_id: run.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
-    const res = await listObservations(env.DB, {
+    const { run, target } = await chain();
+    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
+    const res = await listMeasurements(env.DB, {
       scope: { run: run.id },
       range: { start: 2000, startInclusive: true, end: null, endInclusive: false },
       sort, limit: 100, offset: 0, includeTotal: false,
@@ -87,7 +87,7 @@ describe("listObservations with a date range", () => {
     expect(res.rows[0].created_at).toBe(5000);
 
     // An open range produces no predicate fragment (exercises the empty-sql branch).
-    const open = await listObservations(env.DB, {
+    const open = await listMeasurements(env.DB, {
       scope: { run: run.id }, range: parseDateRange("(*,*)"), sort, limit: 100, offset: 0, includeTotal: false,
     });
     expect(open.rows.length).toBe(2);
@@ -141,18 +141,18 @@ describe("listApiKeys with total", () => {
   });
 });
 
-describe("listObservations scopes + total", () => {
+describe("listMeasurements scopes + total", () => {
   it("lists by target and by benchmark with a total count", async () => {
     const { benchmark, target, run } = await chain();
-    await insertObservation(env.DB, { run_id: run.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
 
-    const byTarget = await listObservations(env.DB, {
+    const byTarget = await listMeasurements(env.DB, {
       scope: { target: target.id }, sort, limit: 100, offset: 0, includeTotal: true,
     });
     expect(byTarget.rows.length).toBe(1);
     expect(byTarget.total).toBe(1);
 
-    const byBenchmark = await listObservations(env.DB, {
+    const byBenchmark = await listMeasurements(env.DB, {
       scope: { benchmark: benchmark.id }, sort, limit: 100, offset: 0, includeTotal: false,
     });
     expect(byBenchmark.rows.length).toBe(1);

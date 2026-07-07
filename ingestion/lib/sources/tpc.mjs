@@ -269,9 +269,10 @@ function classifySection(label) {
 }
 
 /**
- * Stage B: one benchmark per TPC family. Target = a published result's system (deduped by
- * company+system with numeric suffixes); one completed run per result; one observation carrying
- * the family's throughput + price/performance (+ scale factor for DS/H).
+ * Stage B: one benchmark per TPC family. Each audited result is independent — it becomes one target
+ * (a published result's system, deduped by company+system with numeric suffixes), one completed run,
+ * and one measurement (1:1:1) carrying the family's throughput + price/performance (+ scale factor
+ * for DS/H) and the per-result citation URL.
  * @param {import("../model.mjs").Archive} archive
  * @param {{ topResults?: number }} [options]
  * @returns {import("../model.mjs").IngestBenchmark[]}
@@ -291,7 +292,15 @@ export function adapt(archive, options = {}) {
     }
     const rows = parseExport(text, fam.delimiter);
 
-    /** @type {{ perf: number, target: import("../model.mjs").IngestTarget, earliest: number | null }[]} */
+    /**
+     * @type {{
+     *   perf: number,
+     *   earliest: number | null,
+     *   target: import("../model.mjs").IngestTarget,
+     *   run: import("../model.mjs").IngestRun,
+     *   measurement: import("../model.mjs").IngestMeasurement,
+     * }[]}
+     */
     const parsed = [];
     for (const row of rows) {
       // Currency is a fixed ISO 3-letter code between the numeric block and the free-text columns.
@@ -337,26 +346,39 @@ export function adapt(archive, options = {}) {
       if (os !== "") details.os = os;
       if (currency !== "") details.currency = currency;
 
+      const runKey = shortId !== "" ? `r-${shortId}` : `r-${parsed.length}`;
+      const targetKey =
+        shortId !== "" ? `${slugSafe(company, system)}-${shortId}` : slugSafe(company, system);
+
       /** @type {import("../model.mjs").IngestRun} */
       const run = {
-        key: shortId !== "" ? `r-${shortId}` : `r-${parsed.length}`,
+        key: runKey,
         name: fam.scaleCol && scale !== null ? `Scale factor ${scale} GB` : system,
-        observations: [{ created_at: availability ?? retrievedAt, metrics, meta: obsMeta }],
       };
       if (availability !== null) {
         run.started_at = availability;
         run.ended_at = availability; // a TPC result is a completed, audited measurement
       }
 
+      /** @type {import("../model.mjs").IngestMeasurement} */
+      const measurement = {
+        run_key: runKey,
+        target_key: targetKey,
+        created_at: availability ?? retrievedAt,
+        metrics,
+        meta: obsMeta,
+      };
+
       parsed.push({
         perf,
         earliest: availability,
         target: {
-          key: shortId !== "" ? `${slugSafe(company, system)}-${shortId}` : slugSafe(company, system),
+          key: targetKey,
           name: company !== "" ? `${system} (${company})` : system,
           details,
-          runs: [run],
         },
+        run,
+        measurement,
       });
     }
     if (parsed.length === 0) continue;
@@ -374,9 +396,23 @@ export function adapt(archive, options = {}) {
     }
 
     // Keys are already unique per result (company+system+shortId), but re-run through uniqueSlug so
-    // a rare shortId-less collision still can't merge two targets.
+    // a rare shortId-less collision still can't merge two targets. Each result is independent, so its
+    // run and measurement reference the same (possibly de-collided) target key 1:1:1.
     /** @type {Map<string, number>} */
     const seen = new Map();
+    /** @type {import("../model.mjs").IngestTarget[]} */
+    const targets = [];
+    /** @type {import("../model.mjs").IngestRun[]} */
+    const runs = [];
+    /** @type {import("../model.mjs").IngestMeasurement[]} */
+    const measurements = [];
+    for (const p of kept) {
+      const targetKey = uniqueSlug(p.target.key, seen);
+      targets.push({ ...p.target, key: targetKey });
+      runs.push(p.run);
+      measurements.push({ ...p.measurement, target_key: targetKey });
+    }
+
     benchmarks.push({
       key: fam.bench,
       name: fam.name,
@@ -387,7 +423,9 @@ export function adapt(archive, options = {}) {
       category: "DATABASE",
       tags: fam.tags,
       observationSchema: buildSchema(fam),
-      targets: kept.map((p) => ({ ...p.target, key: uniqueSlug(p.target.key, seen) })),
+      targets,
+      runs,
+      measurements,
     });
   }
   return benchmarks;

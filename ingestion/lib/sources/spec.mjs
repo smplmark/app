@@ -376,9 +376,10 @@ export function discoverQuarters(html) {
 }
 
 /**
- * Stage B: one benchmark per SPEC result page. Target = a tested system (deduped by
- * sponsor + system + result id); one completed, audited run per result; observation metrics are
- * the suite's headline score(s).
+ * Stage B: one benchmark per SPEC result page. Each result is an independent, audited submission,
+ * so it yields one target (a tested system, keyed by sponsor + system + result id), one completed
+ * run (`r-<resultBase>`), and one measurement naming that run + target; the measurement's metrics
+ * are the suite's headline score(s). runs.length === targets.length === measurements.length.
  * @param {import("../model.mjs").Archive} archive
  * @param {{ topResults?: number }} [options]
  * @returns {import("../model.mjs").IngestBenchmark[]}
@@ -410,7 +411,7 @@ export function adapt(archive, options = {}) {
     const primary = suite.metrics[0];
 
     const allRows = sources.flatMap((s) => parseSuite(s.html, suite, s.quarter));
-    /** @type {{ score: number, earliest: number | null, target: import("../model.mjs").IngestTarget }[]} */
+    /** @type {{ score: number, earliest: number | null, target: import("../model.mjs").IngestTarget, run: import("../model.mjs").IngestRun, measurement: import("../model.mjs").IngestMeasurement }[]} */
     const parsed = [];
     for (const row of allRows) {
       const score = numOf(row.cells(primary.cls));
@@ -436,26 +437,36 @@ export function adapt(archive, options = {}) {
       const vendor = vendorFromText(row.system);
       if (vendor !== null) details.vendor = vendor;
 
+      // Each SPEC result is an independent, audited submission: one target, one run, one measurement.
+      const targetKey = `${row.sponsor} ${row.system} ${row.resultBase}`;
+      const runKey = `r-${row.resultBase}`;
+
       /** @type {import("../model.mjs").IngestRun} */
-      const run = {
-        key: `r-${row.resultBase}`,
-        name: row.date,
-        observations: [{ created_at: started ?? retrievedAt, metrics, meta: { source_url: sourceUrl } }],
-      };
+      const run = { key: runKey, name: row.date };
       if (started !== null) {
         run.started_at = started;
         run.ended_at = started; // a published SPEC result is a completed, audited measurement
       }
 
+      /** @type {import("../model.mjs").IngestMeasurement} */
+      const measurement = {
+        run_key: runKey,
+        target_key: targetKey,
+        created_at: started ?? retrievedAt,
+        metrics,
+        meta: { source_url: sourceUrl },
+      };
+
       parsed.push({
         score,
         earliest: started,
         target: {
-          key: `${row.sponsor} ${row.system} ${row.resultBase}`,
+          key: targetKey,
           name: row.sponsor !== "" ? `${row.system} (${row.sponsor})` : row.system,
           details,
-          runs: [run],
         },
+        run,
+        measurement,
       });
     }
     if (parsed.length === 0) continue;
@@ -472,8 +483,23 @@ export function adapt(archive, options = {}) {
       }
     }
 
+    // Slug the target key once and thread the final key through the target and its measurement so the
+    // measurement keeps naming its target after collision suffixes are applied.
     /** @type {Map<string, number>} */
     const seen = new Map();
+    /** @type {import("../model.mjs").IngestTarget[]} */
+    const targets = [];
+    /** @type {import("../model.mjs").IngestRun[]} */
+    const runs = [];
+    /** @type {import("../model.mjs").IngestMeasurement[]} */
+    const measurements = [];
+    for (const p of kept) {
+      const targetKey = uniqueSlug(p.target.key, seen);
+      targets.push({ ...p.target, key: targetKey });
+      runs.push(p.run);
+      measurements.push({ ...p.measurement, target_key: targetKey });
+    }
+
     benchmarks.push({
       key: suite.key,
       name: suite.name,
@@ -488,7 +514,9 @@ export function adapt(archive, options = {}) {
         derived: [],
         chart: { x: null, y: primary.name, x_kind: "CATEGORY" },
       },
-      targets: kept.map((p) => ({ ...p.target, key: uniqueSlug(p.target.key, seen) })),
+      targets,
+      runs,
+      measurements,
     });
   }
   return benchmarks;

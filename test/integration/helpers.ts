@@ -16,7 +16,7 @@ export const SKEW_SCHEMA: ObservationSchema = {
 // Every table, child-first, so resetDb never trips a logical FK.
 const TABLES = [
   "external_source",
-  "observation",
+  "measurement",
   "run",
   "target",
   "benchmark_tag",
@@ -193,12 +193,28 @@ export async function makeTarget(
 
 export async function makeRun(
   token: string,
-  targetId: string,
+  benchmarkId: string,
   attrs: Record<string, unknown> = {},
 ): Promise<Resource> {
   const res = await apiPost(
     "/api/v1/runs",
-    { data: { type: "run", attributes: { target: targetId, key: "default", ...attrs } } },
+    { data: { type: "run", attributes: { benchmark: benchmarkId, key: "default", ...attrs } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/** Record a measurement naming a run + a target (both must share a benchmark). */
+export async function makeMeasurement(
+  token: string,
+  runId: string,
+  targetId: string,
+  attrs: Record<string, unknown> = {},
+): Promise<Resource> {
+  const res = await apiPost(
+    "/api/v1/measurements",
+    { data: { type: "measurement", attributes: { run: runId, target: targetId, ...attrs } } },
     bearer(token),
   );
   expect(res.status).toBe(201);

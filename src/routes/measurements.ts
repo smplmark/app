@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
-  insertObservation,
-  listObservations,
-  type ObservationScope,
-} from "../data/observations";
+  insertMeasurement,
+  listMeasurements,
+  type MeasurementScope,
+} from "../data/measurements";
 import { getRunById } from "../data/runs";
 import { getTargetById } from "../data/targets";
 import {
@@ -26,14 +26,14 @@ import {
 import { parseDateRange } from "../query/daterange";
 import { paginationMeta } from "../query/pagination";
 import { parseObservationSchema } from "../schema/observation_schema";
-import { observationsToCsv } from "../serialize/csv";
-import { serializeObservation } from "../serialize/resource";
+import { measurementsToCsv } from "../serialize/csv";
+import { serializeMeasurement } from "../serialize/resource";
 import type { AuthContext, ObservationSchema } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
 const SORT_ALLOWED = ["created_at"] as const;
 
-export const observations = new Hono<AppBindings>();
+export const measurements = new Hono<AppBindings>();
 
 /** Validate a stored-metrics bag: an object whose every value is a finite number (§4). */
 function validateMetrics(value: unknown): Record<string, number> {
@@ -49,39 +49,48 @@ function validateMetrics(value: unknown): Record<string, number> {
   return obj as Record<string, number>;
 }
 
-observations.post("/", requireAuth, async (c) => {
+measurements.post("/", requireAuth, async (c) => {
   const auth = getAuth(c);
   requireWrite(auth); // API keys (beacons) pass; a viewer session cannot ingest.
   const attrs = await readAttributes(c);
+  // A measurement names both the run (the occasion) and the target (the thing measured).
   const runId = requireString(attrs, "run");
+  const targetId = requireString(attrs, "target");
 
+  // Authorize the RUN first, before the target is ever looked up — so an uncovered/foreign run is an
+  // indistinguishable 404 and the target probe below can't leak cross-account existence (the no-leak
+  // invariant every loader in this repo upholds).
   const run = await getRunById(c.env.DB, runId);
   if (!run) throw new NotFoundError();
-  const target = await getTargetById(c.env.DB, run.target_id);
-  if (!target) throw new NotFoundError();
-  const benchmark = await getBenchmarkById(c.env.DB, target.benchmark_id);
+  const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (
     !benchmark ||
     !covers(auth, {
       account_id: benchmark.account_id,
       benchmark_id: benchmark.id,
-      target_id: target.id,
       run_id: run.id,
     })
   ) {
     throw new NotFoundError();
   }
+  // The caller covers the run's benchmark. Only now resolve the named target and validate it belongs
+  // to that same benchmark (D1 can't enforce the cross-pair FK). A missing target and a target in a
+  // different benchmark are rejected identically (same 409) so neither leaks whether a foreign id exists.
+  const target = await getTargetById(c.env.DB, targetId);
+  if (!target || target.benchmark_id !== benchmark.id) {
+    throw new ConflictError("The target does not belong to the run's benchmark.");
+  }
   assertBenchmarkEditable(benchmark);
   // The append-only door is open by default, but closed things are actually closed: an ended run
-  // and a closed target/benchmark all refuse new observations.
+  // and a closed target/benchmark all refuse new measurements.
   if (benchmark.closed_at !== null) {
-    throw new ConflictError("This benchmark is closed; no new observations can be added.");
+    throw new ConflictError("This benchmark is closed; no new measurements can be added.");
   }
   if (target.closed_at !== null) {
-    throw new ConflictError("This target is closed; no new observations can be added.");
+    throw new ConflictError("This target is closed; no new measurements can be added.");
   }
   if (run.ended_at !== null) {
-    throw new ConflictError("This run has ended; no new observations can be added.");
+    throw new ConflictError("This run has ended; no new measurements can be added.");
   }
 
   const now = Date.now();
@@ -96,8 +105,9 @@ observations.post("/", requireAuth, async (c) => {
       : null;
   const clientIp = c.req.header("CF-Connecting-IP") ?? null;
 
-  const id = await insertObservation(c.env.DB, {
+  const id = await insertMeasurement(c.env.DB, {
     run_id: run.id,
+    target_id: target.id,
     created_at: createdAt,
     metrics: metricsJson,
     meta: metaJson,
@@ -105,8 +115,8 @@ observations.post("/", requireAuth, async (c) => {
   });
 
   const schema = parseObservationSchema(benchmark.observation_schema);
-  const resource = serializeObservation(
-    { id, run_id: run.id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+  const resource = serializeMeasurement(
+    { id, run_id: run.id, target_id: target.id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
     schema,
     { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
   );
@@ -117,7 +127,7 @@ observations.post("/", requireAuth, async (c) => {
 async function resolveScope(
   c: Parameters<typeof getOptionalAuth>[0],
   auth: AuthContext | undefined,
-): Promise<ObservationScope> {
+): Promise<MeasurementScope> {
   const run = c.req.query("filter[run]");
   const target = c.req.query("filter[target]");
   const benchmark = c.req.query("filter[benchmark]");
@@ -130,22 +140,18 @@ async function resolveScope(
 
   // Resolve to the owning benchmark (for visibility) and the scope chain (for coverage).
   let bench = null;
-  let chain: { account_id: string; benchmark_id: string; target_id?: string; run_id?: string } | null =
-    null;
+  let chain: { account_id: string; benchmark_id: string; run_id?: string } | null = null;
   if (run !== undefined) {
     const r = await getRunById(c.env.DB, run);
     if (r) {
-      const t = await getTargetById(c.env.DB, r.target_id);
-      if (t) {
-        bench = await getBenchmarkById(c.env.DB, t.benchmark_id);
-        if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, target_id: t.id, run_id: r.id };
-      }
+      bench = await getBenchmarkById(c.env.DB, r.benchmark_id);
+      if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, run_id: r.id };
     }
   } else if (target !== undefined) {
     const t = await getTargetById(c.env.DB, target);
     if (t) {
       bench = await getBenchmarkById(c.env.DB, t.benchmark_id);
-      if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, target_id: t.id };
+      if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id };
     }
   } else if (benchmark !== undefined) {
     bench = await getBenchmarkById(c.env.DB, benchmark);
@@ -159,7 +165,7 @@ async function resolveScope(
   return { run, target, benchmark };
 }
 
-observations.get("/", optionalAuth, async (c) => {
+measurements.get("/", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
   const scope = await resolveScope(c, auth);
 
@@ -168,7 +174,7 @@ observations.get("/", optionalAuth, async (c) => {
 
   const pagination = readPagination(c);
   const sort = readSort(c, "created_at", SORT_ALLOWED);
-  const { rows, total } = await listObservations(c.env.DB, {
+  const { rows, total } = await listMeasurements(c.env.DB, {
     scope,
     range,
     sort,
@@ -185,19 +191,19 @@ observations.get("/", optionalAuth, async (c) => {
       schema = parseObservationSchema(r.observation_schema);
       schemaCache.set(r.observation_schema, schema);
     }
-    return serializeObservation(
-      { id: r.id, run_id: r.run_id, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
+    return serializeMeasurement(
+      { id: r.id, run_id: r.run_id, target_id: r.target_id, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
       schema,
       { created_at: r.created_at, run: { started_at: r.run_started_at, ended_at: r.run_ended_at } },
     );
   });
 
   if (wantsCsv(c.req.header("Accept"))) {
-    return new Response(observationsToCsv(resources), {
+    return new Response(measurementsToCsv(resources), {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="observations.csv"',
+        "Content-Disposition": 'attachment; filename="measurements.csv"',
         Vary: "Accept",
       },
     });

@@ -13,7 +13,7 @@ import type {
   ExternalSourceRow,
   IngestedAttributionSnapshot,
   InvitationRow,
-  ObservationRow,
+  MeasurementRow,
   OrgAttributionSnapshot,
   PersonalAttributionSnapshot,
   PublisherDomainRow,
@@ -279,7 +279,7 @@ export function serializeRun(row: RunRow): ResourceObject {
     type: "run",
     id: row.id,
     attributes: {
-      target: row.target_id,
+      benchmark: row.benchmark_id,
       key: row.key,
       name: row.name,
       details: parseJsonOrNull(row.details),
@@ -296,15 +296,17 @@ export function serializeRun(row: RunRow): ResourceObject {
   };
 }
 
-export function serializeObservation(
-  row: Pick<ObservationRow, "id" | "run_id" | "created_at" | "metrics" | "meta">,
+export function serializeMeasurement(
+  row: Pick<MeasurementRow, "id" | "run_id" | "target_id" | "created_at" | "metrics" | "meta">,
   schema: ObservationSchema,
   ctx: DerivedContext,
 ): ResourceObject {
-  // client_ip is never surfaced. id (rowid INTEGER) is stringified on the wire.
+  // client_ip is never surfaced. id (rowid INTEGER) is stringified on the wire. A measurement names
+  // both its run (the occasion) and its target (the thing measured).
   const attributes: Record<string, unknown> = {
     created_at: iso(row.created_at),
     run: row.run_id,
+    target: row.target_id,
   };
   const metrics = computeMetrics(row.metrics, schema, ctx);
   if (metrics !== null) attributes.metrics = metrics;
@@ -319,7 +321,7 @@ export function serializeObservation(
     attributes.meta = meta;
   }
 
-  return { type: "observation", id: String(row.id), attributes };
+  return { type: "measurement", id: String(row.id), attributes };
 }
 
 /** The external-source catalog entry (importer-maintained; see GET /api/v1/external_sources). */

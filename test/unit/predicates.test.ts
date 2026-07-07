@@ -10,8 +10,8 @@ describe("dateRangePredicate", () => {
       end: 200,
       endInclusive: true,
     };
-    expect(dateRangePredicate("observation.created_at", range)).toEqual({
-      sql: "observation.created_at >= ? AND observation.created_at <= ?",
+    expect(dateRangePredicate("measurement.created_at", range)).toEqual({
+      sql: "measurement.created_at >= ? AND measurement.created_at <= ?",
       binds: [100, 200],
     });
   });

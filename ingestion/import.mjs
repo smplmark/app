@@ -127,9 +127,9 @@ const wipe = buildWipeSql();
 const { statements, counts } = buildInsertSql(sampled);
 const all = [...wipe, ...statements];
 const totalInserts =
-  counts.benchmarks + counts.targets + counts.runs + counts.observations + counts.tag_links;
+  counts.benchmarks + counts.targets + counts.runs + counts.measurements + counts.tag_links;
 console.log(
-  `SQL built: ${all.length} statements — ${counts.benchmarks} benchmarks, ${counts.targets} targets, ${counts.runs} runs, ${counts.observations} observations, ${counts.tag_links} tag links (~${totalInserts} row writes + wipe)` +
+  `SQL built: ${all.length} statements — ${counts.benchmarks} benchmarks, ${counts.targets} targets, ${counts.runs} runs, ${counts.measurements} measurements, ${counts.tag_links} tag links (~${totalInserts} row writes + wipe)` +
     (counts.clamped > 0 ? ` — ${counts.clamped} over-limit display string(s) clamped` : ""),
 );
 

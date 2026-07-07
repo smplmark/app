@@ -99,10 +99,10 @@ describe("sql builders", () => {
 
   it("wipe is scoped to ingested benchmarks, prunes the legacy account, and never truncates", () => {
     const wipe = buildWipeSql();
-    // Child-first order: observation → run → target → benchmark_tag → benchmark → orphan tags →
+    // Child-first order: measurement → run → target → benchmark_tag → benchmark → orphan tags →
     // the now-orphaned legacy shared account.
     expect(wipe.map((s) => s.split(" ")[2])).toEqual([
-      "observation",
+      "measurement",
       "run",
       "target",
       "benchmark_tag",
@@ -118,7 +118,7 @@ describe("sql builders", () => {
     expect(wipe[6]).toContain("DELETE FROM account");
     expect(wipe[6]).toContain(SYSTEM_ACCOUNT_ID);
     expect(wipe[6]).toContain("NOT EXISTS");
-    expect(wipe.join(" ")).not.toMatch(/DELETE FROM (observation|run|target|benchmark)\s*$/m);
+    expect(wipe.join(" ")).not.toMatch(/DELETE FROM (measurement|run|target|benchmark)\s*$/m);
   });
 
   const bench = (over: Record<string, unknown> = {}) => ({
@@ -130,18 +130,9 @@ describe("sql builders", () => {
     category: "HARDWARE" as const,
     tags: ["gpu"],
     observationSchema: { metrics: [{ name: "score", type: "number" }], derived: [], chart: { x: null, y: "score", x_kind: "CATEGORY" } },
-    targets: [
-      {
-        key: "t1",
-        name: "Target 1 with 'quote'",
-        runs: [
-          {
-            key: "r1",
-            observations: [{ created_at: 1000, metrics: { score: 1.5 }, meta: { note: "x" } }],
-          },
-        ],
-      },
-    ],
+    targets: [{ key: "t1", name: "Target 1 with 'quote'" }],
+    runs: [{ key: "r1" }],
+    measurements: [{ run_key: "r1", target_key: "t1", created_at: 1000, metrics: { score: 1.5 }, meta: { note: "x" } }],
     ...over,
   });
   const source = {
@@ -160,13 +151,17 @@ describe("sql builders", () => {
       { benchmark: bench() as never, source, retrievedAt: 5000 },
     ]);
     const joined = statements.join("\n");
-    expect(counts).toEqual({ accounts: 1, benchmarks: 1, targets: 1, runs: 1, observations: 1, tag_links: 1, sources: 1, clamped: 0 });
+    expect(counts).toEqual({ accounts: 1, benchmarks: 1, targets: 1, runs: 1, measurements: 1, tag_links: 1, sources: 1, clamped: 0 });
     expect(joined).toContain("'INGESTED'");
     expect(joined).toContain('\'{"source_name":"Demo Source","source_url":"https://example.org","license":"CC0-1.0","retrieved_at":5000}\'');
-    // Ids fold the publisher slug in so keys need only be unique per publisher.
+    // Ids fold the publisher slug in so keys need only be unique per publisher. Runs are benchmark
+    // children now, so a run id is <bid>-r-<key> (no target segment).
     expect(joined).toContain("'ing-demo-pub-demo'");
     expect(joined).toContain("'ing-demo-pub-demo-t-t1'");
-    expect(joined).toContain("'ing-demo-pub-demo-t-t1-r-r1'");
+    expect(joined).toContain("'ing-demo-pub-demo-r-r1'");
+    // The measurement names both the run and the target ids.
+    expect(joined).toContain("INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip)");
+    expect(joined).toContain("('ing-demo-pub-demo-r-r1', 'ing-demo-pub-demo-t-t1', 1000,");
     expect(joined).toContain("Target 1 with ''quote''");
     // Benchmarks are born PUBLISHED, non-draft, owned by the publisher account.
     expect(joined).toMatch(/'PUBLISHED', 5000/);
@@ -208,8 +203,8 @@ describe("sql builders", () => {
         {
           benchmark: bench({
             targets: [
-              { key: "t1", name: "a", runs: [] },
-              { key: "t1", name: "b", runs: [] },
+              { key: "t1", name: "a" },
+              { key: "t1", name: "b" },
             ],
           }) as never,
           source,
@@ -217,6 +212,70 @@ describe("sql builders", () => {
         },
       ]),
     ).toThrow(/duplicate target key/);
+    // Run keys are unique within the benchmark now (not per-target).
+    expect(() =>
+      buildInsertSql([
+        {
+          benchmark: bench({ runs: [{ key: "r1" }, { key: "r1" }] }) as never,
+          source,
+          retrievedAt: 1,
+        },
+      ]),
+    ).toThrow(/duplicate run key/);
+  });
+
+  it("rejects a measurement referencing an unknown run or target", () => {
+    expect(() =>
+      buildInsertSql([
+        {
+          benchmark: bench({
+            measurements: [{ run_key: "ghost", target_key: "t1", created_at: 1, metrics: {} }],
+          }) as never,
+          source,
+          retrievedAt: 1,
+        },
+      ]),
+    ).toThrow(/unknown run/);
+    expect(() =>
+      buildInsertSql([
+        {
+          benchmark: bench({
+            measurements: [{ run_key: "r1", target_key: "ghost", created_at: 1, metrics: {} }],
+          }) as never,
+          source,
+          retrievedAt: 1,
+        },
+      ]),
+    ).toThrow(/unknown target/);
+  });
+
+  it("collapses a comparative sweep to one run spanning many targets", () => {
+    const { counts, statements } = buildInsertSql([
+      {
+        benchmark: bench({
+          targets: [
+            { key: "t1", name: "A" },
+            { key: "t2", name: "B" },
+            { key: "t3", name: "C" },
+          ],
+          runs: [{ key: "sweep" }],
+          measurements: [
+            { run_key: "sweep", target_key: "t1", created_at: 1, metrics: { score: 1 } },
+            { run_key: "sweep", target_key: "t2", created_at: 1, metrics: { score: 2 } },
+            { run_key: "sweep", target_key: "t3", created_at: 1, metrics: { score: 3 } },
+          ],
+        }) as never,
+        source,
+        retrievedAt: 1,
+      },
+    ]);
+    expect(counts.runs).toBe(1);
+    expect(counts.targets).toBe(3);
+    expect(counts.measurements).toBe(3);
+    const joined = statements.join("\n");
+    // One run row, three measurements all naming it — and no target segment in the run id.
+    expect(joined).toContain("'ing-demo-pub-demo-r-sweep'");
+    expect(joined).not.toContain("-t-t1-r-");
   });
 
   it("scopes benchmark-key uniqueness to the publisher: the same key under two sources coexists", () => {
@@ -238,21 +297,15 @@ describe("sql builders", () => {
   });
 
   it("enforces the platform count limits and key lengths, and clamps display strings", () => {
-    // Too many runs on one target → throws (structural).
+    // Too many runs in one benchmark → throws (structural).
     expect(() =>
       buildInsertSql([
         {
           benchmark: bench({
-            targets: [
-              {
-                key: "t1",
-                name: "T",
-                runs: Array.from({ length: WORKER_LIMITS.runsPerTarget + 1 }, (_, i) => ({
-                  key: `r${i}`,
-                  observations: [],
-                })),
-              },
-            ],
+            runs: Array.from({ length: WORKER_LIMITS.runsPerBenchmark + 1 }, (_, i) => ({
+              key: `r${i}`,
+            })),
+            measurements: [],
           }) as never,
           source,
           retrievedAt: 1,
@@ -264,7 +317,8 @@ describe("sql builders", () => {
       buildInsertSql([
         {
           benchmark: bench({
-            targets: [{ key: "k".repeat(WORKER_LIMITS.keyLength + 1), name: "T", runs: [] }],
+            targets: [{ key: "k".repeat(WORKER_LIMITS.keyLength + 1), name: "T" }],
+            measurements: [],
           }) as never,
           source,
           retrievedAt: 1,
@@ -275,9 +329,7 @@ describe("sql builders", () => {
     const { statements, counts } = buildInsertSql([
       {
         benchmark: bench({
-          targets: [
-            { key: "t1", name: "N".repeat(WORKER_LIMITS.nameLength + 50), runs: [] },
-          ],
+          targets: [{ key: "t1", name: "N".repeat(WORKER_LIMITS.nameLength + 50) }],
         }) as never,
         source,
         retrievedAt: 1,
@@ -288,13 +340,15 @@ describe("sql builders", () => {
   });
 
   it("chunks huge insert sets into multiple bounded statements", () => {
-    const targets = Array.from({ length: 300 }, (_, i) => ({
-      key: `t${i}`,
-      name: `Target ${i}`,
-      runs: [{ key: "r", observations: [{ created_at: 1, metrics: { score: i } }] }],
+    const targets = Array.from({ length: 300 }, (_, i) => ({ key: `t${i}`, name: `Target ${i}` }));
+    const measurements = Array.from({ length: 300 }, (_, i) => ({
+      run_key: "r",
+      target_key: `t${i}`,
+      created_at: 1,
+      metrics: { score: i },
     }));
     const { statements } = buildInsertSql([
-      { benchmark: bench({ targets }) as never, source, retrievedAt: 1 },
+      { benchmark: bench({ targets, runs: [{ key: "r" }], measurements }) as never, source, retrievedAt: 1 },
     ]);
     const targetInserts = statements.filter((s) => s.startsWith("INSERT INTO target"));
     expect(targetInserts.length).toBeGreaterThan(1);
@@ -303,38 +357,46 @@ describe("sql builders", () => {
 });
 
 describe("sampler", () => {
-  const mk = (nTargets: number) => [
-    {
-      key: "b",
-      name: "B",
-      description: "",
-      about: "",
-      methodology: "",
-      category: "OTHER" as const,
-      tags: [],
-      observationSchema: {},
-      targets: Array.from({ length: nTargets }, (_, i) => ({
-        key: `t${i}`,
-        name: `T${i}`,
-        // t3 is multi-run; t7 carries a null metric; observation counts ramp with i.
-        runs:
-          i === 3
-            ? [
-                { key: "r1", observations: [{ created_at: 1, metrics: { s: 1 } }] },
-                { key: "r2", observations: [{ created_at: 2, metrics: { s: 2 } }] },
-              ]
-            : [
-                {
-                  key: "r1",
-                  observations: Array.from({ length: i + 1 }, (_, j) => ({
-                    created_at: j,
-                    metrics: { s: i === 7 ? (null as unknown as number) : j },
-                  })),
-                },
-              ],
-      })),
-    },
-  ];
+  // Flat model: t3 is measured under two runs (multi-run edge case); t7's measurements carry a null
+  // metric (sparse edge case); every other target's measurement count ramps with i.
+  const mk = (nTargets: number) => {
+    const measurements: {
+      run_key: string;
+      target_key: string;
+      created_at: number;
+      metrics: Record<string, number | null>;
+    }[] = [];
+    for (let i = 0; i < nTargets; i++) {
+      if (i === 3) {
+        measurements.push({ run_key: "r1", target_key: "t3", created_at: 1, metrics: { s: 1 } });
+        measurements.push({ run_key: "r2", target_key: "t3", created_at: 2, metrics: { s: 2 } });
+      } else {
+        for (let j = 0; j <= i; j++) {
+          measurements.push({
+            run_key: "r1",
+            target_key: `t${i}`,
+            created_at: j,
+            metrics: { s: i === 7 ? null : j },
+          });
+        }
+      }
+    }
+    return [
+      {
+        key: "b",
+        name: "B",
+        description: "",
+        about: "",
+        methodology: "",
+        category: "OTHER" as const,
+        tags: [],
+        observationSchema: {},
+        targets: Array.from({ length: nTargets }, (_, i) => ({ key: `t${i}`, name: `T${i}` })),
+        runs: [{ key: "r1" }, { key: "r2" }],
+        measurements,
+      },
+    ];
+  };
 
   it("passes through when no limit or under the limit", () => {
     const benchmarks = mk(5);
@@ -354,5 +416,20 @@ describe("sampler", () => {
     // Busiest (t99) and sparsest (t0) survive.
     expect(keys).toContain("t99");
     expect(keys).toContain("t0");
+  });
+
+  it("at a limit smaller than the edge-case count, keeps the highest-priority edges and prunes orphans", () => {
+    // 4 distinct edge cases (busiest t99, sparsest t0, multi-run t3, sparse-metric t7); limit 2 keeps
+    // the two ordering-independent priority edges, exactly 2 targets — not an arbitrary index slice.
+    const [sampled] = sampleBenchmarks(mk(100) as never, 2);
+    expect(sampled.targets.length).toBe(2);
+    expect(sampled.targets.map((t: { key: string }) => t.key).sort()).toEqual(["t0", "t99"]);
+    // Measurements/runs are trimmed to the kept targets — no measurement names a dropped target, and
+    // no run survives without a measurement (r2 only measured t3, which was trimmed).
+    const keptKeys = new Set(sampled.targets.map((t: { key: string }) => t.key));
+    expect(sampled.measurements.every((m: { target_key: string }) => keptKeys.has(m.target_key))).toBe(true);
+    const usedRuns = new Set(sampled.measurements.map((m: { run_key: string }) => m.run_key));
+    expect(sampled.runs.map((r: { key: string }) => r.key)).toEqual(["r1"]);
+    expect([...usedRuns]).toEqual(["r1"]);
   });
 });

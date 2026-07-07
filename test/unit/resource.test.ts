@@ -7,7 +7,7 @@ import {
   serializeApiKey,
   serializeBenchmark,
   serializeInvitation,
-  serializeObservation,
+  serializeMeasurement,
   serializePublisherDomain,
   serializePublisherIdentity,
   serializeRun,
@@ -21,7 +21,7 @@ import type {
   ApiKeyRow,
   BenchmarkRow,
   InvitationRow,
-  ObservationRow,
+  MeasurementRow,
   PublisherDomainRow,
   PublisherIdentityRow,
   RunRow,
@@ -301,13 +301,13 @@ describe("serializeTarget", () => {
 
 describe("serializeRun", () => {
   const base: RunRow = {
-    id: "r1", target_id: "t1", key: "default", name: null, details: null,
+    id: "r1", benchmark_id: "b1", key: "default", name: null, details: null,
     started_at: null, ended_at: null, invalidated_at: null, invalidation_reason: null,
     invalidated_by_user_id: null, created_at: T0, updated_at: T0,
   };
   it("computes live/invalidated and maps timestamps", () => {
     const live = serializeRun(base);
-    expect(live.attributes.target).toBe("t1");
+    expect(live.attributes.benchmark).toBe("b1");
     expect(live.attributes.live).toBe(true);
     expect(live.attributes.invalidated).toBe(false);
 
@@ -322,36 +322,36 @@ describe("serializeRun", () => {
   });
 });
 
-describe("serializeObservation", () => {
+describe("serializeMeasurement", () => {
   const schema: ObservationSchema = {
     metrics: [],
     derived: [{ name: "skew_ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }],
   };
   const ctx: DerivedContext = { created_at: T0 + 87, run: { started_at: null, ended_at: null } };
-  const base: Pick<ObservationRow, "id" | "run_id" | "created_at" | "metrics" | "meta"> = {
-    id: 48213, run_id: "r1", created_at: T0 + 87, metrics: null, meta: null,
+  const base: Pick<MeasurementRow, "id" | "run_id" | "target_id" | "created_at" | "metrics" | "meta"> = {
+    id: 48213, run_id: "r1", target_id: "tg1", created_at: T0 + 87, metrics: null, meta: null,
   };
 
   it("computes derived metrics, stringifies id", () => {
-    const out = serializeObservation(base, schema, ctx);
+    const out = serializeMeasurement(base, schema, ctx);
     expect(out.id).toBe("48213");
     expect(out.attributes).toEqual({
-      created_at: "2026-07-01T09:00:00.087Z", run: "r1", metrics: { skew_ms: 87 },
+      created_at: "2026-07-01T09:00:00.087Z", run: "r1", target: "tg1", metrics: { skew_ms: 87 },
     });
   });
 
   it("includes meta when non-empty; omits it when null/empty/array", () => {
     expect(
-      serializeObservation({ ...base, meta: JSON.stringify({ commit: "a1b2" }) }, schema, ctx)
+      serializeMeasurement({ ...base, meta: JSON.stringify({ commit: "a1b2" }) }, schema, ctx)
         .attributes.meta,
     ).toEqual({ commit: "a1b2" });
-    expect(serializeObservation(base, schema, ctx).attributes).not.toHaveProperty("meta");
-    expect(serializeObservation({ ...base, meta: "{}" }, schema, ctx).attributes).not.toHaveProperty("meta");
-    expect(serializeObservation({ ...base, meta: "[1,2]" }, schema, ctx).attributes).not.toHaveProperty("meta");
+    expect(serializeMeasurement(base, schema, ctx).attributes).not.toHaveProperty("meta");
+    expect(serializeMeasurement({ ...base, meta: "{}" }, schema, ctx).attributes).not.toHaveProperty("meta");
+    expect(serializeMeasurement({ ...base, meta: "[1,2]" }, schema, ctx).attributes).not.toHaveProperty("meta");
   });
 
-  it("omits metrics for a bare observation under an empty schema", () => {
-    const out = serializeObservation(base, { metrics: [], derived: [] }, ctx);
+  it("omits metrics for a bare measurement under an empty schema", () => {
+    const out = serializeMeasurement(base, { metrics: [], derived: [] }, ctx);
     expect(out.attributes).not.toHaveProperty("metrics");
   });
 });

@@ -292,7 +292,7 @@ export interface TargetRow {
   name: string;
   /** JSON string or null. */
   details: string | null;
-  /** Publisher's "complete" signal: no new runs/observations beneath. Reversible. Surfaced as `closed`. */
+  /** Publisher's "complete" signal: no new measurements for this target. Reversible. Surfaced as `closed`. */
   closed_at: number | null;
   created_at: number;
   updated_at: number;
@@ -300,7 +300,7 @@ export interface TargetRow {
 
 export interface RunRow {
   id: string;
-  target_id: string;
+  benchmark_id: string;
   key: string;
   name: string | null;
   /** JSON string or null. */
@@ -315,10 +315,11 @@ export interface RunRow {
   updated_at: number;
 }
 
-export interface ObservationRow {
+export interface MeasurementRow {
   /** rowid — database-assigned INTEGER; stringified on the wire. */
   id: number;
   run_id: string;
+  target_id: string;
   created_at: number;
   /** JSON string or null (stored metrics only). */
   metrics: string | null;

@@ -432,29 +432,28 @@ describe("edge cases", () => {
     const target = await makeTarget(owner.token, bench.id, "t8");
     const runRes = await apiPost(
       "/api/v1/runs",
-      { data: { type: "run", attributes: { target: target.id, key: "r8" } } },
+      { data: { type: "run", attributes: { benchmark: bench.id, key: "r8" } } },
       bearer(owner.token),
     );
     const run = ((await runRes.json()) as { data: Resource }).data;
     // Anonymous reads of a private run → 404 (no existence leak), for detail and list views.
     expect((await apiGet(`/api/v1/runs/${run.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/runs?filter[target]=${target.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/runs?filter[benchmark]=${bench.id}`)).status).toBe(404);
     expect((await apiGet(`/api/v1/targets?filter[benchmark]=${bench.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/observations?filter[run]=${run.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/observations?filter[target]=${target.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/observations?filter[benchmark]=${bench.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/measurements?filter[run]=${run.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/measurements?filter[target]=${target.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/measurements?filter[benchmark]=${bench.id}`)).status).toBe(404);
   });
 
   it("keeps viewers from writing runs and observations", async () => {
     const owner = await register("edge6@example.com");
     const bench = await makeBenchmark(owner.token, { key: "b6", name: "B6" });
-    const target = await makeTarget(owner.token, bench.id, "t6");
     const invV = await invite(owner.token, "ro@example.com", "VIEWER");
     const { memberToken: viewerToken } = await joinAs("ro@example.com", owner.account_id, invV.attributes.token as string);
 
     const run = await apiPost(
       "/api/v1/runs",
-      { data: { type: "run", attributes: { target: target.id, key: "r6" } } },
+      { data: { type: "run", attributes: { benchmark: bench.id, key: "r6" } } },
       bearer(viewerToken),
     );
     expect(run.status).toBe(403);

@@ -39,12 +39,11 @@ describe("benchmark create defaults + scoped-key visibility", () => {
   it("a RUN-scoped key cannot read its parent benchmark resource (404)", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
     const { key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     expect((await apiGet(`/api/v1/benchmarks/${b.id}`, bearer(key))).status).toBe(404);
-    // But it can read observations of its own run.
-    expect((await apiGet(`/api/v1/observations?filter[run]=${r.id}`, bearer(key))).status).toBe(200);
+    // But it can read measurements of its own run.
+    expect((await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(key))).status).toBe(200);
   });
 });
 
@@ -92,8 +91,7 @@ describe("api key expiry + rotate scope", () => {
   it("rotate preserves the scope of a RUN key", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
     const { resource } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     const rot = await apiPost(`/api/v1/api_keys/${resource.id}/actions/rotate`, undefined, bearer(me.token));
     const rotated = ((await rot.json()) as { data: Resource }).data;
@@ -102,22 +100,22 @@ describe("api key expiry + rotate scope", () => {
   });
 });
 
-describe("observations scope edges", () => {
+describe("measurements scope edges", () => {
   it("returns 404 for unknown scope targets and 200 for a published target scope", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
     await apiPost(
-      "/api/v1/observations",
-      { data: { type: "observation", attributes: { run: r.id, created_at: Date.UTC(2026, 6, 1) } } },
+      "/api/v1/measurements",
+      { data: { type: "measurement", attributes: { run: r.id, target: t.id, created_at: Date.UTC(2026, 6, 1) } } },
       bearer(me.token),
     );
-    expect((await apiGet("/api/v1/observations?filter[target]=nope", bearer(me.token))).status).toBe(404);
-    expect((await apiGet("/api/v1/observations?filter[benchmark]=nope", bearer(me.token))).status).toBe(404);
+    expect((await apiGet("/api/v1/measurements?filter[target]=nope", bearer(me.token))).status).toBe(404);
+    expect((await apiGet("/api/v1/measurements?filter[benchmark]=nope", bearer(me.token))).status).toBe(404);
 
     await publish(me.token, me.user_id, b.id);
-    const total = await apiGet(`/api/v1/observations?filter[run]=${r.id}&meta[total]=true`);
+    const total = await apiGet(`/api/v1/measurements?filter[run]=${r.id}&meta[total]=true`);
     expect(((await total.json()) as { meta: { pagination: { total: number } } }).meta.pagination.total).toBe(1);
   });
 });
@@ -126,8 +124,7 @@ describe("private run mutation + invalidate default", () => {
   it("updates and deletes a private run and invalidates without a reason", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
-    const r = await makeRun(me.token, t.id);
+    const r = await makeRun(me.token, b.id);
 
     const put = await apiPut(
       `/api/v1/runs/${r.id}`,

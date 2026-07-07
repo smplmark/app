@@ -7,7 +7,7 @@
 -- No benchmarks are seeded — create them through the console (that IS the product test drive).
 -- Ingested reference data: node ingestion/import.mjs
 
-DELETE FROM observation; DELETE FROM run; DELETE FROM target;
+DELETE FROM measurement; DELETE FROM run; DELETE FROM target;
 DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark_view_day; DELETE FROM benchmark;
 DELETE FROM api_key; DELETE FROM email_verification; DELETE FROM session;
 DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE FROM user;
@@ -15,7 +15,7 @@ DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE
 INSERT INTO user (id, email, email_verified, display_name, created_at) VALUES
   ('usr-dev', 'dev@smplkit.test', 1, 'smplkit dev', 1782864000000);
 INSERT INTO user_identity (id, user_id, provider, provider_subject, password_hash, created_at) VALUES
-  ('8a09c933-fffb-494f-853e-cc5ba6de390b', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$O_KCHEajiqW6QStB6IHVxQ$avWiDmNsT9_YcN6uP8vvbEZzmVY9T4peed_X5eL46yU', 1782864000000);
+  ('293e513d-88c9-4267-abc9-d75c919de389', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$CT1lElP8jGnbvpUMUeAFTg$o2MfIzO5Z2TLvPDsduBIivTFWLKPvlA49TU-MQNY_SA', 1782864000000);
 
 -- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
 INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES

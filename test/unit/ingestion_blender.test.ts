@@ -69,8 +69,14 @@ describe("blender adapter", () => {
     // Latest version (5.1.1) only: the 5.0.0 slice must NOT appear as a run.
     const ryzen = cpu.targets.find((t: { key: string }) => t.key === "amd-ryzen-9-7950x");
     expect(ryzen).toBeDefined();
-    expect(ryzen!.runs.map((r: { key: string }) => r.key)).toEqual(["v5-1-1"]);
-    expect(ryzen!.runs[0].observations[0]).toEqual({
+    expect(cpu.runs.map((r: { key: string }) => r.key)).toEqual(["v5-1-1"]);
+    const ryzenMeas = cpu.measurements.filter(
+      (m: { target_key: string }) => m.target_key === "amd-ryzen-9-7950x",
+    );
+    expect(ryzenMeas.map((m: { run_key: string }) => m.run_key)).toEqual(["v5-1-1"]);
+    expect(ryzenMeas[0]).toEqual({
+      run_key: "v5-1-1",
+      target_key: "amd-ryzen-9-7950x",
       created_at: T_RETRIEVED,
       metrics: { median_score: 320.5, submission_count: 40 },
     });
@@ -79,7 +85,11 @@ describe("blender adapter", () => {
     expect(gpu.key).toBe("blender-gpu");
     const rtx = gpu.targets.find((t: { key: string }) => t.key === "nvidia-geforce-rtx-4090");
     expect(rtx).toBeDefined();
-    expect(rtx!.runs.map((r: { key: string }) => r.key).sort()).toEqual(["v5-1-1-cuda", "v5-1-1-optix"]);
+    const rtxRunKeys = gpu.measurements
+      .filter((m: { target_key: string }) => m.target_key === "nvidia-geforce-rtx-4090")
+      .map((m: { run_key: string }) => m.run_key)
+      .sort();
+    expect(rtxRunKeys).toEqual(["v5-1-1-cuda", "v5-1-1-optix"]);
     expect(gpu.targets.some((t: { name: string }) => t.name === "Broken Device")).toBe(false);
   });
 
@@ -94,7 +104,12 @@ describe("blender adapter", () => {
   it("--full options lift the caps and include every version", () => {
     const [cpu] = adapt(archive as never, fullOptions);
     const ryzen = cpu.targets.find((t: { key: string }) => t.key === "amd-ryzen-9-7950x");
-    expect(ryzen!.runs.map((r: { key: string }) => r.key).sort()).toEqual(["v5-0-0", "v5-1-1"]);
+    expect(ryzen).toBeDefined();
+    const ryzenRunKeys = cpu.measurements
+      .filter((m: { target_key: string }) => m.target_key === "amd-ryzen-9-7950x")
+      .map((m: { run_key: string }) => m.run_key)
+      .sort();
+    expect(ryzenRunKeys).toEqual(["v5-0-0", "v5-1-1"]);
     expect(cpu.targets.length).toBe(3);
   });
 });

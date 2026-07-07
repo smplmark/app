@@ -318,7 +318,11 @@ export function adapt(archive, options = {}) {
   }
 
   const seen = new Map();
-  const targets = kept.map((row) => {
+  /** @type {import("../model.mjs").IngestTarget[]} */
+  const targets = [];
+  /** @type {import("../model.mjs").IngestMeasurement[]} */
+  const measurements = [];
+  for (const row of kept) {
     const ambiguous = (precisionsByModel.get(row.fullname)?.size ?? 0) > 1;
     /** @type {Record<string, unknown>} */
     const details = {};
@@ -334,23 +338,20 @@ export function adapt(archive, options = {}) {
     if (row.moe !== null) obsMeta.moe = row.moe;
     if (row.merged !== null) obsMeta.merged = row.merged;
 
-    /** @type {import("../model.mjs").IngestRun} */
-    const run = {
-      key: "final",
-      name: "Final leaderboard result",
-      observations: [
-        { created_at: row.submittedAt ?? retrievedAt, metrics: row.metrics, meta: obsMeta },
-      ],
-    };
-    if (row.submittedAt !== null) run.started_at = row.submittedAt;
-
-    return {
-      key: uniqueSlug(row.evalName, seen),
+    const targetKey = uniqueSlug(row.evalName, seen);
+    targets.push({
+      key: targetKey,
       name: ambiguous && row.precision !== null ? `${row.fullname} (${row.precision})` : row.fullname,
       details,
-      runs: [run],
-    };
-  });
+    });
+    measurements.push({
+      run_key: "final",
+      target_key: targetKey,
+      created_at: row.submittedAt ?? retrievedAt,
+      metrics: row.metrics,
+      meta: obsMeta,
+    });
+  }
 
   return [
     {
@@ -365,6 +366,8 @@ export function adapt(archive, options = {}) {
       tags: ["llm", "evaluation", "open-weights", "huggingface"],
       observationSchema: SCHEMA,
       targets,
+      runs: [{ key: "final", name: "Final leaderboard result" }],
+      measurements,
     },
   ];
 }

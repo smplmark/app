@@ -19,11 +19,51 @@ beforeEach(resetDb);
 async function scaffold(token: string, runAttrs: Record<string, unknown> = {}) {
   const b = await makeBenchmark(token);
   const t = await makeTarget(token, b.id);
-  const r = await makeRun(token, t.id, runAttrs);
+  const r = await makeRun(token, b.id, runAttrs);
   return { b, t, r };
 }
 
 describe("run liveness + actions", () => {
+  it("creates a run under a benchmark", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+
+    // Happy path: a run under a real benchmark returns 201 and echoes its benchmark.
+    const created = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b.id, key: "run-1" } } },
+      bearer(me.token),
+    );
+    expect(created.status).toBe(201);
+    const run = ((await created.json()) as { data: Resource }).data;
+    expect(run.attributes.benchmark).toBe(b.id);
+
+    // A missing benchmark is a 404.
+    const ghost = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: "ghost", key: "run-1" } } },
+      bearer(me.token),
+    );
+    expect(ghost.status).toBe(404);
+
+    // Run keys are unique within a benchmark: a duplicate key under the same benchmark is a 409.
+    const dup = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b.id, key: "run-1" } } },
+      bearer(me.token),
+    );
+    expect(dup.status).toBe(409);
+
+    // The same key under a DIFFERENT benchmark is fine — uniqueness is scoped per-benchmark.
+    const b2 = await makeBenchmark(me.token, { key: "other-benchmark" });
+    const reuse = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b2.id, key: "run-1" } } },
+      bearer(me.token),
+    );
+    expect(reuse.status).toBe(201);
+  });
+
   it("a new run is live (ended_at null)", async () => {
     const me = await register();
     const { r } = await scaffold(me.token);
@@ -44,7 +84,7 @@ describe("run liveness + actions", () => {
 
   it("actions/invalidate flags the run but keeps it visible", async () => {
     const me = await register();
-    const { b, t, r } = await scaffold(me.token);
+    const { b, r } = await scaffold(me.token);
     const inv = await apiPost(
       `/api/v1/runs/${r.id}/actions/invalidate`,
       { data: { type: "run", attributes: { invalidation_reason: "bad clock" } } },
@@ -56,9 +96,9 @@ describe("run liveness + actions", () => {
     expect(invalidated.attributes.invalidation_reason).toBe("bad clock");
     expect(invalidated.attributes.invalidated_by_user).toBe(me.user_id);
 
-    // Still listed after publish (no default-hide).
+    // Still listed after publish (no default-hide). Runs list under their benchmark now.
     await publish(me.token, me.user_id, b.id);
-    const list = await apiGet(`/api/v1/runs?filter[target]=${t.id}`);
+    const list = await apiGet(`/api/v1/runs?filter[benchmark]=${b.id}`);
     expect(((await list.json()) as { data: Resource[] }).data.length).toBe(1);
   });
 });

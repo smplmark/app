@@ -5,11 +5,11 @@
 import { ForbiddenError } from "../errors";
 import type { AuthContext, Status } from "../types";
 
-/** A resource's ancestry, from the *chains* data helpers. */
+/** A resource's ancestry, from the *chains* data helpers. There is intentionally no target scope —
+ *  a measurement's target is validated to share the run's benchmark, not separately scoped. */
 export interface ResourceChain {
   account_id: string;
   benchmark_id?: string;
-  target_id?: string;
   run_id?: string;
 }
 
@@ -44,7 +44,7 @@ export function canMintScope(ctx: AuthContext, requestedChain: ResourceChain): b
 // Role gating applies only to SESSION credentials — an API key's authority is already bounded by its
 // scope, so it always passes the role gates (a key is minted by an admin and acts within its scope).
 
-/** May create / edit / delete resources (benchmarks, targets, runs, observations). */
+/** May create / edit / delete resources (benchmarks, targets, runs, measurements). */
 export function canWrite(ctx: AuthContext): boolean {
   if (ctx.source === "API_KEY") return true;
   return ctx.role === "OWNER" || ctx.role === "ADMIN" || ctx.role === "MEMBER";

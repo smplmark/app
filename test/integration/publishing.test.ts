@@ -90,11 +90,11 @@ describe("draft edit-lock", () => {
     const me = await register();
     const benchmark = await makeBenchmark(me.token);
     const target = await makeTarget(me.token, benchmark.id, "t");
-    const run = await makeRun(me.token, target.id);
-    // ingest one observation while still cooking (draft=1) — allowed
+    const run = await makeRun(me.token, benchmark.id);
+    // ingest one measurement while still cooking (draft=1) — allowed
     const ing = await apiPost(
-      "/api/v1/observations",
-      { data: { type: "observation", attributes: { run: run.id, metrics: { skew_ms: 1 } } } },
+      "/api/v1/measurements",
+      { data: { type: "measurement", attributes: { run: run.id, target: target.id, metrics: { skew_ms: 1 } } } },
       bearer(me.token),
     );
     expect(ing.status).toBe(201);
@@ -119,7 +119,7 @@ describe("draft edit-lock", () => {
     ).toBe(409);
     // create/edit run
     expect(
-      (await apiPost("/api/v1/runs", { data: { type: "run", attributes: { target: target.id, key: "r2" } } }, tok)).status,
+      (await apiPost("/api/v1/runs", { data: { type: "run", attributes: { benchmark: benchmark.id, key: "r2" } } }, tok)).status,
     ).toBe(409);
     expect(
       (await apiPut(`/api/v1/runs/${run.id}`, { data: { type: "run", attributes: {} } }, tok)).status,
@@ -129,7 +129,7 @@ describe("draft edit-lock", () => {
     expect((await apiPost(`/api/v1/runs/${run.id}/actions/invalidate`, undefined, tok)).status).toBe(409);
     // ingest
     expect(
-      (await apiPost("/api/v1/observations", { data: { type: "observation", attributes: { run: run.id, metrics: { skew_ms: 2 } } } }, tok)).status,
+      (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: run.id, target: target.id, metrics: { skew_ms: 2 } } } }, tok)).status,
     ).toBe(409);
     // delete benchmark / target / run are all blocked too
     expect((await apiDelete(`/api/v1/benchmarks/${benchmark.id}`, tok)).status).toBe(409);
@@ -236,19 +236,19 @@ describe("personal publish", () => {
     expect((((await ok.json()) as { data: Resource }).data.attributes.published_as as { kind: string }).kind).toBe("PERSONAL");
   });
 
-  it("resumes append-only ingest after publishing (a live run keeps accepting observations)", async () => {
+  it("resumes append-only ingest after publishing (a live run keeps accepting measurements)", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
     const t = await makeTarget(me.token, b.id, "t");
-    const run = await makeRun(me.token, t.id); // live (no ended_at)
+    const run = await makeRun(me.token, b.id); // live (no ended_at)
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(), bearer(me.token))).status).toBe(200);
     // published + append-only resumed → ingest to the live run works again
     const ing = await apiPost(
-      "/api/v1/observations",
-      { data: { type: "observation", attributes: { run: run.id, metrics: { skew_ms: 5 } } } },
+      "/api/v1/measurements",
+      { data: { type: "measurement", attributes: { run: run.id, target: t.id, metrics: { skew_ms: 5 } } } },
       bearer(me.token),
     );
     expect(ing.status).toBe(201);

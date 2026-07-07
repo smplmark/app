@@ -96,6 +96,20 @@ const schemaOf = (b: { observationSchema: object }) => b.observationSchema as Sc
 const metaOf = (o: { meta?: Record<string, unknown> }) => o.meta as Record<string, unknown>;
 const byKey = (bs: ReturnType<typeof adapt>) => new Map(bs.map((b) => [b.key, b]));
 
+// Each SPEC benchmark is flat: sibling targets/runs/measurements. A measurement names one run + one
+// target; find the measurement for a given target by joining on its (single) run.
+type Bench = ReturnType<typeof adapt>[number];
+const measurementForTarget = (b: Bench, targetKey: string) => {
+  const m = b.measurements.find((x) => x.target_key === targetKey);
+  if (!m) throw new Error(`no measurement for target ${targetKey}`);
+  return m;
+};
+const runForKey = (b: Bench, runKey: string) => {
+  const r = b.runs.find((x) => x.key === runKey);
+  if (!r) throw new Error(`no run ${runKey}`);
+  return r;
+};
+
 describe("spec source metadata", () => {
   it("attributes SPEC under its Fair Use Rules and caps at the platform target limit", () => {
     expect(meta.key).toBe("spec");
@@ -153,10 +167,16 @@ describe("spec adapt — crawl suite", () => {
     expect(power.category).toBe("HARDWARE");
     expect(schemaOf(power).metrics.map((m) => m.name)).toEqual(["overall_ssj_ops_per_watt"]);
     expect(power.targets).toHaveLength(1);
+    // 1:1 per independent result: one target, one run, one measurement.
+    expect(power.runs).toHaveLength(1);
+    expect(power.measurements).toHaveLength(1);
     const t = power.targets[0];
     expect(t.name).toBe("PowerEdge R7725 (Dell Inc.)");
-    expect(t.runs[0].observations[0].metrics).toEqual({ overall_ssj_ops_per_watt: 35920 });
-    expect(metaOf(t.runs[0].observations[0]).source_url).toBe(
+    const meas = measurementForTarget(power, t.key);
+    expect(meas.run_key).toBe("r-power_ssj2008-20241007-01464");
+    expect(runForKey(power, meas.run_key)).toBeDefined();
+    expect(meas.metrics).toEqual({ overall_ssj_ops_per_watt: 35920 });
+    expect(metaOf(meas).source_url).toBe(
       "https://www.spec.org/power_ssj2008/results/res2024q4/power_ssj2008-20241007-01464.html",
     );
     expect(t.details).toMatchObject({ cpu: "AMD EPYC 9965", chips: "2", cores: "384", nodes: "1" });
@@ -177,21 +197,25 @@ describe("spec adapt", () => {
     expect(schemaOf(c).chart.y).toBe("base_score");
     // "Ghost" (base "--") is dropped; 2 usable results remain, sorted by base desc.
     expect(c.targets).toHaveLength(2);
+    // 1:1 per independent result: run/target/measurement counts match.
+    expect(c.runs).toHaveLength(2);
+    expect(c.measurements).toHaveLength(2);
 
     const top = c.targets[0];
     expect(top.name).toBe("Box 9000 AMD EPYC 9754, 3.1GHz (ACME Corp)");
-    const obs = top.runs[0].observations[0];
-    expect(obs.metrics).toEqual({ base_score: 500, peak_score: 520 });
-    expect(metaOf(obs).source_url).toBe(
+    const topMeas = measurementForTarget(c, top.key);
+    expect(topMeas.metrics).toEqual({ base_score: 500, peak_score: 520 });
+    expect(metaOf(topMeas).source_url).toBe(
       "https://www.spec.org/cpu2017/results/res2024q3/cpu2017-20240701-99999.html",
     );
-    expect(top.runs[0].started_at).toBe(Date.UTC(2024, 6, 1));
-    expect(top.runs[0].ended_at).toBe(Date.UTC(2024, 6, 1));
+    const topRun = runForKey(c, topMeas.run_key);
+    expect(topRun.started_at).toBe(Date.UTC(2024, 6, 1));
+    expect(topRun.ended_at).toBe(Date.UTC(2024, 6, 1));
     expect(top.details).toMatchObject({ sponsor: "ACME Corp", copies: "256", cores: "128", chips: "2" });
 
     // The peak-less "Node Two" result carries base only; earliest date drives published_at.
     const node = c.targets.find((t) => t.name.startsWith("Node Two"))!;
-    expect(node.runs[0].observations[0].metrics).toEqual({ base_score: 300 });
+    expect(measurementForTarget(c, node.key).metrics).toEqual({ base_score: 300 });
     expect(c.published_at).toBe(Date.UTC(2020, 0, 15));
   });
 
@@ -199,10 +223,10 @@ describe("spec adapt", () => {
     const j = map.get("spec-jbb2015")!;
     expect(schemaOf(j).metrics.map((m) => m.name)).toEqual(["max_jops", "critical_jops"]);
     expect(schemaOf(j).chart.y).toBe("max_jops");
-    const obs = j.targets[0].runs[0].observations[0];
-    expect(obs.metrics).toEqual({ max_jops: 250000, critical_jops: 200000 });
+    const meas = measurementForTarget(j, j.targets[0].key);
+    expect(meas.metrics).toEqual({ max_jops: 250000, critical_jops: 200000 });
     expect(j.targets[0].details).toMatchObject({ jvm: "Oracle Java SE 17" });
-    expect(metaOf(obs).source_url).toBe("https://www.spec.org/jbb2015/results/res2021q2/jbb2015-20210601-00656.html");
+    expect(metaOf(meas).source_url).toBe("https://www.spec.org/jbb2015/results/res2021q2/jbb2015-20210601-00656.html");
   });
 
   it("honors the cap, keeping the highest-scoring slice", () => {

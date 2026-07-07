@@ -85,8 +85,8 @@ export function n(value) {
 export function buildWipeSql() {
   const owned = `SELECT id FROM benchmark WHERE published_as_kind = 'INGESTED'`;
   return [
-    `DELETE FROM observation WHERE run_id IN (SELECT run.id FROM run JOIN target ON target.id = run.target_id WHERE target.benchmark_id IN (${owned}))`,
-    `DELETE FROM run WHERE target_id IN (SELECT id FROM target WHERE benchmark_id IN (${owned}))`,
+    `DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id IN (${owned}))`,
+    `DELETE FROM run WHERE benchmark_id IN (${owned})`,
     `DELETE FROM target WHERE benchmark_id IN (${owned})`,
     `DELETE FROM benchmark_tag WHERE benchmark_id IN (${owned})`,
     `DELETE FROM benchmark WHERE published_as_kind = 'INGESTED'`,
@@ -141,7 +141,7 @@ function chunkInsert(head, rows) {
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { accounts: 0, benchmarks: 0, targets: 0, runs: 0, observations: 0, tag_links: 0, sources: 0, clamped: 0 };
+  const counts = { accounts: 0, benchmarks: 0, targets: 0, runs: 0, measurements: 0, tag_links: 0, sources: 0, clamped: 0 };
   if (entries.length > LIMITS.benchmarksPerAccount) {
     throw new Error(
       `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
@@ -174,7 +174,7 @@ export function buildInsertSql(entries) {
   const benchRows = [];
   const targetRows = [];
   const runRows = [];
-  const obsRows = [];
+  const measurementRows = [];
   const tagStatements = [];
   const seenBenchKeys = new Set();
 
@@ -189,6 +189,11 @@ export function buildInsertSql(entries) {
     if (b.targets.length > LIMITS.targetsPerBenchmark) {
       throw new Error(
         `${b.key}: ${b.targets.length} targets exceeds the platform limit of ${LIMITS.targetsPerBenchmark} (see src/limits.ts) — tighten the adapter's curation cap`,
+      );
+    }
+    if (b.runs.length > LIMITS.runsPerBenchmark) {
+      throw new Error(
+        `${b.key}: ${b.runs.length} runs exceeds the platform limit of ${LIMITS.runsPerBenchmark} (see src/limits.ts)`,
       );
     }
     const bid = `ing-${slug}-${b.key}`;
@@ -211,40 +216,47 @@ export function buildInsertSql(entries) {
       counts.tag_links += 1;
     }
 
-    const seenTargetKeys = new Set();
+    // Targets and runs are sibling benchmark children; a measurement names one of each. Keys are
+    // unique within the benchmark, and the ids fold the benchmark id in (…-t-<key>, …-r-<key>).
+    const targetKeys = new Set();
     for (const t of b.targets) {
-      if (seenTargetKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
-      seenTargetKeys.add(t.key);
+      if (targetKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
+      targetKeys.add(t.key);
       assertKeyLength(t.key, `${b.key} target`);
-      if (t.runs.length > LIMITS.runsPerTarget) {
-        throw new Error(
-          `${b.key}/${t.key}: ${t.runs.length} runs exceeds the platform limit of ${LIMITS.runsPerTarget} (see src/limits.ts)`,
-        );
-      }
       const tid = `${bid}-t-${t.key}`;
       targetRows.push(
         `(${q(tid)}, ${q(bid)}, ${q(t.key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
       );
       counts.targets += 1;
+    }
 
-      const seenRunKeys = new Set();
-      for (const r of t.runs) {
-        if (seenRunKeys.has(r.key)) throw new Error(`duplicate run key in ${b.key}/${t.key}: ${r.key}`);
-        seenRunKeys.add(r.key);
-        assertKeyLength(r.key, `${b.key}/${t.key} run`);
-        const rid = `${tid}-r-${r.key}`;
-        runRows.push(
-          `(${q(rid)}, ${q(tid)}, ${q(r.key)}, ${q(clamp(r.name ?? null, LIMITS.nameLength, counts))}, ${q(r.details === undefined ? null : JSON.stringify(r.details))}, ${n(r.started_at ?? null)}, ${n(r.ended_at ?? retrievedAt)}, NULL, NULL, NULL, ${n(retrievedAt)}, ${n(retrievedAt)})`,
-        );
-        counts.runs += 1;
+    const runKeys = new Set();
+    for (const r of b.runs) {
+      if (runKeys.has(r.key)) throw new Error(`duplicate run key in ${b.key}: ${r.key}`);
+      runKeys.add(r.key);
+      assertKeyLength(r.key, `${b.key} run`);
+      const rid = `${bid}-r-${r.key}`;
+      runRows.push(
+        `(${q(rid)}, ${q(bid)}, ${q(r.key)}, ${q(clamp(r.name ?? null, LIMITS.nameLength, counts))}, ${q(r.details === undefined ? null : JSON.stringify(r.details))}, ${n(r.started_at ?? null)}, ${n(r.ended_at ?? retrievedAt)}, NULL, NULL, NULL, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+      );
+      counts.runs += 1;
+    }
 
-        for (const o of r.observations) {
-          obsRows.push(
-            `(${q(rid)}, ${n(o.created_at)}, ${q(JSON.stringify(o.metrics))}, ${q(o.meta === undefined ? null : JSON.stringify(o.meta))}, NULL)`,
-          );
-          counts.observations += 1;
-        }
+    // A measurement names a (run, target) pair — both must exist in this benchmark (the same-benchmark
+    // invariant holds by construction; validate the keys to catch an adapter mis-reference).
+    for (const m of b.measurements) {
+      if (!runKeys.has(m.run_key)) {
+        throw new Error(`measurement in ${b.key} references unknown run ${JSON.stringify(m.run_key)}`);
       }
+      if (!targetKeys.has(m.target_key)) {
+        throw new Error(`measurement in ${b.key} references unknown target ${JSON.stringify(m.target_key)}`);
+      }
+      const rid = `${bid}-r-${m.run_key}`;
+      const tid = `${bid}-t-${m.target_key}`;
+      measurementRows.push(
+        `(${q(rid)}, ${q(tid)}, ${n(m.created_at)}, ${q(JSON.stringify(m.metrics))}, ${q(m.meta === undefined ? null : JSON.stringify(m.meta))}, NULL)`,
+      );
+      counts.measurements += 1;
     }
   }
 
@@ -259,12 +271,12 @@ export function buildInsertSql(entries) {
       targetRows,
     ),
     ...chunkInsert(
-      "INSERT INTO run (id, target_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES",
+      "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES",
       runRows,
     ),
     ...chunkInsert(
-      "INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES",
-      obsRows,
+      "INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip) VALUES",
+      measurementRows,
     ),
     // Rebuild the search index for the ingested scope (same expression as migration 0005 /
     // src/data/benchmarks.ts — keep the three in sync).

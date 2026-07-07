@@ -26,7 +26,7 @@ describe("closed lifecycle — benchmark", () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const target = await makeTarget(owner.token, bench.id);
-    const run = await makeRun(owner.token, target.id);
+    const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
 
     const closed = await action("benchmarks", bench.id, "close", owner.token);
@@ -49,7 +49,7 @@ describe("closed lifecycle — benchmark", () => {
       (
         await apiPost(
           "/api/v1/runs",
-          { data: { type: "run", attributes: { target: target.id, key: "r2" } } },
+          { data: { type: "run", attributes: { benchmark: bench.id, key: "r2" } } },
           bearer(owner.token),
         )
       ).status,
@@ -57,8 +57,8 @@ describe("closed lifecycle — benchmark", () => {
     expect(
       (
         await apiPost(
-          "/api/v1/observations",
-          { data: { type: "observation", attributes: { run: run.id } } },
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -71,8 +71,8 @@ describe("closed lifecycle — benchmark", () => {
     expect(
       (
         await apiPost(
-          "/api/v1/observations",
-          { data: { type: "observation", attributes: { run: run.id } } },
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -101,39 +101,42 @@ describe("closed lifecycle — benchmark", () => {
 });
 
 describe("closed lifecycle — target + ended runs", () => {
-  it("a closed target blocks new runs/observations beneath it only", async () => {
+  it("a closed target blocks new measurements naming it only", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const t1 = await makeTarget(owner.token, bench.id, "t1");
     const t2 = await makeTarget(owner.token, bench.id, "t2");
-    const r1 = await makeRun(owner.token, t1.id);
+    // A run spans the whole benchmark (both targets), not a single target.
+    const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
 
     expect((await action("targets", t1.id, "close", owner.token)).status).toBe(200);
+    // A measurement naming the closed target is refused.
     expect(
       (
         await apiPost(
-          "/api/v1/runs",
-          { data: { type: "run", attributes: { target: t1.id, key: "r2" } } },
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, target: t1.id } } },
           bearer(owner.token),
         )
       ).status,
     ).toBe(409);
+    // A measurement naming the still-open sibling target succeeds.
     expect(
       (
         await apiPost(
-          "/api/v1/observations",
-          { data: { type: "observation", attributes: { run: r1.id } } },
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, target: t2.id } } },
           bearer(owner.token),
         )
       ).status,
-    ).toBe(409);
-    // The sibling target stays open.
+    ).toBe(201);
+    // Runs are benchmark children, so a closed target does not block creating a run.
     expect(
       (
         await apiPost(
           "/api/v1/runs",
-          { data: { type: "run", attributes: { target: t2.id, key: "r1" } } },
+          { data: { type: "run", attributes: { benchmark: bench.id, key: "r2" } } },
           bearer(owner.token),
         )
       ).status,
@@ -142,18 +145,18 @@ describe("closed lifecycle — target + ended runs", () => {
     expect((await action("targets", t1.id, "reopen", owner.token)).status).toBe(409);
   });
 
-  it("an ended run actually refuses new observations", async () => {
+  it("an ended run actually refuses new measurements", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const target = await makeTarget(owner.token, bench.id);
-    const run = await makeRun(owner.token, target.id);
+    const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
     expect((await action("runs", run.id, "end", owner.token)).status).toBe(200);
     expect(
       (
         await apiPost(
-          "/api/v1/observations",
-          { data: { type: "observation", attributes: { run: run.id } } },
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
           bearer(owner.token),
         )
       ).status,

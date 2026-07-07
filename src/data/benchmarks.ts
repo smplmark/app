@@ -422,14 +422,10 @@ export async function deleteBenchmarkCascade(db: D1Database, id: string): Promis
   await db.batch([
     db
       .prepare(
-        "DELETE FROM observation WHERE run_id IN (SELECT run.id FROM run JOIN target ON target.id = run.target_id WHERE target.benchmark_id = ?)",
+        "DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id = ?)",
       )
       .bind(id),
-    db
-      .prepare(
-        "DELETE FROM run WHERE target_id IN (SELECT id FROM target WHERE benchmark_id = ?)",
-      )
-      .bind(id),
+    db.prepare("DELETE FROM run WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM target WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark_tag WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark WHERE id = ?").bind(id),

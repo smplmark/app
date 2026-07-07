@@ -279,7 +279,7 @@ benchmarks.post("/:id/actions/view", async (c) => {
 // ── Leaderboard ──────────────────────────────────────────────────────────────
 
 // Server-driven slice of a benchmark's targets for the viewer's large-benchmark mode: each target
-// with its representative (latest) observation's metrics, sorted by any declared metric, filtered
+// with its representative (latest) measurement's metrics, sorted by any declared metric, filtered
 // by free text (filter[search]) or by a details facet (filter[facet.<field>], repeatable for OR),
 // paginated. meta.facets carries value→count for each facetable details field over the current
 // filter, so the browser never downloads the whole corpus to build filters.
@@ -410,9 +410,9 @@ benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
 
 // ── Close / reopen ───────────────────────────────────────────────────────────
 // The publisher's reversible "complete" signal: a closed benchmark accepts no new targets, runs,
-// or observations. History stays append-only either way — closing is a lifecycle signal, not a
+// or measurements. History stays append-only either way — closing is a lifecycle signal, not a
 // credibility invariant, which is why reopening is allowed (any sequence of close/reopen/append is
-// inherently visible in the observations' timestamps).
+// inherently visible in the measurements' timestamps).
 
 benchmarks.post("/:id/actions/close", requireAuth, async (c) => {
   const auth = getAuth(c);

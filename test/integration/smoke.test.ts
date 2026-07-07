@@ -19,7 +19,7 @@ describe("test harness", () => {
       "email_verification",
       "external_source",
       "invitation",
-      "observation",
+      "measurement",
       "publisher_domain",
       "publisher_identity",
       "run",

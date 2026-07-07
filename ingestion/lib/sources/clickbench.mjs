@@ -123,8 +123,12 @@ const ABOUT =
  * @property {string} system
  * @property {string} machine
  * @property {number | null} hotTotal null when no query produced a hot run
+ * @property {number | null} date epoch-ms of the entry's dated result (null if unparseable) — the
+ *   earliest across all entries proxies the leaderboard's publication moment
+ * @property {number} createdAt epoch-ms for the measurement (entry date, or retrieved_at fallback)
  * @property {Record<string, unknown>} details
- * @property {import("../model.mjs").IngestRun} run
+ * @property {Record<string, number>} metrics
+ * @property {Record<string, unknown>} meta
  */
 
 /**
@@ -158,11 +162,33 @@ export function adapt(archive, options = {}) {
   // not the curated slice, so curation depth never shifts the date.
   let publishedAt = null;
   for (const t of parsed) {
-    const s = t.run.started_at ?? null;
-    if (s !== null && (publishedAt === null || s < publishedAt)) publishedAt = s;
+    if (t.date !== null && (publishedAt === null || t.date < publishedAt)) publishedAt = t.date;
   }
 
+  // A comparative sweep, not per-entry runs: the whole leaderboard is one fixed 43-query workload,
+  // so every target's measurement references the SAME benchmark-level run. Each entry keeps its own
+  // per-entry created_at (the entry date) and meta on its measurement. started_at/ended_at are left
+  // null — a living leaderboard has no bounded run window.
   const seen = new Map();
+  const targets = [];
+  const measurements = [];
+  for (const t of kept) {
+    const targetKey = uniqueSlug(`${t.system}-${t.machine}`, seen);
+    targets.push({
+      key: targetKey,
+      // System names may carry emoji (e.g. "ClickHouse ☁️") — keep them in the display name.
+      name: `${t.system} (${t.machine})`,
+      details: t.details,
+    });
+    measurements.push({
+      run_key: "leaderboard",
+      target_key: targetKey,
+      created_at: t.createdAt,
+      metrics: t.metrics,
+      meta: t.meta,
+    });
+  }
+
   return [
     {
       key: "clickbench",
@@ -175,13 +201,9 @@ export function adapt(archive, options = {}) {
       category: "DATABASE",
       tags: ["olap", "sql", "analytics", "databases"],
       observationSchema: SCHEMA,
-      targets: kept.map((t) => ({
-        key: uniqueSlug(`${t.system}-${t.machine}`, seen),
-        // System names may carry emoji (e.g. "ClickHouse ☁️") — keep them in the display name.
-        name: `${t.system} (${t.machine})`,
-        details: t.details,
-        runs: [t.run],
-      })),
+      targets,
+      runs: [{ key: "leaderboard", name: "ClickBench leaderboard" }],
+      measurements,
     },
   ];
 }
@@ -258,13 +280,11 @@ function parseEntry(entry, retrievedAt) {
     system,
     machine,
     hotTotal: hotCount > 0 ? round3(hotTotal) : null,
+    date: startedAt,
+    createdAt: startedAt ?? retrievedAt,
     details,
-    run: {
-      key: `r-${date}`,
-      name: date,
-      started_at: startedAt ?? undefined,
-      observations: [{ created_at: startedAt ?? retrievedAt, metrics, meta: obsMeta }],
-    },
+    metrics,
+    meta: obsMeta,
   };
 }
 

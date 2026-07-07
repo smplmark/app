@@ -2,35 +2,44 @@ import type { DateRange } from "../query/daterange";
 import { dateRangePredicate } from "../query/predicates";
 import { orderByClause, type Sort } from "../query/sort";
 
-export interface InsertObservationInput {
+export interface InsertMeasurementInput {
   run_id: string;
+  target_id: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
   client_ip: string | null;
 }
 
-/** Insert an observation; returns the database-assigned rowid. */
-export async function insertObservation(
+/** Insert a measurement; returns the database-assigned rowid. */
+export async function insertMeasurement(
   db: D1Database,
-  input: InsertObservationInput,
+  input: InsertMeasurementInput,
 ): Promise<number> {
   const res = await db
     .prepare(
-      "INSERT INTO observation (run_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?)",
+      "INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
     )
-    .bind(input.run_id, input.created_at, input.metrics, input.meta, input.client_ip)
+    .bind(
+      input.run_id,
+      input.target_id,
+      input.created_at,
+      input.metrics,
+      input.meta,
+      input.client_ip,
+    )
     .run();
   return res.meta.last_row_id;
 }
 
 /**
- * An observation row for reads, carrying its benchmark's observation_schema and its run's timing context
- * (for compute-on-read of relative-time derived metrics like elapsed_ms).
+ * A measurement row for reads, carrying its benchmark's observation_schema and its run's timing
+ * context (for compute-on-read of relative-time derived metrics like elapsed_ms).
  */
-export interface ObservationListRow {
+export interface MeasurementListRow {
   id: number;
   run_id: string;
+  target_id: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
@@ -39,14 +48,14 @@ export interface ObservationListRow {
   run_ended_at: number | null;
 }
 
-export interface ObservationScope {
+export interface MeasurementScope {
   run?: string;
   target?: string;
   benchmark?: string;
 }
 
-export interface ListObservationsInput {
-  scope: ObservationScope;
+export interface ListMeasurementsInput {
+  scope: MeasurementScope;
   range?: DateRange;
   sort: Sort;
   limit: number;
@@ -54,22 +63,23 @@ export interface ListObservationsInput {
   includeTotal: boolean;
 }
 
+// A measurement names both its run and its target directly; the benchmark hangs off the run
+// (run.benchmark_id). The target scope filters measurement.target_id, so no target JOIN is needed.
 const JOINS =
-  "FROM observation" +
-  " JOIN run ON run.id = observation.run_id" +
-  " JOIN target ON target.id = run.target_id" +
-  " JOIN benchmark ON benchmark.id = target.benchmark_id";
+  "FROM measurement" +
+  " JOIN run ON run.id = measurement.run_id" +
+  " JOIN benchmark ON benchmark.id = run.benchmark_id";
 
-const OBSERVATION_COLUMNS: Record<string, string> = {
-  created_at: "observation.created_at",
+const MEASUREMENT_COLUMNS: Record<string, string> = {
+  created_at: "measurement.created_at",
 };
 
-function buildWhere(input: ListObservationsInput): { sql: string; binds: unknown[] } {
+function buildWhere(input: ListMeasurementsInput): { sql: string; binds: unknown[] } {
   const clauses: string[] = [];
   const binds: unknown[] = [];
 
   if (input.range) {
-    const pred = dateRangePredicate("observation.created_at", input.range);
+    const pred = dateRangePredicate("measurement.created_at", input.range);
     if (pred.sql) {
       clauses.push(pred.sql);
       binds.push(...pred.binds);
@@ -77,10 +87,10 @@ function buildWhere(input: ListObservationsInput): { sql: string; binds: unknown
   }
 
   if (input.scope.run !== undefined) {
-    clauses.push("observation.run_id = ?");
+    clauses.push("measurement.run_id = ?");
     binds.push(input.scope.run);
   } else if (input.scope.target !== undefined) {
-    clauses.push("target.id = ?");
+    clauses.push("measurement.target_id = ?");
     binds.push(input.scope.target);
   } else if (input.scope.benchmark !== undefined) {
     clauses.push("benchmark.id = ?");
@@ -90,23 +100,23 @@ function buildWhere(input: ListObservationsInput): { sql: string; binds: unknown
   return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", binds };
 }
 
-export async function listObservations(
+export async function listMeasurements(
   db: D1Database,
-  input: ListObservationsInput,
-): Promise<{ rows: ObservationListRow[]; total?: number }> {
+  input: ListMeasurementsInput,
+): Promise<{ rows: MeasurementListRow[]; total?: number }> {
   const where = buildWhere(input);
-  const order = orderByClause(input.sort, (f) => OBSERVATION_COLUMNS[f], "observation.id");
+  const order = orderByClause(input.sort, (f) => MEASUREMENT_COLUMNS[f], "measurement.id");
   const rows = (
     await db
       .prepare(
-        `SELECT observation.id AS id, observation.run_id AS run_id, observation.created_at AS created_at,` +
-          ` observation.metrics AS metrics, observation.meta AS meta,` +
+        `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.target_id AS target_id,` +
+          ` measurement.created_at AS created_at, measurement.metrics AS metrics, measurement.meta AS meta,` +
           ` benchmark.observation_schema AS observation_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
           ` ${JOINS} ${where.sql} ${order} LIMIT ? OFFSET ?`,
       )
       .bind(...where.binds, input.limit, input.offset)
-      .all<ObservationListRow>()
+      .all<MeasurementListRow>()
   ).results;
 
   let total: number | undefined;

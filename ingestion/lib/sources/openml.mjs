@@ -262,6 +262,40 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
     .slice(0, topFlows);
   /** @type {Map<string, number>} */
   const seen = new Map();
+  /** @type {import("../model.mjs").IngestTarget[]} */
+  const targets = [];
+  /** @type {import("../model.mjs").IngestMeasurement[]} */
+  const measurements = [];
+  // Every flow's best result is one measurement on the task's shared "best" run; the run started
+  // at the earliest such upload (null → falls back to retrieval).
+  /** @type {number | null} */
+  let runStartedAt = null;
+  for (const row of flows) {
+    const targetKey = uniqueSlug(row.flowName, seen);
+    targets.push({
+      key: targetKey,
+      name: row.flowName,
+      details: { openml_flow_id: row.flowId },
+    });
+    const started = epochMsOrNull(row.uploadTime);
+    if (started !== null && (runStartedAt === null || started < runStartedAt)) {
+      runStartedAt = started;
+    }
+    measurements.push({
+      run_key: "best",
+      target_key: targetKey,
+      created_at: started ?? retrievedAt,
+      metrics: { predictive_accuracy: row.value },
+      meta: {
+        openml_run_id: row.runId,
+        ...(row.setupId !== null ? { openml_setup_id: row.setupId } : {}),
+        source_url: `https://www.openml.org/r/${row.runId}`,
+      },
+    });
+  }
+  /** @type {import("../model.mjs").IngestRun} */
+  const bestRun = { key: "best" };
+  if (runStartedAt !== null) bestRun.started_at = runStartedAt;
   return {
     key: `openml-cc18-${uniqueSlug(task.dataName, benchmarkSeen)}`,
     name: `OpenML-CC18: ${task.dataName}`,
@@ -273,40 +307,10 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
     category: "ML_AI",
     tags: ["openml", "cc18", "classification"],
     observationSchema: CC18_SCHEMA,
-    targets: flows.map((row) => ({
-      key: uniqueSlug(row.flowName, seen),
-      name: row.flowName,
-      details: { openml_flow_id: row.flowId },
-      runs: [bestRun(row, retrievedAt)],
-    })),
+    targets,
+    runs: [bestRun],
+    measurements,
   };
-}
-
-/**
- * The single best OpenML run for a flow on a task.
- * @param {EvalRow} row
- * @param {number} retrievedAt
- * @returns {import("../model.mjs").IngestRun}
- */
-function bestRun(row, retrievedAt) {
-  const started = epochMsOrNull(row.uploadTime);
-  /** @type {import("../model.mjs").IngestRun} */
-  const run = {
-    key: "best",
-    observations: [
-      {
-        created_at: started ?? retrievedAt,
-        metrics: { predictive_accuracy: row.value },
-        meta: {
-          openml_run_id: row.runId,
-          ...(row.setupId !== null ? { openml_setup_id: row.setupId } : {}),
-          source_url: `https://www.openml.org/r/${row.runId}`,
-        },
-      },
-    ],
-  };
-  if (started !== null) run.started_at = started;
-  return run;
 }
 
 /**
@@ -332,8 +336,10 @@ function frameworkName(flowName) {
  */
 
 /**
- * Study 226 → one benchmark: targets are the AutoML frameworks, one run per (framework, dataset),
- * one observation merging predictive_accuracy and area_under_roc_curve for that OpenML run.
+ * Study 226 → one benchmark: targets are the AutoML frameworks, runs are the shared datasets (one
+ * run per dataset, deduped benchmark-wide so every framework's cell on a dataset names the same
+ * run), and each (framework, dataset) cell is one measurement merging predictive_accuracy and
+ * area_under_roc_curve for that OpenML run.
  * Returns null when the archive holds no usable AMLB records.
  * @param {import("../model.mjs").Archive} archive
  * @param {number} retrievedAt
@@ -380,8 +386,53 @@ function amlbBenchmark(archive, retrievedAt) {
     else frameworks.set(entry.framework, [entry]);
   }
 
+  // Datasets are shared runs across all frameworks: slugify each dataset name ONCE and dedup
+  // benchmark-wide (no per-framework suffixing) so every framework's cell on a given dataset names
+  // the identical run. A run's started_at is the earliest upload across its measurements.
+  /** @type {Map<string, string>} */
+  const datasetRunKey = new Map();
+  /** @type {Map<string, import("../model.mjs").IngestRun>} */
+  const runsByKey = new Map();
+  /** @type {Map<string, number>} */
+  const runSeen = new Map();
+  /** @type {import("../model.mjs").IngestMeasurement[]} */
+  const measurements = [];
   /** @type {Map<string, number>} */
   const targetSeen = new Map();
+  /** @type {import("../model.mjs").IngestTarget[]} */
+  const targets = [];
+
+  for (const [framework, entries] of frameworks.entries()) {
+    const targetKey = uniqueSlug(framework, targetSeen);
+    targets.push({
+      key: targetKey,
+      name: framework,
+      details: { openml_flow_id: entries[0].flowId },
+    });
+    for (const entry of entries) {
+      let runKey = datasetRunKey.get(entry.dataName);
+      if (runKey === undefined) {
+        runKey = uniqueSlug(entry.dataName, runSeen);
+        datasetRunKey.set(entry.dataName, runKey);
+        runsByKey.set(runKey, { key: runKey, name: entry.dataName });
+      }
+      const started = epochMsOrNull(entry.uploadTime);
+      if (started !== null) {
+        const run = runsByKey.get(runKey);
+        if (run && (run.started_at === undefined || started < run.started_at)) {
+          run.started_at = started;
+        }
+      }
+      measurements.push({
+        run_key: runKey,
+        target_key: targetKey,
+        created_at: started ?? retrievedAt,
+        metrics: entry.metrics,
+        meta: { openml_run_id: entry.runId, data_name: entry.dataName },
+      });
+    }
+  }
+
   return {
     key: "openml-amlb",
     name: "AutoML Benchmark (AMLB)",
@@ -394,31 +445,8 @@ function amlbBenchmark(archive, retrievedAt) {
     category: "ML_AI",
     tags: ["openml", "automl"],
     observationSchema: AMLB_SCHEMA,
-    targets: [...frameworks.entries()].map(([framework, entries]) => {
-      /** @type {Map<string, number>} */
-      const runSeen = new Map();
-      return {
-        key: uniqueSlug(framework, targetSeen),
-        name: framework,
-        details: { openml_flow_id: entries[0].flowId },
-        runs: entries.map((entry) => {
-          const started = epochMsOrNull(entry.uploadTime);
-          /** @type {import("../model.mjs").IngestRun} */
-          const run = {
-            key: uniqueSlug(entry.dataName, runSeen),
-            name: entry.dataName,
-            observations: [
-              {
-                created_at: started ?? retrievedAt,
-                metrics: entry.metrics,
-                meta: { openml_run_id: entry.runId, data_name: entry.dataName },
-              },
-            ],
-          };
-          if (started !== null) run.started_at = started;
-          return run;
-        }),
-      };
-    }),
+    targets,
+    runs: [...runsByKey.values()],
+    measurements,
   };
 }
