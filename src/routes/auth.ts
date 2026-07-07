@@ -14,6 +14,7 @@ import {
 import {
   EMAIL_VERIFICATION_TTL_MS,
   appUrl,
+  devLoginEnabled,
   oidcClient,
   oidcConfigured,
   requireAuthSecret,
@@ -38,8 +39,8 @@ import { BadRequestError, NotFoundError, ServiceUnavailableError, UnauthorizedEr
 import { getAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { rateLimit } from "../http/ratelimit";
 import { provisionAccountForUser } from "../services/provision";
-import { startSession } from "../services/session";
-import type { Provider, UserRow } from "../types";
+import { startSession, type IssuedSession } from "../services/session";
+import type { AccountRow, Provider, Role, UserRow } from "../types";
 import { readJsonObject } from "./shared";
 
 export const auth = new Hono<AppBindings>();
@@ -233,6 +234,53 @@ auth.post("/switch", requireAuth, async (c) => {
     Date.now(),
   );
   return jsonResponse({ ...session, verified: user.email_verified === 1 });
+});
+
+// ── Local-dev auto-login (no SSO) ────────────────────────────────────────────
+// Gated on DEV_LOGIN (a .dev.vars-only flag); the route 404s in production. Mirrors the app repo's
+// local bypass: skip the IdP round-trip and lazily bootstrap a canonical dev tenant.
+
+const DEV_EMAIL = "dev@localhost";
+const DEV_DISPLAY_NAME = "Local Dev";
+
+/**
+ * Get-or-create the local dev user + account and start a session for it. Idempotent — repeated
+ * dev-logins reuse the same user/account. Personal publishing is turned on so a developer can create
+ * AND publish benchmarks locally without domain verification.
+ */
+async function startDevSession(env: Env, db: D1Database, origin: string): Promise<IssuedSession> {
+  let user = await getUserByEmail(db, DEV_EMAIL);
+  let account: AccountRow | null;
+  let role: Role;
+  if (!user) {
+    user = await createUser(db, {
+      email: DEV_EMAIL,
+      display_name: DEV_DISPLAY_NAME,
+      email_verified: true,
+    });
+    account = await provisionAccountForUser(db, user);
+    role = "OWNER";
+  } else {
+    const membership = await getPrimaryMembershipForUser(db, user.id);
+    account = membership ? await getAccountById(db, membership.account_id) : null;
+    role = membership ? membership.role : "OWNER";
+    if (!account) throw new Error("The local dev user has no account.");
+  }
+  // Idempotently enable personal publishing so create-then-publish works with no domain to verify.
+  await db.prepare("UPDATE account SET allow_personal_publish = 1 WHERE id = ?").bind(account.id).run();
+  return startSession(env, db, origin, user, account, role, Date.now());
+}
+
+// GET (not POST): the developer navigates here in a browser and lands in the console, hand-off via
+// the same /auth/callback#token fragment the OIDC flow uses.
+auth.get("/dev-login", async (c) => {
+  if (!devLoginEnabled(c.env)) throw new NotFoundError();
+  const origin = appUrl(c.env, c.req.url);
+  const session = await startDevSession(c.env, c.env.DB, origin);
+  return c.redirect(
+    `${origin}/auth/callback#token=${encodeURIComponent(session.token)}&expires_in=${session.expires_in}`,
+    302,
+  );
 });
 
 // ── OIDC ─────────────────────────────────────────────────────────────────────

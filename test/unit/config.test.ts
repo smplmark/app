@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appUrl,
+  devLoginEnabled,
   emailConfigured,
   oidcClient,
   oidcConfigured,
@@ -39,6 +40,17 @@ describe("emailConfigured", () => {
   it("is true only with an API key", () => {
     expect(emailConfigured(env())).toBe(false);
     expect(emailConfigured(env({ RESEND_API_KEY: "re_x" }))).toBe(true);
+  });
+});
+
+describe("devLoginEnabled (prod-safety gate)", () => {
+  it("is true ONLY for the exact flag DEV_LOGIN='1'", () => {
+    expect(devLoginEnabled(env({ DEV_LOGIN: "1" }))).toBe(true);
+    // Anything else — unset, blank, "true", "0" — leaves it off, so prod can never activate it.
+    expect(devLoginEnabled(env())).toBe(false);
+    expect(devLoginEnabled(env({ DEV_LOGIN: "" }))).toBe(false);
+    expect(devLoginEnabled(env({ DEV_LOGIN: "true" }))).toBe(false);
+    expect(devLoginEnabled(env({ DEV_LOGIN: "0" }))).toBe(false);
   });
 });
 

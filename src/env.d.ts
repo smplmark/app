@@ -28,6 +28,11 @@ interface SmplmarkSecrets {
    * e.g. http://localhost:8787. Unset in production → https://www.smplmark.org.
    */
   DEV_WWW_ORIGIN?: string;
+  /**
+   * Local-dev only (.dev.vars): "1" enables the no-SSO dev auto-login — a lazily-created dev account
+   * signed in on first hit. Unset in production, where the endpoint 404s. See config.devLoginEnabled.
+   */
+  DEV_LOGIN?: string;
   /** IP-keyed rate limiter for login / OIDC begin (10 / 60s). */
   RL_AUTH?: RateLimiter;
   /** IP-keyed rate limiter for register / resend-verification / invite / contact (5 / 60s). */

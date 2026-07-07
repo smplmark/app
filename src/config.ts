@@ -102,6 +102,16 @@ export function emailConfigured(env: Env): boolean {
   return !!env.RESEND_API_KEY;
 }
 
+/**
+ * Local-dev auto-login gate. When DEV_LOGIN is "1" (set ONLY in .dev.vars — never a production
+ * secret), the app lazily creates a local dev account and signs you in without any OIDC round-trip,
+ * so hitting the app on localhost drops you straight into the console. It MUST stay unset in prod:
+ * the dev-login endpoint 404s and the root never auto-signs-in when this is false.
+ */
+export function devLoginEnabled(env: Env): boolean {
+  return env.DEV_LOGIN === "1";
+}
+
 /** True when the Smpl Jobs trigger secret is configured (else the system-job endpoints 503). */
 export function jobsTriggerConfigured(env: Env): boolean {
   return !!env.JOBS_TRIGGER_SECRET;

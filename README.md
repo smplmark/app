@@ -62,6 +62,15 @@ Local-loop convention: this Worker on **:8788**, the website Worker on **:8787**
 viewer targets `http://localhost:8788` automatically on localhost, so the two `npm run dev`s are
 the whole loop (see the website repo's README "Local development").
 
+**Dev auto-login (no SSO).** With `DEV_LOGIN=1` (in `.dev.vars`, on by default in the example), just
+open `http://localhost:8788/` — the app lazily creates a `dev@localhost` account (OWNER, personal
+publishing on) and signs you in, so you land straight in the console ready to create and publish
+benchmarks. No Google/Microsoft round-trip. It is a hard-gated local convenience: the
+`GET /api/v1/auth/dev-login` endpoint 404s and the root never auto-signs-in unless `DEV_LOGIN=1`, and
+that flag is gitignored + blanked in tests, so it can never activate in production. Comment out
+`DEV_LOGIN` to exercise the real `/login` sign-in UI (the `/login` and `/signup` pages are always
+reachable directly).
+
 Pages (this repo): `/login` · `/signup` · `/account` (dashboard) · `/account/{benchmarks,api-keys,
 publishers,users,settings,profile}` (self-serve console), `/accept-invitation`, `/verify-email`,
 `/api-reference` (Scalar). The bare root `/` redirects to `/account`; marketing/benchmark paths

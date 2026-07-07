@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { WWW_HOST, appUrl, isAllowedCorsOrigin } from "./config";
+import { WWW_HOST, appUrl, devLoginEnabled, isAllowedCorsOrigin } from "./config";
 import { NotFoundError } from "./errors";
 import { errorResponse } from "./http/jsonapi";
 import type { AppBindings } from "./http/middleware";
@@ -64,6 +64,11 @@ export function createApp() {
     // requires a valid token, so a forged/stale cookie just falls back to login.
     if (p === "/") {
       const authed = /(?:^|;\s*)sm_authed=1(?:\s*;|\s*$)/.test(c.req.header("Cookie") ?? "");
+      // Local dev only: a signed-out visitor is auto-signed-in as the lazily-created dev account (no
+      // SSO), so hitting the app drops you straight into the console. Gated on DEV_LOGIN — never prod.
+      if (!authed && devLoginEnabled(c.env)) {
+        return c.redirect("/api/v1/auth/dev-login", 302);
+      }
       const target = new URL(url);
       target.pathname = authed ? "/account" : "/login";
       const asset = await c.env.ASSETS.fetch(

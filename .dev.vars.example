@@ -21,3 +21,7 @@ APP_URL=http://localhost:8788
 
 # Local loop: marketing-path redirects target the local website Worker.
 DEV_WWW_ORIGIN=http://localhost:8787
+
+# Local-dev auto-login: hitting the app on localhost lazily creates a dev account and signs you in
+# with no Google/Microsoft SSO. NEVER set this in production. Comment out to test the real sign-in UI.
+DEV_LOGIN=1
