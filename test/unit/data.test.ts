@@ -27,7 +27,7 @@ async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; 
   const benchmark = await createBenchmark(env.DB, {
     account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null,
   });
-  const target = await createTarget(env.DB, { benchmark_id: benchmark.id, key: "t", name: "T", details: null });
+  const target = await createTarget(env.DB, { account_id: account.id, key: "t", name: "T", details: null });
   const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null });
   return { account, benchmark, target, run };
 }
@@ -49,7 +49,7 @@ describe("unique-violation → 409 on create", () => {
     await expectConflict(() =>
       createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null }),
     );
-    await expectConflict(() => createTarget(env.DB, { benchmark_id: benchmark.id, key: "t", name: "T2", details: null }));
+    await expectConflict(() => createTarget(env.DB, { account_id: account.id, key: "t", name: "T2", details: null }));
     await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null }));
   });
 });
@@ -60,7 +60,7 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
       createBenchmark(env.DB, { account_id: "ghost-account", key: "x", name: "X", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
-      createTarget(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: "X", details: null }),
+      createTarget(env.DB, { account_id: "ghost-account", key: "x", name: "X", details: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
       createRun(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: null, details: null, started_at: null }),

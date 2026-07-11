@@ -466,20 +466,31 @@ const target = registerEntity(
   "Target",
   "target",
   z.object({
-    benchmark: idRef("The benchmark this target belongs to."),
-    key: z.string().openapi({ description: "The target's human-readable identifier, unique within its benchmark." }),
+    account: idRef("The account that owns the target."),
+    key: z.string().openapi({ description: "The target's human-readable identifier, unique within its account." }),
     name: z.string().openapi({ description: "The target's display name." }),
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the target, or null.", type: "object" }),
-    closed: z.boolean().openapi({ description: "Whether the publisher has marked the target complete. A closed target accepts no new measurements. Reversible." }),
-    closed_at: dateTime("When the target was closed, or null while open.").nullable(),
     created_at: dateTime("When the target was created."),
     updated_at: dateTime("When the target was last updated."),
   }),
   z.object({
-    benchmark: idRef("The benchmark to attach the target to."),
-    key: z.string().max(100).openapi({ description: "The target's human-readable identifier. At most 100 characters." }),
+    key: z.string().max(100).openapi({ description: "The target's human-readable identifier, unique within your account. At most 100 characters." }),
     name: z.string().max(200).openapi({ description: "The target's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the target.", type: "object" }),
+  }),
+);
+
+const benchmarkTarget = registerEntity(
+  "BenchmarkTarget",
+  "benchmark_target",
+  z.object({
+    benchmark: idRef("The benchmark the target is linked to."),
+    target: idRef("The target linked to the benchmark."),
+    created_at: dateTime("When the link was created."),
+  }),
+  z.object({
+    benchmark: idRef("The benchmark to link the target to."),
+    target: idRef("The target to link. Must belong to the same account as the benchmark."),
   }),
 );
 
@@ -529,7 +540,7 @@ const measurement = registerEntity(
   }),
   z.object({
     run: idRef("The run (occasion) to attach the measurement to."),
-    target: idRef("The target being measured. Must belong to the same benchmark as the run."),
+    target: idRef("The target being measured. Must be linked to the same benchmark as the run."),
     created_at: dateTime("When the measurement occurred. Defaults to the time of ingest.").optional(),
     metrics: z
       .record(z.number())
@@ -1182,77 +1193,6 @@ registry.registerPath({
   },
 });
 
-const LeaderboardResponse = registry.register(
-  "LeaderboardResponse",
-  z
-    .object({
-      data: z
-        .array(
-          z.object({
-            type: z.literal("leaderboard_entry"),
-            id: z.string().openapi({ description: "The target's id." }),
-            attributes: z.object({
-              key: z.string().openapi({ description: "The target's key." }),
-              name: z.string().openapi({ description: "The target's display name." }),
-              details: z
-                .record(z.unknown())
-                .nullable()
-                .openapi({ description: "The target's free-form details (sponsor, vendor, configuration, …)." }),
-              metrics: z
-                .record(z.number())
-                .openapi({ description: "The representative (latest) measurement's metric values, keyed by metric name." }),
-              observed_at: z
-                .number()
-                .nullable()
-                .openapi({ description: "Epoch-ms of the representative measurement, or null." }),
-            }),
-          }),
-        )
-        .openapi({ description: "The page of ranked targets." }),
-      meta: z.object({
-        pagination: z.object({
-          page: z.number(),
-          size: z.number(),
-          total: z.number().optional(),
-          total_pages: z.number().optional(),
-        }),
-        sort: z.string().openapi({ description: "The applied sort, e.g. -base_score." }),
-        facets: z
-          .array(
-            z.object({
-              field: z.string().openapi({ description: "The details field this facet ranges over." }),
-              values: z
-                .array(z.object({ value: z.string(), count: z.number() }))
-                .openapi({ description: "Distinct values with their counts over the current filter, most common first." }),
-              truncated: z.boolean().openapi({ description: "True when more distinct values exist than are returned." }),
-            }),
-          )
-          .openapi({ description: "Facetable details fields with value counts over the current filter." }),
-      }),
-    })
-    .openapi({ description: "A page of leaderboard entries with pagination, the applied sort, and filter facets." }),
-);
-
-registry.registerPath({
-  method: "get",
-  path: "/api/v1/benchmarks/{id}/leaderboard",
-  tags: ["Benchmarks"],
-  summary: "Rank a benchmark's targets",
-  description:
-    "A server-sorted, server-filtered page of a benchmark's targets, each with its representative (latest) measurement's metrics — the read behind the viewer's large-benchmark mode. Sort by any metric declared in the benchmark's observation schema (default: the chart metric, descending). Narrow with filter[search] (free-text over target name and details) and filter[facet.<field>] (an exact match on a details field; repeat the parameter to OR several values, e.g. filter[facet.vendor]=AMD&filter[facet.vendor]=Intel). meta.facets lists each facetable details field with value counts; counts are disjunctive — a facet is counted with its own selection excluded (but every other filter applied), so its other values stay visible and countable for OR-selection within that field. Request `Accept: text/csv` (or add `format=json`) to download the entire current filter as a file instead of a page — up to the benchmark's target limit, without facets.",
-  parameters: [
-    { name: "id", in: "path", required: true, description: "The benchmark id.", schema: { type: "string" as const } },
-    filterParam("search", "Free-text: every term must match (AND) as a case-insensitive substring of the target's name or details. Double-quote a phrase to match it exactly."),
-    filterParam("facet.<field>", "Restrict to targets whose <field> details value equals the given value; repeat the parameter to OR several values."),
-    ...paginationParams,
-  ],
-  responses: {
-    "200": jsonResponse(LeaderboardResponse, "A page of ranked targets with facets."),
-    "400": errorJson("The query parameters were malformed, or the benchmark declares no metrics to rank by."),
-    "404": errorJson("No benchmark with that id is visible."),
-  },
-});
-
 registry.registerPath({
   method: "get",
   path: "/api/v1/external_sources",
@@ -1449,12 +1389,14 @@ registry.registerPath({
   path: "/api/v1/targets",
   tags: ["Targets"],
   summary: "Create a target",
+  description:
+    "Creates a target owned by your account. A target is a reusable entity (a system, model, or configuration you measure); link it into one or more benchmarks with POST /api/v1/benchmark_targets.",
   security: bearerSecurity,
   request: { body: domainBody(target.Request, "The target to create.") },
   responses: {
     "201": domainResponse(target.Response, "The created target."),
     ...commonErrors,
-    "409": errorJson("A target with that key already exists in the benchmark, or the benchmark has reached its limit of 5,000 targets."),
+    "409": errorJson("A target with that key already exists in your account, or the account has reached its target limit."),
   },
 });
 
@@ -1463,14 +1405,16 @@ registry.registerPath({
   path: "/api/v1/targets",
   tags: ["Targets"],
   summary: "List targets",
+  description:
+    "With filter[benchmark], lists the targets linked to that benchmark (public benchmarks are world-visible). Without it, lists your own account's targets and requires authentication.",
   parameters: [
-    filterParam("benchmark", "Limit results to targets of this benchmark id.", true),
+    filterParam("benchmark", "Limit results to targets linked to this benchmark id."),
     filterParam("key", "Limit results to the target with this key."),
     ...paginationParams,
   ],
   responses: {
     "200": domainResponse(target.ListResponse, "A page of targets."),
-    "400": errorJson("The query parameters were malformed or filter[benchmark] was missing."),
+    "400": errorJson("The query parameters were malformed."),
   },
 });
 
@@ -1504,35 +1448,73 @@ registry.registerPath({
   path: "/api/v1/targets/{id}",
   tags: ["Targets"],
   summary: "Delete a target",
+  description:
+    "Deletes an account-owned target along with its measurements and benchmark links. A target linked to a published benchmark cannot be deleted until it is unlinked there.",
   security: bearerSecurity,
   request: { params: targetIdParam },
   responses: {
     "204": { description: "The target was deleted." },
     ...commonErrors,
+    "409": errorJson("The target is linked to a published benchmark; unlink it there before deleting."),
+  },
+});
+
+// ── Paths: Benchmark targets (the M:N link) ──────────────────────────────────
+
+const benchmarkTargetIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the benchmark–target link." }),
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/benchmark_targets",
+  tags: ["Targets"],
+  summary: "Link a target to a benchmark",
+  description:
+    "Adds an existing account-owned target to a benchmark. Adding a target is an append, so it is allowed while the benchmark is a draft or already published — but not while it is marked ready or closed.",
+  security: bearerSecurity,
+  request: { body: domainBody(benchmarkTarget.Request, "The benchmark and target to link.") },
+  responses: {
+    "201": domainResponse(benchmarkTarget.Response, "The created link."),
+    ...commonErrors,
+    "409": errorJson("The target is already linked to this benchmark, does not belong to the benchmark's account, or the benchmark has reached its target limit."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/benchmark_targets",
+  tags: ["Targets"],
+  summary: "List benchmark–target links",
+  description: "Provide at least one of filter[benchmark] or filter[target] to scope the results.",
+  parameters: [
+    filterParam("benchmark", "Limit results to links of this benchmark id."),
+    filterParam("target", "Limit results to links of this target id."),
+    ...paginationParams,
+  ],
+  responses: {
+    "200": domainResponse(benchmarkTarget.ListResponse, "A page of links."),
+    "400": errorJson("The query parameters were malformed."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/benchmark_targets/{id}",
+  tags: ["Targets"],
+  summary: "Unlink a target from a benchmark",
+  description:
+    "Removes a target from a benchmark and deletes the measurements it had under that benchmark's runs. The target itself survives (it is account-owned). Only allowed while the benchmark is a draft; a published benchmark's target set is frozen.",
+  security: bearerSecurity,
+  request: { params: benchmarkTargetIdParam },
+  responses: {
+    "204": { description: "The link was removed." },
+    ...commonErrors,
+    "409": errorJson("Published benchmark data is append-only; the target cannot be unlinked."),
   },
 });
 
 // ── Paths: Runs ──────────────────────────────────────────────────────────────
-
-for (const [action, summary, description] of [
-  ["close", "Close a target", "Marks the target complete: no new measurements may be added for it. Reversible via actions/reopen."],
-  ["reopen", "Reopen a target", "Clears the complete mark so new measurements may be added for it again."],
-] as const) {
-  registry.registerPath({
-    method: "post",
-    path: `/api/v1/targets/{id}/actions/${action}`,
-    tags: ["Targets"],
-    summary,
-    description,
-    security: bearerSecurity,
-    request: { params: targetIdParam },
-    responses: {
-      "200": domainResponse(target.Response, "The updated target."),
-      ...commonErrors,
-      "409": errorJson(action === "close" ? "The target is already closed." : "The target is not closed."),
-    },
-  });
-}
 
 const runIdParam = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the run." }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResourceObject } from "../../src/http/jsonapi";
-import { leaderboardToCsv, measurementsToCsv } from "../../src/serialize/csv";
+import { measurementsToCsv } from "../../src/serialize/csv";
 
 const measurement = (
   id: string,
@@ -66,34 +66,5 @@ describe("measurementsToCsv", () => {
   it("renders a meta object as a JSON cell", () => {
     const csv = measurementsToCsv([measurement("9", "t", "r", "tg", undefined, { commit: "abc" })]);
     expect(rowsOf(csv)[1]).toBe('9,t,r,tg,"{""commit"":""abc""}"');
-  });
-});
-
-describe("leaderboardToCsv", () => {
-  it("emits declared metrics in order plus a sorted union of detail keys", () => {
-    const csv = leaderboardToCsv(
-      [
-        { key: "amd", name: "AMD", metrics: '{"score":9}', details: '{"vendor":"AMD"}' },
-        { key: "intel", name: "Intel", metrics: '{"score":7}', details: '{"cores":8}' },
-      ],
-      ["score"],
-    );
-    expect(rowsOf(csv)).toEqual([
-      "key,name,score,cores,vendor",
-      "amd,AMD,9,,AMD",
-      "intel,Intel,7,8,",
-    ]);
-  });
-
-  it("treats malformed, null, non-object, or array JSON as empty rather than throwing", () => {
-    const csv = leaderboardToCsv(
-      [
-        { key: "k1", name: "N1", metrics: "{not json", details: null }, // unparseable + missing
-        { key: "k2", name: "N2", metrics: "42", details: "[1,2,3]" }, // primitive + array
-        { key: "k3", name: "N3", metrics: "null", details: "null" }, // parses to null
-      ],
-      ["score"],
-    );
-    expect(rowsOf(csv)).toEqual(["key,name,score", "k1,N1,", "k2,N2,", "k3,N3,"]);
   });
 });

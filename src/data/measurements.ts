@@ -52,6 +52,9 @@ export interface MeasurementScope {
   run?: string;
   target?: string;
   benchmark?: string;
+  /** For a target scope with an uncovered caller: restrict to the target's PUBLISHED/WITHDRAWN
+   *  benchmarks, so a private sibling benchmark's measurements never leak (a target is shared). */
+  targetPublicOnly?: boolean;
 }
 
 export interface ListMeasurementsInput {
@@ -92,6 +95,10 @@ function buildWhere(input: ListMeasurementsInput): { sql: string; binds: unknown
   } else if (input.scope.target !== undefined) {
     clauses.push("measurement.target_id = ?");
     binds.push(input.scope.target);
+    // A target spans benchmarks; an uncovered caller only sees measurements under its public ones.
+    if (input.scope.targetPublicOnly) {
+      clauses.push("benchmark.status IN ('PUBLISHED','WITHDRAWN')");
+    }
   } else if (input.scope.benchmark !== undefined) {
     clauses.push("benchmark.id = ?");
     binds.push(input.scope.benchmark);

@@ -83,8 +83,9 @@ describe("malformed inputs + unknown credential", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeTarget(me.token, b.id);
+    // Linking a target into a non-existent benchmark is an indistinguishable 404 (no leak).
     expect(
-      (await apiPost("/api/v1/targets", { data: { type: "target", attributes: { benchmark: "ghost", key: "k", name: "n" } } }, bearer(me.token))).status,
+      (await apiPost("/api/v1/benchmark_targets", { data: { type: "benchmark_target", attributes: { benchmark: "ghost", target: t.id } } }, bearer(me.token))).status,
     ).toBe(404);
     expect(
       (await apiPost("/api/v1/runs", { data: { type: "run", attributes: { benchmark: "ghost", key: "k" } } }, bearer(me.token))).status,

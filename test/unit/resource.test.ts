@@ -286,16 +286,14 @@ describe("serializePublisherDomain", () => {
 
 describe("serializeTarget", () => {
   const row: TargetRow = {
-    id: "t1", benchmark_id: "b1", key: "sched-a", name: "Scheduler A",
-    details: JSON.stringify({ region: "us-east-1" }), closed_at: null,
+    id: "t1", account_id: "a1", key: "sched-a", name: "Scheduler A",
+    details: JSON.stringify({ region: "us-east-1" }),
     created_at: T0, updated_at: T0,
   };
-  it("maps benchmark and parses details; null details → null", () => {
-    expect(serializeTarget(row).attributes.benchmark).toBe("b1");
+  it("maps account and parses details; null details → null", () => {
+    expect(serializeTarget(row).attributes.account).toBe("a1");
     expect(serializeTarget(row).attributes.details).toEqual({ region: "us-east-1" });
     expect(serializeTarget({ ...row, details: null }).attributes.details).toBeNull();
-    expect(serializeTarget(row).attributes.closed).toBe(false);
-    expect(serializeTarget({ ...row, closed_at: T0 }).attributes.closed_at).toBe(ISO0);
   });
 });
 

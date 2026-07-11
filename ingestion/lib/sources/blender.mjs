@@ -224,7 +224,9 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
 
   for (const d of ranked) {
     const targetKey = uniqueSlug(d.name, seen);
-    targets.push({ key: targetKey, name: d.name, details: undefined });
+    // The device name is Blender's native stable id — the same device recurs across the CPU and GPU
+    // benchmarks, so it dedups into one account-owned target linked into both (M:N).
+    targets.push({ key: targetKey, name: d.name, source_external_id: d.name, details: undefined });
     for (const entry of d.entries) {
       usedRunKeys.add(entry.runKey);
       measurements.push({

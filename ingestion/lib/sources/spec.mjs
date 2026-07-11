@@ -463,6 +463,10 @@ export function adapt(archive, options = {}) {
         target: {
           key: targetKey,
           name: row.sponsor !== "" ? `${row.system} (${row.sponsor})` : row.system,
+          // The audited system (sponsor + system) is SPEC's stable identity — the same machine appears
+          // across suites, so it dedups into one account-owned target linked into each (its several
+          // results become several measurements on that one target).
+          source_external_id: `${row.sponsor} ${row.system}`.trim(),
           details,
         },
         run,

@@ -5,6 +5,8 @@ import {
   apiPost,
   apiPut,
   bearer,
+  linkTarget,
+  makeAccountTarget,
   makeBenchmark,
   publish,
   register,
@@ -87,18 +89,10 @@ describe("filter[search]", () => {
     const llm = await makeBenchmark(owner.token, { key: "llm-bench", name: "LLM Bench", category: "ML_AI" });
     const db = await makeBenchmark(owner.token, { key: "db-bench", name: "DB Bench", category: "DATABASE" });
     // Target NAME differs from its key, to prove the name (not only the key) is searched.
-    const t1 = await apiPost(
-      "/api/v1/targets",
-      { data: { type: "target", attributes: { benchmark: llm.id, key: "model-a", name: "Meta Llama-3.1-70B Instruct" } } },
-      bearer(owner.token),
-    );
-    expect(t1.status).toBe(201);
-    const t2 = await apiPost(
-      "/api/v1/targets",
-      { data: { type: "target", attributes: { benchmark: db.id, key: "postgres-16", name: "PostgreSQL 16" } } },
-      bearer(owner.token),
-    );
-    expect(t2.status).toBe(201);
+    const t1 = await makeAccountTarget(owner.token, "model-a", { name: "Meta Llama-3.1-70B Instruct" });
+    await linkTarget(owner.token, llm.id, t1.id);
+    const t2 = await makeAccountTarget(owner.token, "postgres-16", { name: "PostgreSQL 16" });
+    await linkTarget(owner.token, db.id, t2.id);
     await publish(owner.token, owner.user_id, llm.id);
     await publish(owner.token, owner.user_id, db.id);
 

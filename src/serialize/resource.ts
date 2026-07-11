@@ -10,6 +10,7 @@ import type {
   AccountUserRow,
   ApiKeyRow,
   BenchmarkRow,
+  BenchmarkTargetRow,
   ExternalSourceRow,
   IngestedAttributionSnapshot,
   InvitationRow,
@@ -262,14 +263,25 @@ export function serializeTarget(row: TargetRow): ResourceObject {
     type: "target",
     id: row.id,
     attributes: {
-      benchmark: row.benchmark_id,
+      account: row.account_id,
       key: row.key,
       name: row.name,
       details: parseJsonOrNull(row.details),
-      closed: row.closed_at !== null,
-      closed_at: isoOrNull(row.closed_at),
       created_at: iso(row.created_at),
       updated_at: iso(row.updated_at),
+    },
+  };
+}
+
+/** One membership of a target in a benchmark (the M:N link). */
+export function serializeBenchmarkTarget(row: BenchmarkTargetRow): ResourceObject {
+  return {
+    type: "benchmark_target",
+    id: row.id,
+    attributes: {
+      benchmark: row.benchmark_id,
+      target: row.target_id,
+      created_at: iso(row.created_at),
     },
   };
 }

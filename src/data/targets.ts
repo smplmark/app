@@ -4,7 +4,7 @@ import type { TargetRow } from "../types";
 import { isUniqueViolation, jsonOrNull } from "./d1";
 
 export interface CreateTargetInput {
-  benchmark_id: string;
+  account_id: string;
   key: string;
   name: string;
   details: unknown | null;
@@ -17,25 +17,24 @@ export async function createTarget(
   const now = Date.now();
   const row: TargetRow = {
     id: crypto.randomUUID(),
-    benchmark_id: input.benchmark_id,
+    account_id: input.account_id,
     key: input.key,
     name: input.name,
     details: jsonOrNull(input.details),
-    closed_at: null,
     created_at: now,
     updated_at: now,
   };
   try {
     await db
       .prepare(
-        "INSERT INTO target (id, benchmark_id, key, name, details, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO target (id, account_id, key, name, details, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
       )
-      .bind(row.id, row.benchmark_id, row.key, row.name, row.details, row.created_at, row.updated_at)
+      .bind(row.id, row.account_id, row.key, row.name, row.details, row.created_at, row.updated_at)
       .run();
   } catch (e) {
     if (isUniqueViolation(e)) {
       throw new ConflictError(
-        `A target with key ${JSON.stringify(input.key)} already exists for this benchmark.`,
+        `A target with key ${JSON.stringify(input.key)} already exists in this account.`,
       );
     }
     throw e;
@@ -43,29 +42,16 @@ export async function createTarget(
   return row;
 }
 
-/** Serves the targets-per-benchmark ceiling check on create. */
-export async function countTargetsForBenchmark(
+/** Serves the targets-per-account ceiling check on create. */
+export async function countTargetsForAccount(
   db: D1Database,
-  benchmarkId: string,
+  accountId: string,
 ): Promise<number> {
   const r = await db
-    .prepare("SELECT COUNT(*) AS n FROM target WHERE benchmark_id = ?")
-    .bind(benchmarkId)
+    .prepare("SELECT COUNT(*) AS n FROM target WHERE account_id = ?")
+    .bind(accountId)
     .first<{ n: number }>();
   return r?.n ?? 0;
-}
-
-/** Set/clear the reversible "complete" signal (close → now, reopen → null). */
-export async function setTargetClosed(
-  db: D1Database,
-  id: string,
-  closedAt: number | null,
-): Promise<TargetRow | null> {
-  await db
-    .prepare("UPDATE target SET closed_at=?, updated_at=? WHERE id=?")
-    .bind(closedAt, Date.now(), id)
-    .run();
-  return getTargetById(db, id);
 }
 
 export async function getTargetById(
@@ -78,15 +64,6 @@ export async function getTargetById(
   );
 }
 
-export interface ListTargetsInput {
-  benchmarkId: string;
-  filterKey?: string;
-  sort: Sort;
-  limit: number;
-  offset: number;
-  includeTotal: boolean;
-}
-
 const TARGET_COLUMNS: Record<string, string> = {
   name: "name",
   key: "key",
@@ -94,12 +71,22 @@ const TARGET_COLUMNS: Record<string, string> = {
   updated_at: "updated_at",
 };
 
-export async function listTargets(
+export interface ListAccountTargetsInput {
+  accountId: string;
+  filterKey?: string;
+  sort: Sort;
+  limit: number;
+  offset: number;
+  includeTotal: boolean;
+}
+
+/** All targets an account owns (the top-level Targets list + the pick-or-create picker). */
+export async function listAccountTargets(
   db: D1Database,
-  input: ListTargetsInput,
+  input: ListAccountTargetsInput,
 ): Promise<{ rows: TargetRow[]; total?: number }> {
-  const clauses = ["benchmark_id = ?"];
-  const binds: unknown[] = [input.benchmarkId];
+  const clauses = ["account_id = ?"];
+  const binds: unknown[] = [input.accountId];
   if (input.filterKey !== undefined) {
     clauses.push("key = ?");
     binds.push(input.filterKey);
@@ -117,6 +104,54 @@ export async function listTargets(
   if (input.includeTotal) {
     const r = await db
       .prepare(`SELECT COUNT(*) AS n FROM target ${where}`)
+      .bind(...binds)
+      .first<{ n: number }>();
+    total = r?.n ?? 0;
+  }
+  return { rows, total };
+}
+
+const TARGET_JOIN_COLUMNS: Record<string, string> = {
+  name: "target.name",
+  key: "target.key",
+  created_at: "target.created_at",
+  updated_at: "target.updated_at",
+};
+
+export interface ListBenchmarkTargetsInput {
+  benchmarkId: string;
+  filterKey?: string;
+  sort: Sort;
+  limit: number;
+  offset: number;
+  includeTotal: boolean;
+}
+
+/** The targets linked to a benchmark (via benchmark_target) — the public viewer's target list. */
+export async function listTargetsForBenchmark(
+  db: D1Database,
+  input: ListBenchmarkTargetsInput,
+): Promise<{ rows: TargetRow[]; total?: number }> {
+  const clauses = ["benchmark_target.benchmark_id = ?"];
+  const binds: unknown[] = [input.benchmarkId];
+  if (input.filterKey !== undefined) {
+    clauses.push("target.key = ?");
+    binds.push(input.filterKey);
+  }
+  const where = `WHERE ${clauses.join(" AND ")}`;
+  const join = "FROM target JOIN benchmark_target ON benchmark_target.target_id = target.id";
+  const order = orderByClause(input.sort, (f) => TARGET_JOIN_COLUMNS[f], "target.id");
+  const rows = (
+    await db
+      .prepare(`SELECT target.* ${join} ${where} ${order} LIMIT ? OFFSET ?`)
+      .bind(...binds, input.limit, input.offset)
+      .all<TargetRow>()
+  ).results;
+
+  let total: number | undefined;
+  if (input.includeTotal) {
+    const r = await db
+      .prepare(`SELECT COUNT(*) AS n ${join} ${where}`)
       .bind(...binds)
       .first<{ n: number }>();
     total = r?.n ?? 0;
@@ -150,13 +185,14 @@ export async function updateTarget(
 }
 
 /**
- * Hard-delete a target and the measurements that name it (the route guarantees the benchmark is
- * PRIVATE). Runs are NOT deleted: a run is a benchmark-level occasion that may span other targets, so
- * removing one target only removes that target's measurements — the runs and other targets survive.
+ * Hard-delete an account-owned target: its measurements (across every run that names it), its
+ * benchmark links, then the target row. The route guarantees the target is not linked to any
+ * non-PRIVATE benchmark, so no published data is destroyed.
  */
 export async function deleteTargetCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM measurement WHERE target_id = ?").bind(id),
+    db.prepare("DELETE FROM benchmark_target WHERE target_id = ?").bind(id),
     db.prepare("DELETE FROM target WHERE id = ?").bind(id),
   ]);
 }

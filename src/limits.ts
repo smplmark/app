@@ -8,8 +8,11 @@
 export const LIMITS = {
   /** Benchmarks one account may own. */
   benchmarksPerAccount: 100,
-  /** Targets one benchmark may hold. Raised to 20k for large ingested corpora (e.g. SPEC CPU2017's
-   *  ~11.8k results/metric); the viewer switches to a server-driven leaderboard above ~300 targets. */
+  /** Standalone targets one account may own (targets are account-owned, reusable across benchmarks).
+   *  Generous for large ingested corpora deduped into one publisher account. */
+  targetsPerAccount: 200_000,
+  /** Targets one benchmark may link. Kept at 20k for large ingested corpora (e.g. SPEC CPU2017's
+   *  ~11.8k results/metric); the viewer fetches and renders all of them client-side. */
   targetsPerBenchmark: 20_000,
   /** Runs one benchmark may hold. A run is a benchmark-level occasion (a comparative sweep is one run
    *  over many targets); independent per-result corpora (SPEC/TPC) reach one run per target, so the

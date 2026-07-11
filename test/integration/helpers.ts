@@ -17,6 +17,7 @@ export const SKEW_SCHEMA: ObservationSchema = {
 const TABLES = [
   "external_source",
   "measurement",
+  "benchmark_target",
   "run",
   "target",
   "benchmark_tag",
@@ -177,18 +178,48 @@ export async function makeBenchmark(
   return ((await res.json()) as { data: Resource }).data;
 }
 
+/** Create an account-owned target (not linked to any benchmark). */
+export async function makeAccountTarget(
+  token: string,
+  key = "sched-a",
+  attrs: Record<string, unknown> = {},
+): Promise<Resource> {
+  const res = await apiPost(
+    "/api/v1/targets",
+    { data: { type: "target", attributes: { key, name: key, ...attrs } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/** Link an existing target into a benchmark (M:N). Returns the benchmark_target link resource. */
+export async function linkTarget(
+  token: string,
+  benchmarkId: string,
+  targetId: string,
+): Promise<Resource> {
+  const res = await apiPost(
+    "/api/v1/benchmark_targets",
+    { data: { type: "benchmark_target", attributes: { benchmark: benchmarkId, target: targetId } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/**
+ * Create an account target and link it into a benchmark in one step (the common "add a target to my
+ * benchmark" path), returning the target resource — the M:N shape of the old benchmark-scoped helper.
+ */
 export async function makeTarget(
   token: string,
   benchmarkId: string,
   key = "sched-a",
 ): Promise<Resource> {
-  const res = await apiPost(
-    "/api/v1/targets",
-    { data: { type: "target", attributes: { benchmark: benchmarkId, key, name: key } } },
-    bearer(token),
-  );
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { data: Resource }).data;
+  const target = await makeAccountTarget(token, key);
+  await linkTarget(token, benchmarkId, target.id);
+  return target;
 }
 
 export async function makeRun(

@@ -20,8 +20,13 @@
  * @property {number} [ended_at] epoch-ms — ingested runs are completed, not live
  *
  * @typedef {Object} IngestTarget
- * @property {string} key unique within its benchmark
+ * @property {string} key benchmark-local handle (measurements reference it); the importer maps it to
+ *   an account-scoped, unique-per-account stored key
  * @property {string} name
+ * @property {string} [source_external_id] a stable id the SOURCE assigns this target (a model id, a
+ *   system name, …). When two of a source's benchmarks emit the same source_external_id, the importer
+ *   treats them as ONE account-owned target and links it into both (M:N dedup). Omit when the source
+ *   has no cross-benchmark identity — the target then stays scoped to its benchmark.
  * @property {Record<string, unknown>} [details]
  *
  * @typedef {Object} IngestBenchmark benchmark → { targets, runs } → measurements (each measurement
@@ -90,7 +95,7 @@ export function uniqueSlug(raw, seen, maxLen = 80) {
   return n === 0 ? base : `${base}-${n + 1}`;
 }
 
-// CPU-vendor detection for the leaderboard's `vendor` facet, matched against a processor/system
+// CPU-vendor detection for the client-derived `vendor` facet, matched against a processor/system
 // string. Order matters: check the more specific brands before generic words.
 const VENDOR_PATTERNS = /** @type {[RegExp, string][]} */ ([
   [/\bamd\b|\bepyc\b|\bryzen\b|\bthreadripper\b/i, "AMD"],
@@ -105,7 +110,7 @@ const VENDOR_PATTERNS = /** @type {[RegExp, string][]} */ ([
 
 /**
  * Best-effort CPU vendor from a processor or system string (e.g. "AMD EPYC 9754" → "AMD"), or null
- * when nothing recognizable matches. Feeds the leaderboard `vendor` facet.
+ * when nothing recognizable matches. Feeds the client-derived `vendor` facet.
  * @param {unknown} text
  * @returns {string | null}
  */

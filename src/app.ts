@@ -11,6 +11,7 @@ import { accountUsers } from "./routes/account_users";
 import { apiKeys } from "./routes/api_keys";
 import { auth } from "./routes/auth";
 import { benchmarks } from "./routes/benchmarks";
+import { benchmarkTargets } from "./routes/benchmark_targets";
 import { emails } from "./routes/emails";
 import { externalSources } from "./routes/external_sources";
 import { invitations } from "./routes/invitations";
@@ -105,6 +106,7 @@ export function createApp() {
   app.route("/api/v1/api_keys", apiKeys);
   app.route("/api/v1/benchmarks", benchmarks);
   app.route("/api/v1/targets", targets);
+  app.route("/api/v1/benchmark_targets", benchmarkTargets);
   app.route("/api/v1/runs", runs);
   app.route("/api/v1/measurements", measurements);
   app.route("/api/v1/external_sources", externalSources);

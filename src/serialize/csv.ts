@@ -25,47 +25,6 @@ function cellFor(value: unknown): string {
   return String(value);
 }
 
-/**
- * Serialize leaderboard rows to CSV: key, name, one column per declared metric (in schema order),
- * then one column per details key (union across rows, sorted). details/metrics arrive as JSON text.
- */
-export function leaderboardToCsv(
-  rows: { key: string; name: string; details: string | null; metrics: string | null }[],
-  metricNames: string[],
-): string {
-  const parse = (s: string | null): Record<string, unknown> => {
-    if (!s) return {};
-    try {
-      const o = JSON.parse(s);
-      return o !== null && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
-    } catch {
-      return {};
-    }
-  };
-  const parsed = rows.map((r) => ({
-    key: r.key,
-    name: r.name,
-    metrics: parse(r.metrics),
-    details: parse(r.details),
-  }));
-  const detailKeys = new Set<string>();
-  for (const r of parsed) for (const k of Object.keys(r.details)) detailKeys.add(k);
-  const sortedDetails = [...detailKeys].sort();
-  const header = ["key", "name", ...metricNames, ...sortedDetails];
-
-  const lines = [header.map(quote).join(",")];
-  for (const r of parsed) {
-    const row = [
-      r.key,
-      r.name,
-      ...metricNames.map((m) => cellFor(r.metrics[m])),
-      ...sortedDetails.map((d) => cellFor(r.details[d])),
-    ];
-    lines.push(row.map(quote).join(","));
-  }
-  return lines.join("\r\n");
-}
-
 export function measurementsToCsv(resources: ResourceObject[]): string {
   const metricKeys = new Set<string>();
   for (const r of resources) {

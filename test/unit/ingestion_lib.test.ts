@@ -97,12 +97,13 @@ describe("sql builders", () => {
     expect(() => n("12" as unknown as number)).toThrow(/finite/);
   });
 
-  it("wipe is scoped to ingested benchmarks, prunes the legacy account, and never truncates", () => {
+  it("wipe is scoped to ingested data, prunes the legacy account, and never truncates", () => {
     const wipe = buildWipeSql();
-    // Child-first order: measurement → run → target → benchmark_tag → benchmark → orphan tags →
-    // the now-orphaned legacy shared account.
+    // Child-first order: measurement → benchmark_target → run → target → benchmark_tag → benchmark →
+    // orphan tags → the now-orphaned legacy shared account.
     expect(wipe.map((s) => s.split(" ")[2])).toEqual([
       "measurement",
+      "benchmark_target",
       "run",
       "target",
       "benchmark_tag",
@@ -110,15 +111,16 @@ describe("sql builders", () => {
       "tag",
       "account",
     ]);
-    // The subtree is scoped by kind, not by owner — every publisher account is left intact.
-    for (const s of wipe.slice(0, 5)) {
-      expect(s).toContain("published_as_kind = 'INGESTED'");
+    // Every subtree delete is scoped — by benchmark kind (INGESTED) or by the deterministic `ing-`
+    // id prefix for the account-owned targets — never a bare truncate. Publisher accounts stay intact.
+    for (const s of wipe.slice(0, 6)) {
+      expect(s).toMatch(/published_as_kind = 'INGESTED'|LIKE 'ing-%'/);
     }
     // Only the legacy shared account is touched, and only when it owns nothing.
-    expect(wipe[6]).toContain("DELETE FROM account");
-    expect(wipe[6]).toContain(SYSTEM_ACCOUNT_ID);
-    expect(wipe[6]).toContain("NOT EXISTS");
-    expect(wipe.join(" ")).not.toMatch(/DELETE FROM (measurement|run|target|benchmark)\s*$/m);
+    expect(wipe[7]).toContain("DELETE FROM account");
+    expect(wipe[7]).toContain(SYSTEM_ACCOUNT_ID);
+    expect(wipe[7]).toContain("NOT EXISTS");
+    expect(wipe.join(" ")).not.toMatch(/DELETE FROM (measurement|benchmark_target|run|target|benchmark)\s*$/m);
   });
 
   const bench = (over: Record<string, unknown> = {}) => ({
@@ -151,17 +153,21 @@ describe("sql builders", () => {
       { benchmark: bench() as never, source, retrievedAt: 5000 },
     ]);
     const joined = statements.join("\n");
-    expect(counts).toEqual({ accounts: 1, benchmarks: 1, targets: 1, runs: 1, measurements: 1, tag_links: 1, sources: 1, clamped: 0 });
+    expect(counts).toEqual({ accounts: 1, benchmarks: 1, targets: 1, benchmark_targets: 1, runs: 1, measurements: 1, tag_links: 1, sources: 1, clamped: 0 });
     expect(joined).toContain("'INGESTED'");
     expect(joined).toContain('\'{"source_name":"Demo Source","source_url":"https://example.org","license":"CC0-1.0","retrieved_at":5000}\'');
-    // Ids fold the publisher slug in so keys need only be unique per publisher. Runs are benchmark
-    // children now, so a run id is <bid>-r-<key> (no target segment).
+    // Benchmark/run ids fold the publisher slug + benchmark key in; the target is account-owned, so
+    // its id is `ing-<slug>-t-<key>` (no benchmark segment) and it's linked in via benchmark_target.
     expect(joined).toContain("'ing-demo-pub-demo'");
-    expect(joined).toContain("'ing-demo-pub-demo-t-t1'");
+    expect(joined).toContain("INSERT INTO target (id, account_id, key, name, details, created_at, updated_at)");
+    expect(joined).toContain("'ing-demo-pub-t-t1', 'acct-demo-pub', 't1',");
     expect(joined).toContain("'ing-demo-pub-demo-r-r1'");
-    // The measurement names both the run and the target ids.
+    // The M:N link joins the benchmark to the account-owned target.
+    expect(joined).toContain("INSERT INTO benchmark_target (id, benchmark_id, target_id, created_at)");
+    expect(joined).toContain("('ing-demo-pub-demo-bt-ing-demo-pub-t-t1', 'ing-demo-pub-demo', 'ing-demo-pub-t-t1', 5000)");
+    // The measurement names both the run and the (account-owned) target ids.
     expect(joined).toContain("INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip)");
-    expect(joined).toContain("('ing-demo-pub-demo-r-r1', 'ing-demo-pub-demo-t-t1', 1000,");
+    expect(joined).toContain("('ing-demo-pub-demo-r-r1', 'ing-demo-pub-t-t1', 1000,");
     expect(joined).toContain("Target 1 with ''quote''");
     // Benchmarks are born PUBLISHED, non-draft, owned by the publisher account.
     expect(joined).toMatch(/'PUBLISHED', 5000/);
@@ -276,6 +282,77 @@ describe("sql builders", () => {
     // One run row, three measurements all naming it — and no target segment in the run id.
     expect(joined).toContain("'ing-demo-pub-demo-r-sweep'");
     expect(joined).not.toContain("-t-t1-r-");
+  });
+
+  it("dedups a target shared across a source's benchmarks by source_external_id (M:N)", () => {
+    const shared = (key: string) =>
+      bench({
+        key,
+        targets: [{ key: "gpt4", name: "GPT-4", source_external_id: "openai/gpt-4" }],
+        runs: [{ key: "r1" }],
+        measurements: [{ run_key: "r1", target_key: "gpt4", created_at: 1, metrics: { score: 1 } }],
+      });
+    const { counts, statements } = buildInsertSql([
+      { benchmark: shared("b1") as never, source, retrievedAt: 1 },
+      { benchmark: shared("b2") as never, source, retrievedAt: 1 },
+    ]);
+    // One shared account-owned target row, linked into both benchmarks.
+    expect(counts.accounts).toBe(1);
+    expect(counts.benchmarks).toBe(2);
+    expect(counts.targets).toBe(1);
+    expect(counts.benchmark_targets).toBe(2);
+    const joined = statements.join("\n");
+    // Exactly one target INSERT row for the shared id, and two distinct links to it.
+    expect((joined.match(/'ing-demo-pub-t-gpt4', 'acct-demo-pub'/g) ?? []).length).toBe(1);
+    expect(joined).toContain("('ing-demo-pub-b1-bt-ing-demo-pub-t-gpt4', 'ing-demo-pub-b1', 'ing-demo-pub-t-gpt4', 1)");
+    expect(joined).toContain("('ing-demo-pub-b2-bt-ing-demo-pub-t-gpt4', 'ing-demo-pub-b2', 'ing-demo-pub-t-gpt4', 1)");
+  });
+
+  it("suffixes an account-unique key when two distinct targets collide (no source_external_id)", () => {
+    // Two benchmarks of one source each define a different target that slugs to the same key.
+    const b = (key: string, name: string) =>
+      bench({
+        key,
+        targets: [{ key: "node", name }],
+        runs: [{ key: "r1" }],
+        measurements: [{ run_key: "r1", target_key: "node", created_at: 1, metrics: { score: 1 } }],
+      });
+    const { counts, statements } = buildInsertSql([
+      { benchmark: b("b1", "Node A") as never, source, retrievedAt: 1 },
+      { benchmark: b("b2", "Node B") as never, source, retrievedAt: 1 },
+    ]);
+    // No dedup: two distinct account targets, the second suffixed to stay unique per account.
+    expect(counts.targets).toBe(2);
+    expect(counts.benchmark_targets).toBe(2);
+    const joined = statements.join("\n");
+    expect(joined).toContain("'ing-demo-pub-t-node', 'acct-demo-pub', 'node',");
+    expect(joined).toContain("'ing-demo-pub-t-node-2', 'acct-demo-pub', 'node-2',");
+    // The measurement still resolves via each benchmark's local key ("node") to the right target.
+    expect(joined).toContain("'ing-demo-pub-t-node-2', 1,");
+  });
+
+  it("allows the same (run, target) pair more than once — repeated measurements are valid", () => {
+    // A run can measure a target multiple times (no unique constraint); two local keys folded onto
+    // one target by source_external_id, both measured under one run, is legitimate repeated data.
+    const { counts } = buildInsertSql([
+      {
+        benchmark: bench({
+          targets: [
+            { key: "ta", name: "A", source_external_id: "SAME" },
+            { key: "tb", name: "B", source_external_id: "SAME" },
+          ],
+          runs: [{ key: "r1" }],
+          measurements: [
+            { run_key: "r1", target_key: "ta", created_at: 1, metrics: { score: 1 } },
+            { run_key: "r1", target_key: "tb", created_at: 1, metrics: { score: 2 } },
+          ],
+        }) as never,
+        source,
+        retrievedAt: 1,
+      },
+    ]);
+    expect(counts.targets).toBe(1); // both fold onto one target
+    expect(counts.measurements).toBe(2); // …with two measurements under the one run
   });
 
   it("scopes benchmark-key uniqueness to the publisher: the same key under two sources coexists", () => {

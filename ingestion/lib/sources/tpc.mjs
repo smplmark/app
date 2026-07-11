@@ -375,6 +375,9 @@ export function adapt(archive, options = {}) {
         target: {
           key: targetKey,
           name: company !== "" ? `${system} (${company})` : system,
+          // The audited system (company + system) is stable across TPC families — the same machine
+          // benchmarked under TPC-C and TPC-H dedups into one account-owned target linked into both.
+          source_external_id: slugSafe(company, system),
           details,
         },
         run,

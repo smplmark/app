@@ -6,6 +6,7 @@ import {
   listMeasurements,
   type MeasurementScope,
 } from "../data/measurements";
+import { isTargetLinked, isTargetPublic } from "../data/benchmark_targets";
 import { getRunById } from "../data/runs";
 import { getTargetById } from "../data/targets";
 import {
@@ -73,21 +74,19 @@ measurements.post("/", requireAuth, async (c) => {
   ) {
     throw new NotFoundError();
   }
-  // The caller covers the run's benchmark. Only now resolve the named target and validate it belongs
-  // to that same benchmark (D1 can't enforce the cross-pair FK). A missing target and a target in a
-  // different benchmark are rejected identically (same 409) so neither leaks whether a foreign id exists.
+  // The caller covers the run's benchmark. Only now resolve the named target and validate it is
+  // linked to that same benchmark (D1 can't enforce the cross-pair rule; benchmark_target does). A
+  // missing target and a target not linked to the run's benchmark are rejected identically (same
+  // 409) so neither leaks whether a foreign id exists.
   const target = await getTargetById(c.env.DB, targetId);
-  if (!target || target.benchmark_id !== benchmark.id) {
-    throw new ConflictError("The target does not belong to the run's benchmark.");
+  if (!target || !(await isTargetLinked(c.env.DB, benchmark.id, target.id))) {
+    throw new ConflictError("The target is not linked to the run's benchmark.");
   }
   assertBenchmarkEditable(benchmark);
   // The append-only door is open by default, but closed things are actually closed: an ended run
-  // and a closed target/benchmark all refuse new measurements.
+  // and a closed benchmark refuse new measurements.
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new measurements can be added.");
-  }
-  if (target.closed_at !== null) {
-    throw new ConflictError("This target is closed; no new measurements can be added.");
   }
   if (run.ended_at !== null) {
     throw new ConflictError("This run has ended; no new measurements can be added.");
@@ -138,7 +137,19 @@ async function resolveScope(
     );
   }
 
-  // Resolve to the owning benchmark (for visibility) and the scope chain (for coverage).
+  // A target spans benchmarks (M:N), so it has no single owning benchmark — resolve its visibility
+  // directly: the caller covers its account, or it's linked to at least one public benchmark.
+  if (target !== undefined) {
+    const t = await getTargetById(c.env.DB, target);
+    if (!t) throw new NotFoundError();
+    const covered = auth !== undefined && covers(auth, { account_id: t.account_id });
+    if (!covered && !(await isTargetPublic(c.env.DB, t.id))) throw new NotFoundError();
+    // A covered account caller sees all their measurements; anyone else sees only those recorded
+    // under the target's public benchmarks (a private sibling benchmark must not leak).
+    return { target, targetPublicOnly: !covered };
+  }
+
+  // run / benchmark: resolve to the owning benchmark (for visibility) and the scope chain (coverage).
   let bench = null;
   let chain: { account_id: string; benchmark_id: string; run_id?: string } | null = null;
   if (run !== undefined) {
@@ -146,12 +157,6 @@ async function resolveScope(
     if (r) {
       bench = await getBenchmarkById(c.env.DB, r.benchmark_id);
       if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, run_id: r.id };
-    }
-  } else if (target !== undefined) {
-    const t = await getTargetById(c.env.DB, target);
-    if (t) {
-      bench = await getBenchmarkById(c.env.DB, t.benchmark_id);
-      if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id };
     }
   } else if (benchmark !== undefined) {
     bench = await getBenchmarkById(c.env.DB, benchmark);
@@ -162,7 +167,7 @@ async function resolveScope(
   if (!isPublicStatus(bench.status)) {
     if (!auth || !covers(auth, chain)) throw new NotFoundError();
   }
-  return { run, target, benchmark };
+  return { run, benchmark };
 }
 
 measurements.get("/", optionalAuth, async (c) => {

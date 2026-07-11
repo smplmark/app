@@ -272,9 +272,12 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
   let runStartedAt = null;
   for (const row of flows) {
     const targetKey = uniqueSlug(row.flowName, seen);
+    // A flow (openml_flow_id) is OpenML's stable id for the same ML pipeline; the same flow competes
+    // on many CC18 tasks (benchmarks), so it dedups into one account-owned target linked into each.
     targets.push({
       key: targetKey,
       name: row.flowName,
+      source_external_id: `flow-${row.flowId}`,
       details: { openml_flow_id: row.flowId },
     });
     const started = epochMsOrNull(row.uploadTime);

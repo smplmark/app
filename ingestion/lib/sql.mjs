@@ -84,10 +84,15 @@ export function n(value) {
  */
 export function buildWipeSql() {
   const owned = `SELECT id FROM benchmark WHERE published_as_kind = 'INGESTED'`;
+  // Ingested targets are account-owned (not benchmark children), but their ids are deterministic
+  // (`ing-<slug>-t-<key>`), so they're identified by the same `ing-%` convention the view-day prune
+  // uses. Drop everything that references them (measurements, links) before the target rows, and the
+  // links/measurements of any ingested benchmark's runs, child-first for the per-statement FK check.
   return [
-    `DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id IN (${owned}))`,
+    `DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id IN (${owned})) OR target_id LIKE 'ing-%'`,
+    `DELETE FROM benchmark_target WHERE benchmark_id IN (${owned}) OR target_id LIKE 'ing-%'`,
     `DELETE FROM run WHERE benchmark_id IN (${owned})`,
-    `DELETE FROM target WHERE benchmark_id IN (${owned})`,
+    `DELETE FROM target WHERE id LIKE 'ing-%'`,
     `DELETE FROM benchmark_tag WHERE benchmark_id IN (${owned})`,
     `DELETE FROM benchmark WHERE published_as_kind = 'INGESTED'`,
     `DELETE FROM tag WHERE id NOT IN (SELECT DISTINCT tag_id FROM benchmark_tag)`,
@@ -141,7 +146,7 @@ function chunkInsert(head, rows) {
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { accounts: 0, benchmarks: 0, targets: 0, runs: 0, measurements: 0, tag_links: 0, sources: 0, clamped: 0 };
+  const counts = { accounts: 0, benchmarks: 0, targets: 0, benchmark_targets: 0, runs: 0, measurements: 0, tag_links: 0, sources: 0, clamped: 0 };
   if (entries.length > LIMITS.benchmarksPerAccount) {
     throw new Error(
       `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
@@ -173,10 +178,30 @@ export function buildInsertSql(entries) {
 
   const benchRows = [];
   const targetRows = [];
+  const benchmarkTargetRows = [];
   const runRows = [];
   const measurementRows = [];
   const tagStatements = [];
   const seenBenchKeys = new Set();
+
+  // Per-source (= per-account) target state, persisted across the source's benchmarks:
+  //   • dedupToTarget maps a stable dedup identity → the one target row shared for it, so the same
+  //     real target measured under several of a source's benchmarks becomes ONE account-owned row
+  //     linked many times (M:N). The identity is the adapter's source_external_id when present;
+  //     otherwise the target is scoped to its benchmark (no cross-benchmark dedup — Mike's rule).
+  //   • usedKeys enforces the account-unique key: two *different* targets that slugify the same are
+  //     suffixed (-2, -3, …), since keys are now unique per account, not per benchmark.
+  const targetStateBySource = new Map();
+  /** @param {string} sourceKey */
+  function targetState(sourceKey) {
+    let s = targetStateBySource.get(sourceKey);
+    if (!s) {
+      s = { dedupToTarget: new Map(), usedKeys: new Set() };
+      targetStateBySource.set(sourceKey, s);
+    }
+    return s;
+  }
+  const linkedPairs = new Set();
 
   for (const { benchmark: b, source, retrievedAt } of entries) {
     const slug = source.publisher.slug;
@@ -216,18 +241,55 @@ export function buildInsertSql(entries) {
       counts.tag_links += 1;
     }
 
-    // Targets and runs are sibling benchmark children; a measurement names one of each. Keys are
-    // unique within the benchmark, and the ids fold the benchmark id in (…-t-<key>, …-r-<key>).
-    const targetKeys = new Set();
+    // Targets are account-owned and linked into the benchmark (M:N). A benchmark-local key resolves
+    // (via localKeyToTid) to the shared/account-scoped target id — dedup by source_external_id may
+    // fold two local keys onto one row. The account-unique stored key is suffixed on collision.
+    const st = targetState(source.key);
+    const localKeyToTid = new Map();
+    const localKeys = new Set();
     for (const t of b.targets) {
-      if (targetKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
-      targetKeys.add(t.key);
+      if (localKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
+      localKeys.add(t.key);
       assertKeyLength(t.key, `${b.key} target`);
-      const tid = `${bid}-t-${t.key}`;
-      targetRows.push(
-        `(${q(tid)}, ${q(bid)}, ${q(t.key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
-      );
-      counts.targets += 1;
+      const dedupId =
+        t.source_external_id !== undefined && t.source_external_id !== null
+          ? `ext:${t.source_external_id}`
+          : `bench:${b.key} ${t.key}`;
+      let entry = st.dedupToTarget.get(dedupId);
+      if (entry === undefined) {
+        // A new distinct target: give it an account-unique key (suffix if a different target already
+        // took the slug), then a deterministic account-scoped id.
+        let key = t.key;
+        if (st.usedKeys.has(key)) {
+          let i = 2;
+          while (st.usedKeys.has(`${key}-${i}`)) i += 1;
+          key = `${key}-${i}`;
+        }
+        assertKeyLength(key, `${b.key} target (account-unique)`);
+        st.usedKeys.add(key);
+        if (st.usedKeys.size > LIMITS.targetsPerAccount) {
+          throw new Error(
+            `${slug}: more than ${LIMITS.targetsPerAccount} distinct targets (see src/limits.ts)`,
+          );
+        }
+        const tid = `ing-${slug}-t-${key}`;
+        targetRows.push(
+          `(${q(tid)}, ${q(publisherAccountId(slug))}, ${q(key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+        );
+        counts.targets += 1;
+        entry = { id: tid };
+        st.dedupToTarget.set(dedupId, entry);
+      }
+      localKeyToTid.set(t.key, entry.id);
+      // Link the (possibly shared) target into this benchmark exactly once.
+      const pair = `${bid} ${entry.id}`;
+      if (!linkedPairs.has(pair)) {
+        linkedPairs.add(pair);
+        benchmarkTargetRows.push(
+          `(${q(`${bid}-bt-${entry.id}`)}, ${q(bid)}, ${q(entry.id)}, ${n(retrievedAt)})`,
+        );
+        counts.benchmark_targets += 1;
+      }
     }
 
     const runKeys = new Set();
@@ -242,17 +304,19 @@ export function buildInsertSql(entries) {
       counts.runs += 1;
     }
 
-    // A measurement names a (run, target) pair — both must exist in this benchmark (the same-benchmark
-    // invariant holds by construction; validate the keys to catch an adapter mis-reference).
+    // A measurement names a (run, target) pair. The run must be this benchmark's; the target key is
+    // the benchmark-local handle, resolved to the shared/account-scoped target id via localKeyToTid.
+    // Repeated (run, target) pairs are allowed on purpose — a run can measure the same target more
+    // than once (the measurement table has no unique constraint), e.g. AMLB's per-fold results.
     for (const m of b.measurements) {
       if (!runKeys.has(m.run_key)) {
         throw new Error(`measurement in ${b.key} references unknown run ${JSON.stringify(m.run_key)}`);
       }
-      if (!targetKeys.has(m.target_key)) {
+      const tid = localKeyToTid.get(m.target_key);
+      if (tid === undefined) {
         throw new Error(`measurement in ${b.key} references unknown target ${JSON.stringify(m.target_key)}`);
       }
       const rid = `${bid}-r-${m.run_key}`;
-      const tid = `${bid}-t-${m.target_key}`;
       measurementRows.push(
         `(${q(rid)}, ${q(tid)}, ${n(m.created_at)}, ${q(JSON.stringify(m.metrics))}, ${q(m.meta === undefined ? null : JSON.stringify(m.meta))}, NULL)`,
       );
@@ -267,8 +331,12 @@ export function buildInsertSql(entries) {
     ),
     ...tagStatements,
     ...chunkInsert(
-      "INSERT INTO target (id, benchmark_id, key, name, details, created_at, updated_at) VALUES",
+      "INSERT INTO target (id, account_id, key, name, details, created_at, updated_at) VALUES",
       targetRows,
+    ),
+    ...chunkInsert(
+      "INSERT INTO benchmark_target (id, benchmark_id, target_id, created_at) VALUES",
+      benchmarkTargetRows,
     ),
     ...chunkInsert(
       "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES",

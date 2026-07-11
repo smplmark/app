@@ -11,6 +11,7 @@ import {
   apiPut,
   authPost,
   bearer,
+  makeAccountTarget,
   makeBenchmark,
   makeRun,
   makeTarget,
@@ -110,10 +111,13 @@ describe("draft edit-lock", () => {
     expect(
       (await apiPut(`/api/v1/benchmarks/${benchmark.id}`, { data: { type: "benchmark", attributes: { name: "x", observation_schema: SKEW_SCHEMA } } }, tok)).status,
     ).toBe(409);
-    // create/edit target
+    // membership: linking a new target into the frozen benchmark is blocked (the account-level target
+    // create itself is fine — a shared target is not part of the frozen subtree).
+    const t2 = await makeAccountTarget(me.token, "t2");
     expect(
-      (await apiPost("/api/v1/targets", { data: { type: "target", attributes: { benchmark: benchmark.id, key: "t2", name: "t2" } } }, tok)).status,
+      (await apiPost("/api/v1/benchmark_targets", { data: { type: "benchmark_target", attributes: { benchmark: benchmark.id, target: t2.id } } }, tok)).status,
     ).toBe(409);
+    // a target linked to the frozen benchmark can't be edited either (the freeze reaches shared targets)
     expect(
       (await apiPut(`/api/v1/targets/${target.id}`, { data: { type: "target", attributes: { name: "x" } } }, tok)).status,
     ).toBe(409);
@@ -131,7 +135,8 @@ describe("draft edit-lock", () => {
     expect(
       (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: run.id, target: target.id, metrics: { skew_ms: 2 } } } }, tok)).status,
     ).toBe(409);
-    // delete benchmark / target / run are all blocked too
+    // delete benchmark / target / run are all blocked (deleting the target would cascade into the
+    // frozen subtree's measurements).
     expect((await apiDelete(`/api/v1/benchmarks/${benchmark.id}`, tok)).status).toBe(409);
     expect((await apiDelete(`/api/v1/targets/${target.id}`, tok)).status).toBe(409);
     expect((await apiDelete(`/api/v1/runs/${run.id}`, tok)).status).toBe(409);

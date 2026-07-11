@@ -285,17 +285,28 @@ export interface PublisherDomainRow {
   created_at: number;
 }
 
+/**
+ * A target is an account-owned entity (a system/model/config the publisher measures), reusable across
+ * that account's benchmarks. Its membership in a benchmark lives in `benchmark_target` (M:N), not on
+ * the row. `key` is unique per account.
+ */
 export interface TargetRow {
   id: string;
-  benchmark_id: string;
+  account_id: string;
   key: string;
   name: string;
   /** JSON string or null. */
   details: string | null;
-  /** Publisher's "complete" signal: no new measurements for this target. Reversible. Surfaced as `closed`. */
-  closed_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+/** One many-to-many link between a benchmark and a target. */
+export interface BenchmarkTargetRow {
+  id: string;
+  benchmark_id: string;
+  target_id: string;
+  created_at: number;
 }
 
 export interface RunRow {

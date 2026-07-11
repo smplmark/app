@@ -5,6 +5,7 @@ import {
   apiPost,
   apiPut,
   bearer,
+  makeAccountTarget,
   makeBenchmark,
   makeRun,
   makeTarget,
@@ -35,12 +36,14 @@ describe("closed lifecycle — benchmark", () => {
     expect(attrs.closed).toBe(true);
     expect(typeof attrs.closed_at).toBe("string");
 
-    // Everything beneath refuses new data.
+    // Everything beneath refuses new data. Linking a new target into the closed benchmark is blocked
+    // (the account-level target create itself is fine — only the membership is refused).
+    const t2 = await makeAccountTarget(owner.token, "t2");
     expect(
       (
         await apiPost(
-          "/api/v1/targets",
-          { data: { type: "target", attributes: { benchmark: bench.id, key: "t2", name: "T2" } } },
+          "/api/v1/benchmark_targets",
+          { data: { type: "benchmark_target", attributes: { benchmark: bench.id, target: t2.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -100,51 +103,7 @@ describe("closed lifecycle — benchmark", () => {
   });
 });
 
-describe("closed lifecycle — target + ended runs", () => {
-  it("a closed target blocks new measurements naming it only", async () => {
-    const owner = await register();
-    const bench = await makeBenchmark(owner.token);
-    const t1 = await makeTarget(owner.token, bench.id, "t1");
-    const t2 = await makeTarget(owner.token, bench.id, "t2");
-    // A run spans the whole benchmark (both targets), not a single target.
-    const run = await makeRun(owner.token, bench.id);
-    await publish(owner.token, owner.user_id, bench.id);
-
-    expect((await action("targets", t1.id, "close", owner.token)).status).toBe(200);
-    // A measurement naming the closed target is refused.
-    expect(
-      (
-        await apiPost(
-          "/api/v1/measurements",
-          { data: { type: "measurement", attributes: { run: run.id, target: t1.id } } },
-          bearer(owner.token),
-        )
-      ).status,
-    ).toBe(409);
-    // A measurement naming the still-open sibling target succeeds.
-    expect(
-      (
-        await apiPost(
-          "/api/v1/measurements",
-          { data: { type: "measurement", attributes: { run: run.id, target: t2.id } } },
-          bearer(owner.token),
-        )
-      ).status,
-    ).toBe(201);
-    // Runs are benchmark children, so a closed target does not block creating a run.
-    expect(
-      (
-        await apiPost(
-          "/api/v1/runs",
-          { data: { type: "run", attributes: { benchmark: bench.id, key: "r2" } } },
-          bearer(owner.token),
-        )
-      ).status,
-    ).toBe(201);
-    expect((await action("targets", t1.id, "reopen", owner.token)).status).toBe(200);
-    expect((await action("targets", t1.id, "reopen", owner.token)).status).toBe(409);
-  });
-
+describe("closed lifecycle — ended runs", () => {
   it("an ended run actually refuses new measurements", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);

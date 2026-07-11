@@ -48,7 +48,7 @@ describe("string-size limits (400)", () => {
     const longKey = "k".repeat(LIMITS.keyLength + 1);
     const t = await apiPost(
       "/api/v1/targets",
-      { data: { type: "target", attributes: { benchmark: bench.id, key: longKey, name: "T" } } },
+      { data: { type: "target", attributes: { key: longKey, name: "T" } } },
       bearer(token),
     );
     expect(t.status).toBe(400);
@@ -88,21 +88,35 @@ describe("count ceilings (409)", () => {
     expect(body.errors[0].detail).toContain(String(LIMITS.benchmarksPerAccount));
   });
 
-  it("caps targets per benchmark", async () => {
-    const { token } = await register();
+  it("caps targets linked to a benchmark", async () => {
+    const { token, account_id } = await register();
     const bench = await makeBenchmark(token);
     const now = Date.now();
+    const n = LIMITS.targetsPerBenchmark;
+    // Fill the benchmark to its link ceiling: n account-owned targets, each linked once.
     await bulkInsert(
       "target",
-      "id, benchmark_id, key, name, created_at, updated_at",
+      "id, account_id, key, name, created_at, updated_at",
       Array.from(
-        { length: LIMITS.targetsPerBenchmark },
-        (_, i) => `('bulk-t-${i}', '${bench.id}', 'bulk-t-${i}', 'T${i}', ${now}, ${now})`,
+        { length: n },
+        (_, i) => `('bulk-t-${i}', '${account_id}', 'bulk-t-${i}', 'T${i}', ${now}, ${now})`,
       ),
     );
-    const res = await apiPost(
+    await bulkInsert(
+      "benchmark_target",
+      "id, benchmark_id, target_id, created_at",
+      Array.from({ length: n }, (_, i) => `('bulk-bt-${i}', '${bench.id}', 'bulk-t-${i}', ${now})`),
+    );
+    // One more target, then linking it exceeds the per-benchmark cap.
+    const extra = await apiPost(
       "/api/v1/targets",
-      { data: { type: "target", attributes: { benchmark: bench.id, key: "extra", name: "T" } } },
+      { data: { type: "target", attributes: { key: "extra", name: "T" } } },
+      bearer(token),
+    );
+    const extraId = ((await extra.json()) as { data: Resource }).data.id;
+    const res = await apiPost(
+      "/api/v1/benchmark_targets",
+      { data: { type: "benchmark_target", attributes: { benchmark: bench.id, target: extraId } } },
       bearer(token),
     );
     expect(res.status).toBe(409);
