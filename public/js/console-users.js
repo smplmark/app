@@ -1,11 +1,12 @@
 "use strict";
 
-// Members (/account/users) — active members (role change / remove) + pending invitations
-// (invite / resend / revoke). Admin-gated actions. Depends on api.js + shell.js.
+// Members (/account/users) — active members (inline role change / remove) + pending invitations
+// (invite / resend / revoke), split across an Active / Invited segmented control with a shared
+// search + refresh toolbar. Admin-gated actions. Depends on api.js + shell.js.
 
 (function () {
   const esc = SM.esc;
-  function $(id) { return document.getElementById(id); }
+  const $ = (id) => document.getElementById(id);
   function setMsg(el, text, kind) {
     if (!el) return;
     el.textContent = text || "";
@@ -20,18 +21,43 @@
   let CAN_ADMIN = false;
   let MY_ROLE = null;
   let MY_USER = null;
+  let ACTIVE_TAB = "members";
+  let SEARCH = "";
+  let MEMBERS = [];
+  let INVITES = [];
+  let INVITES_LOADED = false;
 
-  // Tabs
+  // ── Toolbar: segmented tabs + search + refresh ──
   const tabs = $("member-tabs");
   tabs.addEventListener("click", (ev) => {
     const btn = ev.target.closest(".segBtn");
     if (!btn) return;
     tabs.querySelectorAll(".segBtn").forEach((b) => b.classList.toggle("isActive", b === btn));
-    const tab = btn.dataset.tab;
-    $("tab-members").style.display = tab === "members" ? "" : "none";
-    $("tab-invites").style.display = tab === "invites" ? "" : "none";
-    if (tab === "invites") loadInvites();
+    ACTIVE_TAB = btn.dataset.tab;
+    $("tab-members").style.display = ACTIVE_TAB === "members" ? "" : "none";
+    $("tab-invites").style.display = ACTIVE_TAB === "invites" ? "" : "none";
+    updateSearchPlaceholder();
+    if (ACTIVE_TAB === "invites" && !INVITES_LOADED) loadInvites();
+    else if (ACTIVE_TAB === "invites") renderInvites();
+    else renderMembers();
   });
+
+  const searchWrap = $("member-search-wrap");
+  searchWrap.innerHTML = SM.icon("search", 15) + '<input type="search" aria-label="Search" />';
+  const searchInput = searchWrap.querySelector("input");
+  updateSearchPlaceholder();
+  let searchT = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchT);
+    searchT = setTimeout(() => { SEARCH = searchInput.value; ACTIVE_TAB === "invites" ? renderInvites() : renderMembers(); }, 150);
+  });
+  function updateSearchPlaceholder() {
+    searchInput.placeholder = ACTIVE_TAB === "invites" ? "Search invitations…" : "Search members…";
+  }
+
+  const refreshBtn = $("member-refresh");
+  refreshBtn.innerHTML = SM.icon("refresh", 16);
+  refreshBtn.addEventListener("click", () => { ACTIVE_TAB === "invites" ? loadInvites() : loadMembers(); });
 
   SM.ready.then((id) => {
     CAN_ADMIN = id.canAdmin;
@@ -48,17 +74,37 @@
 
   // ── Active members ──
   async function loadMembers() {
-    const body = $("members-body");
     setMsg($("members-msg"), "");
     try {
       const doc = await apiFetch("/api/v1/account_users");
-      const list = (doc && doc.data) || [];
-      body.innerHTML = list.map(memberRow).join("");
-      wireMemberActions(list);
+      MEMBERS = (doc && doc.data) || [];
+      renderMembers();
     } catch (err) {
-      body.innerHTML = '<tr><td colspan="4" class="dataTableEmpty">Failed to load.</td></tr>';
+      $("members-body").innerHTML = '<tr><td colspan="4" class="dataTableEmpty">Failed to load.</td></tr>';
       setMsg($("members-msg"), err.message, "error");
     }
+  }
+
+  function filterMembers() {
+    const q = SEARCH.trim().toLowerCase();
+    if (!q) return MEMBERS;
+    return MEMBERS.filter((m) => {
+      const a = m.attributes || {};
+      return (a.display_name || "").toLowerCase().includes(q) ||
+        (a.email || "").toLowerCase().includes(q) ||
+        (a.role || "").toLowerCase().includes(q);
+    });
+  }
+
+  function renderMembers() {
+    const body = $("members-body");
+    const rows = filterMembers();
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="4" class="dataTableEmpty">' + (SEARCH.trim() ? "No matching members." : "No members yet.") + "</td></tr>";
+      return;
+    }
+    body.innerHTML = rows.map(memberRow).join("");
+    wireMemberActions();
   }
 
   function memberRow(m) {
@@ -94,12 +140,8 @@
 
   function wireMemberActions() {
     const body = $("members-body");
-    body.querySelectorAll(".role-change").forEach((el) =>
-      el.addEventListener("change", () => changeRole(el)),
-    );
-    body.querySelectorAll(".member-remove").forEach((el) =>
-      el.addEventListener("click", () => removeMember(el.dataset.user, el.dataset.name)),
-    );
+    body.querySelectorAll(".role-change").forEach((el) => el.addEventListener("change", () => changeRole(el)));
+    body.querySelectorAll(".member-remove").forEach((el) => el.addEventListener("click", () => removeMember(el.dataset.user, el.dataset.name)));
   }
 
   async function changeRole(select) {
@@ -107,12 +149,9 @@
     const role = select.value;
     setMsg($("members-msg"), "");
     try {
-      await apiFetch("/api/v1/account_users/" + encodeURIComponent(userId), {
-        method: "PUT",
-        body: jsonapiBody("account_user", { role }),
-      });
+      await apiFetch("/api/v1/account_users/" + encodeURIComponent(userId), { method: "PUT", body: jsonapiBody("account_user", { role }) });
       select.dataset.prev = role;
-      setMsg($("members-msg"), "Role updated.", "ok");
+      setMsg($("members-msg"), "Role updated.", "success");
     } catch (err) {
       select.value = select.dataset.prev; // revert
       setMsg($("members-msg"), err.message, "error");
@@ -120,33 +159,54 @@
   }
 
   async function removeMember(userId, name) {
-    if (!window.confirm("Remove " + name + " from this account? They lose access immediately.")) return;
+    const ok = await SM.confirm({
+      title: "Remove this member?",
+      message: "<strong>" + esc(name) + "</strong> loses access to this account immediately.",
+      confirmLabel: "Remove member",
+    });
+    if (!ok) return;
     setMsg($("members-msg"), "");
     try {
       await apiFetch("/api/v1/account_users/" + encodeURIComponent(userId), { method: "DELETE" });
       await loadMembers();
-    } catch (err) {
-      setMsg($("members-msg"), err.message, "error");
-    }
+    } catch (err) { setMsg($("members-msg"), err.message, "error"); }
   }
 
   // ── Invitations ──
   async function loadInvites() {
-    const body = $("invites-body");
     setMsg($("invites-msg"), "");
     try {
       const doc = await apiFetch("/api/v1/invitations");
-      const list = (doc && doc.data) || [];
-      if (!list.length) {
-        body.innerHTML = '<tr><td colspan="5" class="dataTableEmpty">No invitations. Use “Invite member” to add someone.</td></tr>';
-        return;
-      }
-      body.innerHTML = list.map(inviteRow).join("");
-      wireInviteActions();
+      INVITES = (doc && doc.data) || [];
+      INVITES_LOADED = true;
+      renderInvites();
     } catch (err) {
-      body.innerHTML = '<tr><td colspan="5" class="dataTableEmpty">Failed to load.</td></tr>';
+      $("invites-body").innerHTML = '<tr><td colspan="5" class="dataTableEmpty">Failed to load.</td></tr>';
       setMsg($("invites-msg"), err.message, "error");
     }
+  }
+
+  function filterInvites() {
+    const q = SEARCH.trim().toLowerCase();
+    if (!q) return INVITES;
+    return INVITES.filter((inv) => {
+      const a = inv.attributes || {};
+      return (a.email || "").toLowerCase().includes(q) ||
+        (a.role || "").toLowerCase().includes(q) ||
+        (a.status || "").toLowerCase().includes(q);
+    });
+  }
+
+  function renderInvites() {
+    const body = $("invites-body");
+    const rows = filterInvites();
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="5" class="dataTableEmpty">' +
+        (SEARCH.trim() ? "No matching invitations." : "No invitations. Use “Invite member” to add someone.") + "</td></tr>";
+      return;
+    }
+    body.innerHTML = rows.map(inviteRow).join("");
+    wireInviteActions();
   }
 
   function inviteRow(inv) {
@@ -170,58 +230,60 @@
 
   function wireInviteActions() {
     const body = $("invites-body");
-    body.querySelectorAll(".inv-resend").forEach((el) =>
-      el.addEventListener("click", () => inviteAction(el.dataset.id, "resend")),
-    );
-    body.querySelectorAll(".inv-revoke").forEach((el) =>
-      el.addEventListener("click", () => inviteAction(el.dataset.id, "revoke")),
-    );
+    body.querySelectorAll(".inv-resend").forEach((el) => el.addEventListener("click", () => resendInvite(el.dataset.id)));
+    body.querySelectorAll(".inv-revoke").forEach((el) => el.addEventListener("click", () => revokeInvite(el.dataset.id)));
   }
 
-  async function inviteAction(id, action) {
-    if (action === "revoke" && !window.confirm("Revoke this invitation?")) return;
+  async function resendInvite(id) {
     setMsg($("invites-msg"), "");
     try {
-      await apiFetch("/api/v1/invitations/" + encodeURIComponent(id) + "/actions/" + action, { method: "POST" });
+      await apiFetch("/api/v1/invitations/" + encodeURIComponent(id) + "/actions/resend", { method: "POST" });
       await loadInvites();
-      if (action === "resend") setMsg($("invites-msg"), "Invitation resent.", "ok");
-    } catch (err) {
-      setMsg($("invites-msg"), err.message, "error");
-    }
+      setMsg($("invites-msg"), "Invitation resent.", "success");
+    } catch (err) { setMsg($("invites-msg"), err.message, "error"); }
   }
 
-  // ── Invite modal ──
-  const modal = $("invite-modal");
-  function openInvite() {
-    setMsg($("invite-msg"), "");
-    $("invite-form").reset();
-    modal.style.display = "grid";
-    setTimeout(() => { const i = modal.querySelector('input[name="email"]'); if (i) i.focus(); }, 0);
-  }
-  function closeInvite() { modal.style.display = "none"; }
-  $("invite-cancel").addEventListener("click", closeInvite);
-  modal.addEventListener("mousedown", (ev) => { if (ev.target === modal) closeInvite(); });
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && modal.style.display !== "none") closeInvite(); });
-
-  $("invite-form").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const form = ev.target;
-    setMsg($("invite-msg"), "");
-    const submit = form.querySelector('button[type="submit"]');
-    submit.disabled = true;
+  async function revokeInvite(id) {
+    const ok = await SM.confirm({ title: "Revoke this invitation?", message: "The invite link stops working immediately.", confirmLabel: "Revoke invitation" });
+    if (!ok) return;
+    setMsg($("invites-msg"), "");
     try {
-      await apiFetch("/api/v1/invitations", {
-        method: "POST",
-        body: jsonapiBody("invitation", { email: form.email.value.trim(), role: form.role.value }),
-      });
-      closeInvite();
-      // Jump to the Invited tab to show the pending invite.
-      const invBtn = document.querySelector('.segBtn[data-tab="invites"]');
-      if (invBtn) invBtn.click();
-    } catch (err) {
-      setMsg($("invite-msg"), err.message, "error");
-    } finally {
-      submit.disabled = false;
-    }
-  });
+      await apiFetch("/api/v1/invitations/" + encodeURIComponent(id) + "/actions/revoke", { method: "POST" });
+      await loadInvites();
+    } catch (err) { setMsg($("invites-msg"), err.message, "error"); }
+  }
+
+  // ── Invite modal (strict, per-field validation on email) ──
+  function openInvite() {
+    const bodyHtml =
+      '<form class="form" id="invite-form" novalidate>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Email</span><input name="email" type="email" placeholder="teammate@example.com" /><p class="fieldErrorMessage" hidden></p></label>' +
+      '<label class="field"><span class="detailFieldLabel">Role</span><select name="role">' +
+      '<option value="ADMIN">Admin — manage members, keys, settings</option>' +
+      '<option value="MEMBER" selected>Member — create &amp; edit benchmarks</option>' +
+      '<option value="VIEWER">Viewer — read-only</option>' +
+      "</select></label>" +
+      '<p class="form-status" id="invite-msg"></p>' +
+      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<button type="submit" class="button buttonPrimary buttonSmall">Send invitation</button></div></form>';
+    const m = SM.modal({ title: "Invite a member", description: "They'll get an email with a link to join this account.", bodyHtml: bodyHtml });
+    const f = m.panel.querySelector("#invite-form");
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const msg = m.panel.querySelector("#invite-msg"); setMsg(msg, "");
+      SM.clearFieldError(f.email);
+      const email = f.email.value.trim();
+      if (!email) { SM.setFieldError(f.email, "An email address is required."); f.email.focus(); return; }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { SM.setFieldError(f.email, "Enter a valid email address."); f.email.focus(); return; }
+      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+      try {
+        await apiFetch("/api/v1/invitations", { method: "POST", body: jsonapiBody("invitation", { email: email, role: f.role.value }) });
+        m.close();
+        INVITES_LOADED = false;
+        const invBtn = document.querySelector('.segBtn[data-tab="invites"]');
+        if (invBtn) invBtn.click(); // jump to Invited tab, which reloads
+      } catch (err) { submit.disabled = false; setMsg(msg, err.message, "error"); }
+    });
+    f.email.addEventListener("input", () => SM.clearFieldError(f.email));
+  }
 })();

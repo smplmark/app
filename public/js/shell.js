@@ -25,6 +25,7 @@
   const ICONS = {
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     benchmarks: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    targets: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
     apikeys: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
     members: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     publishers: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
@@ -38,6 +39,7 @@
     trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
     copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   };
   function icon(name, size) {
     const s = size || 20;
@@ -53,6 +55,7 @@
     { key: "dashboard", label: "Dashboard", href: "/", icon: "dashboard", exact: true },
     { divider: true },
     { key: "benchmarks", label: "Benchmarks", href: "/account/benchmarks", icon: "benchmarks" },
+    { key: "targets", label: "Targets", href: "/account/targets", icon: "targets" },
     { key: "apikeys", label: "API Keys", href: "/account/api-keys", icon: "apikeys" },
   ];
   const ADMIN_NAV = [
@@ -249,17 +252,9 @@
     }
   }
 
-  // ── Contact Us modal ──
+  // ── Contact Us modal (uses the shared strict modal) ──
   function openContact() {
-    let overlay = document.getElementById("sm-contact-modal");
-    if (overlay) overlay.remove();
-    overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.id = "sm-contact-modal";
-    overlay.innerHTML =
-      '<div class="modalPanel" role="dialog" aria-modal="true">' +
-      '<div class="modalHeader"><h2 class="modalTitle">Contact us</h2>' +
-      '<p class="modalDescription">Send the smplmark team a message — we\'ll reply by email.</p></div>' +
+    const bodyHtml =
       '<form class="form" id="sm-contact-form">' +
       '<label class="field"><span>Topic</span><select name="topic">' +
       '<option value="technical">Technical support</option>' +
@@ -267,41 +262,43 @@
       '<option value="feature_request">Feature request</option>' +
       '<option value="other" selected>Other</option></select></label>' +
       '<label class="field"><span class="fieldRequired">Message</span>' +
-      '<textarea name="body" rows="5" placeholder="How can we help?" required></textarea></label>' +
+      '<textarea name="body" rows="5" placeholder="How can we help?"></textarea>' +
+      '<p class="fieldErrorMessage" hidden></p></label>' +
       '<p class="form-status" id="sm-contact-msg"></p>' +
       '<div class="modalActions">' +
-      '<button type="button" class="button buttonSecondary buttonSmall" id="sm-contact-cancel">Cancel</button>' +
+      '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Send</button></div>' +
-      "</form></div>";
-    document.body.appendChild(overlay);
-    overlay.style.display = "grid";
-    const close = () => overlay.remove();
-    document.getElementById("sm-contact-cancel").addEventListener("click", close);
-    overlay.addEventListener("mousedown", (ev) => { if (ev.target === overlay) close(); });
-    const form = document.getElementById("sm-contact-form");
+      "</form>";
+    const m = modal({
+      title: "Contact us",
+      description: "Send the smplmark team a message — we'll reply by email.",
+      bodyHtml: bodyHtml,
+    });
+    const form = m.panel.querySelector("#sm-contact-form");
+    const bodyField = form.querySelector('textarea[name="body"]').closest(".field");
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const msgEl = document.getElementById("sm-contact-msg");
-      msgEl.textContent = "";
+      const msgEl = m.panel.querySelector("#sm-contact-msg");
+      msgEl.textContent = ""; msgEl.className = "form-status";
+      clearFieldError(bodyField);
+      const body = form.body.value.trim();
+      if (!body) { setFieldError(bodyField, "A message is required."); form.body.focus(); return; }
       const submit = form.querySelector('button[type="submit"]');
       submit.disabled = true;
       try {
-        await apiFetch("/api/v1/emails", {
-          method: "POST",
-          body: jsonapiBody("email", { topic: form.topic.value, body: form.body.value.trim() }),
-        });
-        overlay.querySelector(".modalPanel").innerHTML =
-          '<div class="modalHeader"><h2 class="modalTitle">Message sent</h2>' +
-          '<p class="modalDescription">Thanks — we\'ve emailed you a copy and will be in touch soon.</p></div>' +
-          '<div class="modalActions"><button type="button" class="button buttonPrimary buttonSmall" id="sm-contact-done">Close</button></div>';
-        document.getElementById("sm-contact-done").addEventListener("click", close);
+        await apiFetch("/api/v1/emails", { method: "POST", body: jsonapiBody("email", { topic: form.topic.value, body: body }) });
+        m.panel.querySelector(".modalHeader").innerHTML =
+          '<h2 class="modalTitle">Message sent</h2><p class="modalDescription">Thanks — we\'ve emailed you a copy and will be in touch soon.</p>';
+        const done = document.createElement("div");
+        done.className = "modalActions";
+        done.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall">Close</button>';
+        done.querySelector("button").addEventListener("click", m.close);
+        form.replaceWith(done);
       } catch (err) {
-        msgEl.textContent = err.message;
-        msgEl.className = "form-status is-error";
+        msgEl.textContent = err.message; msgEl.className = "form-status is-error";
         submit.disabled = false;
       }
     });
-    setTimeout(() => { const t = form.querySelector("textarea"); if (t) t.focus(); }, 0);
   }
 
   // ── Identity ──
@@ -356,12 +353,182 @@
   const mql = window.matchMedia("(max-width: " + AUTO_COLLAPSE_WIDTH + "px)");
   mql.addEventListener("change", (e) => { if (e.matches && !collapsed) setCollapsed(true, false); });
 
+  // ── Strict modal (× + Escape + explicit Cancel; NEVER a backdrop click). Returns { overlay,
+  //    panel, close }. `bodyHtml` is inserted after the header; give Cancel buttons `data-close`. ──
+  function modal(opts) {
+    opts = opts || {};
+    const overlay = document.createElement("div");
+    overlay.className = "modalOverlay";
+    const panel = document.createElement("div");
+    panel.className = "modalPanel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    if (opts.width) panel.style.width = "min(100%, " + opts.width + "px)";
+    panel.innerHTML =
+      '<button type="button" class="modalCloseBtn" aria-label="Close">' + icon("close", 16) + "</button>" +
+      '<div class="modalHeader"><h2 class="modalTitle">' + esc(opts.title || "") + "</h2>" +
+      (opts.description ? '<p class="modalDescription">' + esc(opts.description) + "</p>" : "") + "</div>" +
+      (opts.bodyHtml || "");
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    let closed = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      if (opts.onClose) opts.onClose();
+    }
+    function onKey(e) { if (e.key === "Escape") close(); }
+    panel.querySelector(".modalCloseBtn").addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    panel.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => close()));
+    setTimeout(() => { const f = panel.querySelector("input,select,textarea"); if (f) f.focus(); }, 0);
+    return { overlay: overlay, panel: panel, close: close };
+  }
+
+  // ── Inline confirm (replaces window.confirm / prompt). No backdrop dismiss. Resolves:
+  //    plain → true/false;  with opts.reason → the trimmed reason string, or null when cancelled. ──
+  function confirmDialog(opts) {
+    opts = opts || {};
+    const reason = opts.reason;
+    const danger = opts.danger !== false;
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "deleteConfirmOverlay";
+      let reasonHtml = "";
+      if (reason) {
+        reasonHtml =
+          '<label class="field"><span' + (reason.required ? ' class="fieldRequired"' : "") + ">" + esc(reason.label || "Reason") + "</span>" +
+          (reason.textarea
+            ? '<textarea id="sm-confirm-reason" rows="3" placeholder="' + esc(reason.placeholder || "") + '"></textarea>'
+            : '<input id="sm-confirm-reason" type="text" placeholder="' + esc(reason.placeholder || "") + '" />') +
+          '<p class="fieldErrorMessage" id="sm-confirm-reason-err" hidden></p></label>';
+      }
+      overlay.innerHTML =
+        '<div class="deleteConfirmPanel" role="dialog" aria-modal="true">' +
+        "<h3>" + esc(opts.title || "Are you sure?") + "</h3>" +
+        (opts.message ? "<p>" + opts.message + "</p>" : "") + // message is trusted HTML — caller escapes dynamic parts
+        reasonHtml +
+        '<div class="deleteConfirmActions">' +
+        '<button type="button" class="button buttonSecondary buttonSmall" data-cancel>' + esc(opts.cancelLabel || "Cancel") + "</button>" +
+        '<button type="button" class="button ' + (danger ? "buttonDanger" : "buttonPrimary") + ' buttonSmall" data-ok>' + esc(opts.confirmLabel || "Confirm") + "</button>" +
+        "</div></div>";
+      document.body.appendChild(overlay);
+      let done = false;
+      function cleanup(result) {
+        if (done) return;
+        done = true;
+        document.removeEventListener("keydown", onKey);
+        overlay.remove();
+        resolve(result);
+      }
+      const cancelResult = reason ? null : false;
+      function onKey(e) { if (e.key === "Escape") cleanup(cancelResult); }
+      document.addEventListener("keydown", onKey);
+      overlay.querySelector("[data-cancel]").addEventListener("click", () => cleanup(cancelResult));
+      overlay.querySelector("[data-ok]").addEventListener("click", () => {
+        if (reason) {
+          const input = overlay.querySelector("#sm-confirm-reason");
+          const val = (input.value || "").trim();
+          if (reason.required && !val) {
+            input.closest(".field").classList.add("fieldHasError");
+            const err = overlay.querySelector("#sm-confirm-reason-err");
+            err.textContent = "This is required."; err.hidden = false;
+            input.focus();
+            return;
+          }
+          cleanup(val);
+        } else {
+          cleanup(true);
+        }
+      });
+      setTimeout(() => { const f = overlay.querySelector("#sm-confirm-reason") || overlay.querySelector("[data-ok]"); if (f) f.focus(); }, 0);
+    });
+  }
+
+  // ── Detail-page header (title + status decorations + a user-facing secondary id + actions). ──
+  function detailHeader(opts) {
+    opts = opts || {};
+    return (
+      '<div class="detailHeader"><div class="detailHeaderLeft">' +
+      '<div class="detailHeaderTitleRow"><h1>' + esc(opts.name || "") + "</h1>" + (opts.decorations || "") + "</div>" +
+      (opts.secondaryId ? '<div class="detailHeaderSecondary">' + esc(opts.secondaryId) + "</div>" : "") +
+      "</div>" +
+      (opts.actions ? '<div class="detailHeaderActions">' + opts.actions + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  // ── A read-mode detail field (uppercase label + value). Edit-mode fields are built by pages as a
+  //    plain .field with a .detailFieldLabel and an input + optional .fieldErrorMessage slot. ──
+  function detailField(label, opts) {
+    opts = opts || {};
+    const empty = opts.value == null || opts.value === "";
+    const cls =
+      "detailFieldValue" + (opts.mono ? " isMono" : "") + (opts.multiline ? " isMultiline" : "") + (empty ? " isEmpty" : "");
+    return (
+      '<div class="field"><span class="detailFieldLabel' + (opts.required ? " fieldRequired" : "") + '">' + esc(label) + "</span>" +
+      '<span class="' + cls + '">' + (empty ? esc(opts.emptyText || "—") : esc(opts.value)) + "</span></div>"
+    );
+  }
+
+  function fieldOf(target) {
+    return target && target.classList && target.classList.contains("field") ? target : (target && target.closest ? target.closest(".field") : null);
+  }
+  function setFieldError(target, msg) {
+    const f = fieldOf(target);
+    if (!f) return;
+    f.classList.add("fieldHasError");
+    let p = f.querySelector(".fieldErrorMessage");
+    if (!p) { p = document.createElement("p"); p.className = "fieldErrorMessage"; f.appendChild(p); }
+    p.textContent = msg; p.hidden = false;
+  }
+  function clearFieldError(target) {
+    const f = fieldOf(target);
+    if (!f) return;
+    f.classList.remove("fieldHasError");
+    const p = f.querySelector(".fieldErrorMessage");
+    if (p) { p.textContent = ""; p.hidden = true; }
+  }
+
+  // ── List-page toolbar (search + refresh), floating above the table. Returns the element. ──
+  function toolbar(opts) {
+    opts = opts || {};
+    const bar = document.createElement("div");
+    bar.className = "toolbar";
+    const parts = [];
+    if (opts.search !== false) {
+      parts.push('<div class="toolbarSearch">' + icon("search", 15) + '<input type="search" placeholder="' + esc(opts.placeholder || "Search…") + '" aria-label="Search" /></div>');
+    }
+    if (opts.extraLeft) parts.push(opts.extraLeft);
+    parts.push('<div class="toolbarSpacer"></div>');
+    if (opts.extraRight) parts.push(opts.extraRight);
+    if (opts.onRefresh) parts.push('<button type="button" class="toolbarIconBtn" data-refresh title="Refresh" aria-label="Refresh">' + icon("refresh", 16) + "</button>");
+    bar.innerHTML = parts.join("");
+    const input = bar.querySelector(".toolbarSearch input");
+    if (input && opts.onSearch) {
+      let t = null;
+      input.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => opts.onSearch(input.value), 150); });
+    }
+    const rb = bar.querySelector("[data-refresh]");
+    if (rb && opts.onRefresh) rb.addEventListener("click", () => opts.onRefresh());
+    return bar;
+  }
+
   window.SM = {
     ready: ready,
     icon: icon,
     avatar: avatar,
     esc: esc,
     openContact: openContact,
+    modal: modal,
+    confirm: confirmDialog,
+    detailHeader: detailHeader,
+    detailField: detailField,
+    setFieldError: setFieldError,
+    clearFieldError: clearFieldError,
+    toolbar: toolbar,
     setTopBarAction: function (html) {
       const h = document.getElementById("sm-topbar-actions");
       if (h) h.innerHTML = html || "";

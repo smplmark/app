@@ -325,6 +325,16 @@
 .form-status.is-success { color: var(--success); }
 .form-status.is-error { color: var(--danger); }
 
+/* Per-field validation: mark the offending field, not a top banner. The banner (.form-status) is
+   reserved for whole-form / server errors. */
+.field.fieldHasError input:not([type="radio"]):not([type="checkbox"]),
+.field.fieldHasError select,
+.field.fieldHasError textarea { border-color: var(--danger); }
+.field.fieldHasError input:focus-visible,
+.field.fieldHasError select:focus-visible,
+.field.fieldHasError textarea:focus-visible { outline-color: var(--danger); }
+.fieldErrorMessage { margin: 0.15rem 0 0; font-size: 0.8rem; font-weight: 600; color: var(--danger); }
+
 /* Inline "add" forms (targets / runs / create rows) */
 .inlineForm { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
 .inlineForm .field { flex: 1; min-width: 150px; margin: 0; }
@@ -357,6 +367,7 @@
 .dataTable th { background: var(--surface-alt); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); white-space: nowrap; }
 .dataTable tbody tr { transition: background 150ms ease; }
 .dataTable tbody tr:hover { background: color-mix(in srgb, var(--surface-alt) 50%, transparent); }
+.dataTable tbody tr.dataTableRowClickable { cursor: pointer; }
 .dataTable td.actions { text-align: right; white-space: nowrap; }
 .dataTable td.actions > * { margin-left: 0.4rem; }
 .dataTable code, .dataTable .mono { font-family: var(--mono); font-size: 0.82rem; }
@@ -395,11 +406,15 @@
    Modal
    ================================================================ */
 .modalOverlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1rem; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); }
-.modalPanel { width: min(100%, 520px); display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow); }
-.modalHeader { display: grid; gap: 0.4rem; }
+.modalPanel { position: relative; width: min(100%, 520px); display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow); }
+.modalHeader { display: grid; gap: 0.4rem; padding-right: 1.75rem; }
 .modalTitle { font-size: 1.15rem; font-weight: 700; margin: 0; }
 .modalDescription { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
 .modalActions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+/* Modals close via ×, Escape, or an explicit Cancel — never a backdrop click (strict, per standards). */
+.modalCloseBtn { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: 6px; color: var(--text-muted); cursor: pointer; }
+.modalCloseBtn:hover { background: var(--surface-alt); color: var(--text); }
+.modalCloseBtn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
 
 /* Key reveal box (plaintext API key shown once) */
 .keyReveal {
@@ -517,12 +532,12 @@
 .publishOptionTitle { font-weight: 600; }
 .publishOptionDetail { font-size: 0.83rem; color: var(--text-muted); }
 
-/* Publisher identity cards */
-.identityCard { margin-bottom: 1.1rem; }
-.identityHead { display: flex; align-items: center; gap: 0.8rem; }
-.identityHead h2 { margin: 0; }
+/* Publisher identity — list logo cell, fallback glyph, and the detail-header logo */
 .identityLogo { height: 34px; max-width: 130px; width: auto; border-radius: 6px; object-fit: contain; }
-.identityBody { margin-top: 1rem; }
+.identityLogoCell { width: 40px; }
+.identityLogoCell .identityLogo { height: 24px; max-width: 40px; }
+.identityLogoFallback { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: var(--surface-alt); border: 1px solid var(--border); color: var(--text-muted); }
+.detailHeaderLogo { height: 30px; max-width: 120px; width: auto; border-radius: 6px; object-fit: contain; vertical-align: middle; }
 
 /* Domain verification TXT record */
 .domainRow { margin-bottom: 0.6rem; }
@@ -538,6 +553,44 @@
 .switchRow input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .switchRow input[type="checkbox"]:disabled { cursor: not-allowed; }
 .switchState { font-size: 0.9rem; color: var(--text-muted); }
+
+/* ================================================================
+   Detail page (header + tabs + 2-column form)
+   ================================================================ */
+.detailHeader { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.detailHeaderLeft { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; min-width: 0; }
+.detailHeaderTitleRow { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.detailHeaderTitleRow h1 { line-height: 1.1; margin: 0; }
+.detailHeaderSecondary { font-size: 0.85rem; color: var(--text-muted); font-family: var(--mono); }
+.detailHeaderActions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.detailsTabHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--border); margin: 1.25rem 0; min-height: calc(34px + 0.5rem); }
+.modalTabBar { display: flex; gap: 0; }
+.modalTabBtn { padding: 0.5rem 1rem; border: none; background: none; cursor: pointer; font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 120ms ease, border-color 120ms ease; }
+.modalTabBtn:hover { color: var(--text); }
+.modalTabBtn.isActive { color: var(--text); font-weight: 700; border-bottom-color: var(--accent); }
+.detailsTabActions { display: flex; justify-content: flex-end; gap: 0.5rem; padding-bottom: 0.5rem; flex-wrap: wrap; }
+
+.detailsTabPanel { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.35rem 1.5rem; background: var(--surface); }
+.detailGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 2.5rem; align-items: flex-start; }
+.detailCol { display: grid; gap: 1rem; min-width: 0; }
+@media (max-width: 760px) { .detailGrid { grid-template-columns: 1fr; gap: 1.5rem; } }
+
+/* DetailField: an UPPERCASE muted label above a read value (or an input in edit mode). */
+.detailFieldLabel { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.detailFieldValue { font-size: 0.95rem; font-weight: 400; color: var(--text); line-height: 1.45; min-height: 1.45em; word-break: break-word; }
+.detailFieldValue.isMono { font-family: var(--mono); font-size: 0.88rem; }
+.detailFieldValue.isEmpty { color: var(--text-muted); font-style: italic; }
+.detailFieldValue.isMultiline { white-space: pre-wrap; }
+
+/* ================================================================
+   Inline confirm overlay (replaces window.confirm / prompt)
+   ================================================================ */
+.deleteConfirmOverlay { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 1rem; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); }
+.deleteConfirmPanel { position: relative; width: min(100%, 420px); padding: 1.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow); display: grid; gap: 1rem; }
+.deleteConfirmPanel h3 { margin: 0; font-size: 1.1rem; }
+.deleteConfirmPanel p { margin: 0; color: var(--text-muted); font-size: 0.92rem; line-height: 1.5; }
+.deleteConfirmActions { display: flex; gap: 0.75rem; justify-content: flex-end; }
 
 /* ================================================================
    Responsive

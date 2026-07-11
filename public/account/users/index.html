@@ -25,6 +25,9 @@
               <button type="button" class="segBtn isActive" data-tab="members">Active</button>
               <button type="button" class="segBtn" data-tab="invites">Invited</button>
             </div>
+            <div class="toolbarSearch" id="member-search-wrap"></div>
+            <div class="toolbarSpacer"></div>
+            <button type="button" class="toolbarIconBtn" id="member-refresh" title="Refresh" aria-label="Refresh"></button>
           </div>
 
           <!-- Active members -->
@@ -62,33 +65,6 @@
           </div>
         </div>
       </main>
-    </div>
-  </div>
-
-  <!-- Invite modal -->
-  <div id="invite-modal" class="modalOverlay" style="display:none;">
-    <div class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="invite-title">
-      <div class="modalHeader">
-        <h2 class="modalTitle" id="invite-title">Invite a member</h2>
-        <p class="modalDescription">They'll get an email with a link to join this account.</p>
-      </div>
-      <form class="form" id="invite-form">
-        <label class="field"><span class="fieldRequired">Email</span>
-          <input name="email" type="email" placeholder="teammate@example.com" required />
-        </label>
-        <label class="field"><span>Role</span>
-          <select name="role">
-            <option value="ADMIN">Admin — manage members, keys, settings</option>
-            <option value="MEMBER" selected>Member — create &amp; edit benchmarks</option>
-            <option value="VIEWER">Viewer — read-only</option>
-          </select>
-        </label>
-        <p id="invite-msg" class="form-status"></p>
-        <div class="modalActions">
-          <button type="button" class="button buttonSecondary buttonSmall" id="invite-cancel">Cancel</button>
-          <button type="submit" class="button buttonPrimary buttonSmall">Send invitation</button>
-        </div>
-      </form>
     </div>
   </div>
 

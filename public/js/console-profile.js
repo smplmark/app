@@ -62,6 +62,7 @@
     const a = (USER && USER.attributes) || {};
     input.value = a.display_name || "";
     setMsg($("profile-edit-msg"), "");
+    SM.clearFieldError(input);
     view.style.display = "none";
     form.style.display = "grid";
     input.focus();
@@ -70,12 +71,14 @@
 
   $("profile-cancel").addEventListener("click", exitEdit);
   input.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); exitEdit(); } });
+  input.addEventListener("input", () => SM.clearFieldError(input));
   function exitEdit() { form.style.display = "none"; view.style.display = "flex"; }
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    SM.clearFieldError(input);
     const trimmed = input.value.trim();
-    if (!trimmed) { setMsg($("profile-edit-msg"), "Name is required.", "error"); return; }
+    if (!trimmed) { SM.setFieldError(input, "A display name is required."); input.focus(); return; }
     const current = (USER && USER.attributes && USER.attributes.display_name) || "";
     if (trimmed === current) { exitEdit(); return; }
     const save = $("profile-save");

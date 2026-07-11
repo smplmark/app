@@ -50,7 +50,7 @@
       renderRecent(list);
     } catch (err) {
       $("stat-benchmarks").textContent = "—";
-      $("recent-body").innerHTML = '<tr><td colspan="4" class="dataTableEmpty">Failed to load benchmarks.</td></tr>';
+      $("recent-body").innerHTML = '<tr><td colspan="3" class="dataTableEmpty">Failed to load benchmarks.</td></tr>';
     }
   }
 
@@ -69,7 +69,7 @@
     const body = $("recent-body");
     if (!list.length) {
       body.innerHTML =
-        '<tr><td colspan="4" class="dataTableEmpty">No benchmarks yet. ' +
+        '<tr><td colspan="3" class="dataTableEmpty">No benchmarks yet. ' +
         '<a class="buttonLink" href="/account/benchmarks">Create your first one.</a></td></tr>';
       return;
     }
@@ -80,17 +80,16 @@
     body.innerHTML = rows.map((b) => {
       const a = b.attributes || {};
       const status = String(a.status || "").toUpperCase();
-      const view = status === "PRIVATE"
-        ? '<a class="buttonLink" href="/account/benchmarks">Manage</a>'
-        : '<a class="buttonLink" href="/benchmarks/' + encodeURIComponent(a.key || "") + '">View</a>';
       return (
-        "<tr>" +
+        '<tr class="dataTableRowClickable" data-id="' + SM.esc(b.id) + '">' +
         '<td><code>' + SM.esc(a.key || "") + "</code></td>" +
         "<td>" + SM.esc(a.name || "") + "</td>" +
         "<td>" + SM.statusPill(status, status) + "</td>" +
-        '<td class="actions">' + view + "</td>" +
         "</tr>"
       );
     }).join("");
+    body.querySelectorAll("tr[data-id]").forEach((tr) => {
+      tr.addEventListener("click", () => { location.href = "/account/benchmarks/detail?id=" + encodeURIComponent(tr.dataset.id); });
+    });
   }
 })();

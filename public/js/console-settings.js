@@ -86,6 +86,7 @@
     const a = (ACCOUNT && ACCOUNT.attributes) || {};
     input.value = a.name || "";
     setMsg($("name-msg"), "");
+    SM.clearFieldError(input);
     view.style.display = "none";
     form.style.display = "grid";
     input.focus();
@@ -94,12 +95,14 @@
 
   $("name-cancel").addEventListener("click", exitEdit);
   input.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { ev.preventDefault(); exitEdit(); } });
+  input.addEventListener("input", () => SM.clearFieldError(input));
   function exitEdit() { form.style.display = "none"; view.style.display = "grid"; }
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    SM.clearFieldError(input);
     const name = input.value.trim();
-    if (!name) { setMsg($("name-msg"), "Account name is required.", "error"); return; }
+    if (!name) { SM.setFieldError(input, "An account name is required."); input.focus(); return; }
     const attrs = (ACCOUNT && ACCOUNT.attributes) || {};
     if (name === attrs.name) { exitEdit(); return; }
     const save = $("name-save");

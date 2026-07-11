@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>API Keys — smplmark</title>
+  <title>Target — smplmark</title>
   <meta name="robots" content="noindex" />
   <link rel="icon" href="/img/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png" />
@@ -17,24 +17,16 @@
     <div class="appMain">
       <header class="topBar" id="sm-topbar"></header>
       <main class="appContent">
-        <div class="page">
-          <div id="load-error"></div>
-
-          <div id="verify-banner" class="noticeBanner" style="display:none;">
-            <span class="grow">Verify your email address to create API keys.</span>
-            <button type="button" id="resend-verification" class="button buttonSecondary buttonSmall">Resend verification</button>
-            <span id="verify-msg" class="form-status"></span>
-          </div>
-
-          <div id="keys-content"><p class="muted">Loading…</p></div>
+        <div class="page" id="detail-root">
+          <p class="muted" id="detail-loading">Loading…</p>
         </div>
       </main>
     </div>
   </div>
 
-  <script>window.SM_PAGE = { active: "apikeys", breadcrumbs: [{ label: "API Keys" }] };</script>
+  <script>window.SM_PAGE = { active: "targets", breadcrumbs: [{ label: "Targets", href: "/account/targets" }, { label: "…" }] };</script>
   <script src="/js/api.js"></script>
   <script src="/js/shell.js"></script>
-  <script src="/js/console-apikeys.js"></script>
+  <script src="/js/console-target-detail.js"></script>
 </body>
 </html>

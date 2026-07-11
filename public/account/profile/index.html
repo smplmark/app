@@ -28,8 +28,9 @@
                   <button type="button" class="iconButton" id="profile-edit" aria-label="Edit display name"></button>
                 </div>
                 <form class="form" id="profile-edit-form" style="display:none; gap:0.6rem;">
-                  <label class="field" style="margin:0;"><span class="fieldRequired">Display name</span>
+                  <label class="field" style="margin:0;"><span class="detailFieldLabel fieldRequired">Display name</span>
                     <input id="profile-name-input" type="text" placeholder="Your name" />
+                    <p class="fieldErrorMessage" hidden></p>
                   </label>
                   <p id="profile-edit-msg" class="form-status"></p>
                   <div class="profileEditActions">
