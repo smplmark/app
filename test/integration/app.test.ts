@@ -39,7 +39,16 @@ describe("app routing", () => {
     expect(body).toContain('<a href="/api-reference" class="active">API Reference</a>');
     expect(body).toContain('class="reference-wrap"');
     // The logo links the bare website origin (no path); box-sizing matches the site's reset.
-    expect(body).toContain('<a class="brand" href="https://www.smplmark.org" title="smplmark home">');
+    expect(body).toContain('<a class="brand" href="https://www.smplmark.org" title="smplmark home" aria-label="smplmark home">');
     expect(body).toContain("box-sizing: border-box");
+    // Theme-aware: a light Scalar palette exists, and the pre-paint script resolves the shared
+    // cross-subdomain cookie / console theme before Scalar renders.
+    expect(body).toContain(".light-mode");
+    expect(body).toContain("--scalar-background-1: #ffffff");
+    expect(body).toContain("smplmark-theme");
+    expect(body).toContain("darkMode: dark");
+    // A header light/dark switch is present and writes the shared cookie on toggle.
+    expect(body).toContain('<button class="theme-toggle" type="button" role="switch"');
+    expect(body).toContain("location.reload()");
   });
 });
