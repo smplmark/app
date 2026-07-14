@@ -25,6 +25,7 @@ export async function createMembership(
     user_id: input.user_id,
     role: input.role,
     created_at: Date.now(),
+    settings: null,
   };
   await db
     .prepare(
@@ -33,6 +34,44 @@ export async function createMembership(
     .bind(row.account_id, row.user_id, row.role, row.created_at)
     .run();
   return row;
+}
+
+/**
+ * The member's per-account settings bag (parsed). Absent, NULL, or non-object JSON → `{}`, so callers
+ * always get a plain object. The stored value is opaque JSON the client owns (e.g. `{ theme: "dark" }`).
+ */
+export async function getMembershipSettings(
+  db: D1Database,
+  accountId: string,
+  userId: string,
+): Promise<Record<string, unknown>> {
+  const row = await db
+    .prepare("SELECT settings FROM account_user WHERE account_id = ? AND user_id = ?")
+    .bind(accountId, userId)
+    .first<{ settings: string | null }>();
+  if (!row || row.settings == null) return {};
+  try {
+    const parsed = JSON.parse(row.settings);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Full-replace the member's per-account settings bag. Returns the stored object. */
+export async function putMembershipSettings(
+  db: D1Database,
+  accountId: string,
+  userId: string,
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  await db
+    .prepare("UPDATE account_user SET settings = ? WHERE account_id = ? AND user_id = ?")
+    .bind(JSON.stringify(settings), accountId, userId)
+    .run();
+  return settings;
 }
 
 export async function listMembershipsForAccount(
@@ -57,7 +96,7 @@ export async function getPrimaryMembershipForUser(
   return (
     (await db
       .prepare(
-        "SELECT account_user.* FROM account_user JOIN account ON account.id = account_user.account_id WHERE account_user.user_id = ? ORDER BY account.created_at, account.id LIMIT 1",
+        "SELECT account_user.* FROM account_user JOIN account ON account.id = account_user.account_id WHERE account_user.user_id = ? AND account.deleted_at IS NULL ORDER BY account.created_at, account.id LIMIT 1",
       )
       .bind(userId)
       .first<AccountUserRow>()) ?? null
@@ -106,7 +145,7 @@ export async function listMembershipsForUserWithAccount(
         "SELECT account.id AS account_id, account.key AS account_key, account.name AS account_name, " +
           "account_user.role AS role, account_user.created_at AS created_at " +
           "FROM account_user JOIN account ON account.id = account_user.account_id " +
-          "WHERE account_user.user_id = ? ORDER BY account.created_at, account.id",
+          "WHERE account_user.user_id = ? AND account.deleted_at IS NULL ORDER BY account.created_at, account.id",
       )
       .bind(userId)
       .all<AccountMembershipRow>()

@@ -18,11 +18,11 @@ INSERT INTO user_identity (id, user_id, provider, provider_subject, password_has
   ('293e513d-88c9-4267-abc9-d75c919de389', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$CT1lElP8jGnbvpUMUeAFTg$o2MfIzO5Z2TLvPDsduBIivTFWLKPvlA49TU-MQNY_SA', 1782864000000);
 
 -- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
-INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
-  ('acct-system', 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', NULL, 1782864000000, 0);
+INSERT INTO account (id, key, name, description, created_at, allow_personal_publish) VALUES
+  ('acct-system', 'system', 'smplmark', 'Openly licensed benchmark results ingested from third-party sources. Every ingested benchmark credits its source and license, and links back to the original data.', 1782864000000, 0);
 
 -- The dev workspace: personal publish pre-enabled so the whole publish flow is exercisable.
-INSERT INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES
-  ('acct-smplkit', 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services.', 'https://smplkit.com', 1782864000000, 1);
+INSERT INTO account (id, key, name, description, created_at, allow_personal_publish) VALUES
+  ('acct-smplkit', 'smplkit', 'smplkit', 'smplkit builds developer infrastructure — configuration, feature flags, logging, and audit as independently deployable services.', 1782864000000, 1);
 INSERT INTO account_user (account_id, user_id, role, created_at) VALUES
   ('acct-smplkit', 'usr-dev', 'OWNER', 1782864000000);

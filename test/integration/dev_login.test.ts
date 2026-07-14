@@ -47,6 +47,25 @@ describe("local dev auto-login", () => {
     expect(acct?.v).toBe(1); // create-then-publish works locally with no domain to verify
   });
 
+  it("seeds one user per role in a single account and can sign in as any role", async () => {
+    // First dev-login bootstraps the tenant + all role companions.
+    await SELF.fetch(`${BASE}/api/v1/auth/dev-login`, { redirect: "manual" });
+
+    const accounts = await env.DB.prepare("SELECT COUNT(*) AS n FROM account").first<{ n: number }>();
+    expect(accounts?.n).toBe(1);
+    const roles = (await env.DB.prepare("SELECT role FROM account_user").all<{ role: string }>()).results
+      .map((r) => r.role)
+      .sort();
+    expect(roles).toEqual(["ADMIN", "MEMBER", "OWNER", "VIEWER"]);
+
+    // Signing in with ?role=ADMIN hands off a session for the seeded ADMIN user.
+    const admin = await SELF.fetch(`${BASE}/api/v1/auth/dev-login?role=ADMIN`, { redirect: "manual" });
+    const adminToken = tokenFromRedirect(admin.headers.get("location"));
+    const me = await SELF.fetch(`${BASE}/api/v1/users/current`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { data: { attributes: { email: string } } }).data.attributes.email).toBe("admin@localhost");
+  });
+
   it("the dev session can create AND publish a benchmark", async () => {
     const r = await SELF.fetch(`${BASE}/api/v1/auth/dev-login`, { redirect: "manual" });
     const token = tokenFromRedirect(r.headers.get("location"));

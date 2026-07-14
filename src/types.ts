@@ -1,4 +1,4 @@
-// Domain row types (as stored in D1; snake_case columns), the observation_schema shape, and the
+// Domain row types (as stored in D1; snake_case columns), the measurement_schema shape, and the
 // resolved auth context. This is the shared vocabulary the whole codebase speaks.
 
 // ── Enums (SCREAMING_SNAKE_CASE on the wire, per ADR-014) ────────────────────
@@ -36,13 +36,17 @@ export const INVITATION_STATUSES: readonly InvitationStatus[] = [
   "EXPIRED",
 ];
 
-/** A publisher domain's verification lifecycle. PENDING → VERIFIED ↔ LAPSED. */
-export type PublisherDomainStatus = "PENDING" | "VERIFIED" | "LAPSED";
-export const PUBLISHER_DOMAIN_STATUSES: readonly PublisherDomainStatus[] = [
+/** A publisher's domain-verification lifecycle. PENDING → VERIFIED ↔ LAPSED. */
+export type PublisherStatus = "PENDING" | "VERIFIED" | "LAPSED";
+export const PUBLISHER_STATUSES: readonly PublisherStatus[] = [
   "PENDING",
   "VERIFIED",
   "LAPSED",
 ];
+
+/** How a publisher's icon is displayed: a domain-initial monogram, or the domain's own favicon. */
+export type PublisherIconKind = "monogram" | "favicon";
+export const PUBLISHER_ICON_KINDS: readonly PublisherIconKind[] = ["monogram", "favicon"];
 
 /**
  * How a published benchmark is attributed: to its author (personal), an org brand, or — for open
@@ -100,10 +104,11 @@ export interface AccountRow {
   key: string;
   name: string;
   description: string | null;
-  url: string | null;
   /** 0/1 boolean. Gates the direct personal self-publish shortcut. Surfaced as `allow_personal_publish`. */
   allow_personal_publish: number;
   created_at: number;
+  /** Soft-delete stamp (epoch-ms); null while live. A deleted account is blocked at auth. Never surfaced. */
+  deleted_at: number | null;
 }
 
 /** One third-party source the ingestion importer republishes from. Importer-owned; no API writes. */
@@ -127,6 +132,8 @@ export interface AccountUserRow {
   user_id: string;
   role: Role;
   created_at: number;
+  /** Opaque JSON bag of the member's per-account UI preferences (e.g. theme); a JSON string or null. */
+  settings: string | null;
 }
 
 export interface InvitationRow {
@@ -193,8 +200,8 @@ export interface BenchmarkRow {
   published_at: number | null;
   withdrawn_at: number | null;
   withdrawal_reason: string | null;
-  /** JSON string of a ObservationSchema. */
-  observation_schema: string;
+  /** JSON string of a MeasurementSchema. */
+  measurement_schema: string;
   /** The user who created the benchmark, or null if an API key created it. */
   created_by_user_id: string | null;
   /** 0/1 boolean. 1 = still cooking (editable); 0 = marked ready (subtree locked). Surfaced as `draft`. */
@@ -232,12 +239,10 @@ export interface BenchmarkTagRow {
   created_at: number;
 }
 
-/** The frozen-at-publish attribution for an ORGANIZATION publish. */
+/** The frozen-at-publish attribution for an ORGANIZATION publish: the verified domain + icon choice. */
 export interface OrgAttributionSnapshot {
-  name: string;
-  logo_url: string | null;
-  /** Domains that were VERIFIED at the instant of publish. */
-  verified_domains: string[];
+  domain: string;
+  icon: PublisherIconKind;
 }
 
 /** The frozen-at-publish attribution for a PERSONAL publish. */
@@ -262,50 +267,120 @@ export interface IngestedAttributionSnapshot {
   retrieved_at: number;
 }
 
-export interface PublisherIdentityRow {
+/**
+ * A publisher IS a domain (§3). It's publishable once its domain is VERIFIED via DNS TXT. There's no
+ * free-text name/logo — attribution shows only the verified domain — so a user can't impersonate a
+ * brand they don't control.
+ */
+export interface PublisherRow {
   id: string;
   account_id: string;
-  key: string;
-  name: string;
-  logo_url: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface PublisherDomainRow {
-  id: string;
-  account_id: string;
-  publisher_identity_id: string;
   domain: string;
-  /** The TXT record value the user adds to DNS. Public (goes in DNS) — stored plaintext, surfaced. */
+  status: PublisherStatus;
+  /** The TXT record value the owner adds to DNS. Public (goes in DNS) — stored plaintext, surfaced. */
   verification_token: string;
-  status: PublisherDomainStatus;
   verified_at: number | null;
   last_checked_at: number | null;
+  icon: PublisherIconKind;
   created_at: number;
 }
 
 /**
- * A target is an account-owned entity (a system/model/config the publisher measures), reusable across
- * that account's benchmarks. Its membership in a benchmark lives in `benchmark_target` (M:N), not on
+ * A subject is an account-owned entity (a system/model/config the publisher measures), reusable across
+ * that account's benchmarks. Its membership in a benchmark lives in `benchmark_subject` (M:N), not on
  * the row. `key` is unique per account.
  */
-export interface TargetRow {
+export interface SubjectRow {
   id: string;
   account_id: string;
+  /** The subject_type this subject conforms to. Nullable at the DB level (see 0018) but app-required. */
+  subject_type_id: string | null;
   key: string;
   name: string;
-  /** JSON string or null. */
+  /** JSON string of the typed field values (keyed by field key), or null. */
   details: string | null;
   created_at: number;
   updated_at: number;
 }
 
-/** One many-to-many link between a benchmark and a target. */
-export interface BenchmarkTargetRow {
+// ── Subject types ── a formal schema for subjects (a subject picks a type, then carries typed fields).
+export type SubjectFieldType = "STRING" | "NUMBER" | "BOOLEAN" | "ENUM" | "DATE";
+export const SUBJECT_FIELD_TYPES: readonly SubjectFieldType[] = ["STRING", "NUMBER", "BOOLEAN", "ENUM", "DATE"];
+
+/**
+ * One typed attribute a subject of a given subject_type carries. `name` is the stable identifier used
+ * in the subject's `details` JSON (kebab-case, unique within the type; derived from `label` when the
+ * client omits it); `label` is the human-readable display name; `description` is an optional note.
+ * `max_length` applies only to STRING and `options` (the allowed values) only to ENUM.
+ */
+export interface SubjectFieldDef {
+  name: string;
+  label: string;
+  type: SubjectFieldType;
+  required: boolean;
+  description?: string;
+  max_length?: number;
+  options?: string[];
+}
+
+/** A subject type: a named, account-owned schema of `fields` that subjects of this type conform to. */
+export interface SubjectTypeRow {
+  id: string;
+  account_id: string;
+  key: string;
+  name: string;
+  /** JSON string of SubjectFieldDef[]. */
+  fields: string;
+  created_at: number;
+  updated_at: number;
+}
+
+// ── Metrics ── a reusable, account-owned catalogue of metric definitions (stored or computed-on-read).
+export type MetricType = "NUMBER" | "DURATION_MS" | "PERCENT" | "COUNT" | "BYTES";
+export const METRIC_TYPES: readonly MetricType[] = ["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"];
+export type MetricKind = "STORED" | "DERIVED";
+export const METRIC_KINDS: readonly MetricKind[] = ["STORED", "DERIVED"];
+/** The small, closed set of OOTB derived-metric formulas. SKEW_MS takes no operands (it's the offset of
+ *  `created_at` from the previous minute); the rest are binary over two other metrics (`a`, `b`). */
+export type MetricFormulaOp = "SKEW_MS" | "SUM" | "DIFFERENCE" | "RATIO" | "PERCENT";
+export const METRIC_FORMULA_OPS: readonly MetricFormulaOp[] = ["SKEW_MS", "SUM", "DIFFERENCE", "RATIO", "PERCENT"];
+export interface MetricFormula {
+  op: MetricFormulaOp;
+  a?: string;
+  b?: string;
+}
+
+/** A metric definition: `name` is the snake_case identifier (the key it occupies in a measurement's
+ *  metrics bag, unique per account); `label` is the display name; `kind` is STORED (POSTed by clients)
+ *  or DERIVED (computed on read from `formula`). */
+export interface MetricRow {
+  id: string;
+  account_id: string;
+  name: string;
+  label: string;
+  description: string | null;
+  type: MetricType;
+  kind: MetricKind;
+  /** JSON string of MetricFormula, for DERIVED metrics; null for STORED. */
+  formula: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** One many-to-many link between a benchmark and a subject. */
+export interface BenchmarkSubjectRow {
   id: string;
   benchmark_id: string;
-  target_id: string;
+  subject_id: string;
+  created_at: number;
+}
+
+/** One many-to-many link between a benchmark and a metric from the account's metric library. Linking
+ *  snapshots the metric's definition into the benchmark's measurement_schema. */
+export interface BenchmarkMetricRow {
+  id: string;
+  benchmark_id: string;
+  metric_id: string;
   created_at: number;
 }
 
@@ -330,7 +405,7 @@ export interface MeasurementRow {
   /** rowid — database-assigned INTEGER; stringified on the wire. */
   id: number;
   run_id: string;
-  target_id: string;
+  subject_id: string;
   created_at: number;
   /** JSON string or null (stored metrics only). */
   metrics: string | null;
@@ -340,7 +415,7 @@ export interface MeasurementRow {
   client_ip: string | null;
 }
 
-// ── observation_schema ──────────────────────────────────────────────────────────
+// ── measurement_schema ──────────────────────────────────────────────────────────
 
 /** A JSON Logic rule, e.g. `{ "minute_offset_ms": [{ "var": "created_at" }] }`. */
 export type JsonLogicRule = unknown;
@@ -379,7 +454,7 @@ export interface ChartDecl {
   x_kind?: XKind;
 }
 
-export interface ObservationSchema {
+export interface MeasurementSchema {
   metrics: MetricDecl[];
   derived: DerivedDecl[];
   /** Optional default chart declaration; the visitor may override at chart time. */

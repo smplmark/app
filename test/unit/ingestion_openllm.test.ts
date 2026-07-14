@@ -173,10 +173,10 @@ describe("openllm adapter", () => {
     expect(b.published_at).toBe(Date.UTC(2025, 2, 20, 12, 17, 27));
     expect(b.category).toBe("ML_AI");
     expect(b.tags).toEqual(["llm", "evaluation", "open-weights", "huggingface"]);
-    expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "average", x_kind: "CATEGORY" } });
+    expect(b.measurementSchema).toMatchObject({ chart: { x: null, y: "average", x_kind: "CATEGORY" } });
 
-    // 5 valid targets (flagged + malformed rows dropped), in average-descending order.
-    expect(b.targets.map((t) => t.key)).toEqual([
+    // 5 valid subjects (flagged + malformed rows dropped), in average-descending order.
+    expect(b.subjects.map((t) => t.key)).toEqual([
       "meta-llama-llama-3-1-70b-instruct-bfloat16",
       "qwen-qwen2-7b-bfloat16",
       "qwen-qwen2-7b-float16",
@@ -184,13 +184,13 @@ describe("openllm adapter", () => {
       "official-low-org-model-bfloat16",
     ]);
 
-    // One benchmark-level run: the shared "final" leaderboard result, deduped across all targets.
+    // One benchmark-level run: the shared "final" leaderboard result, deduped across all subjects.
     expect(b.runs).toEqual([{ key: "final", name: "Final leaderboard result" }]);
-    // One measurement per target, each referencing the shared run.
+    // One measurement per subject, each referencing the shared run.
     expect(b.measurements).toHaveLength(5);
     expect(b.measurements.every((m) => m.run_key === "final")).toBe(true);
 
-    const llama = b.targets[0];
+    const llama = b.subjects[0];
     expect(llama.name).toBe("meta-llama/Llama-3.1-70B-Instruct"); // single precision → no suffix
     expect(llama.details).toEqual({
       precision: "bfloat16",
@@ -200,12 +200,12 @@ describe("openllm adapter", () => {
       hub_license: "llama3.1",
     });
     const llamaMeasurement = b.measurements.find(
-      (m) => m.run_key === "final" && m.target_key === llama.key,
+      (m) => m.run_key === "final" && m.subject_key === llama.key,
     );
     expect(llamaMeasurement).toBeDefined();
     expect(llamaMeasurement).toEqual({
       run_key: "final",
-      target_key: llama.key,
+      subject_key: llama.key,
       created_at: Date.UTC(2024, 5, 26),
       metrics: {
         average: 43.5,
@@ -219,8 +219,8 @@ describe("openllm adapter", () => {
       meta: { official_providers: true, model_sha: "abc123", moe: false, merged: false },
     });
 
-    // Every measurement metric key is declared in the observation schema.
-    const schema = b.observationSchema as { metrics: { name: string }[] };
+    // Every measurement metric key is declared in the measurement schema.
+    const schema = b.measurementSchema as { metrics: { name: string }[] };
     const declared = new Set(schema.metrics.map((m) => m.name));
     for (const measurement of b.measurements) {
       for (const key of Object.keys(measurement.metrics)) {
@@ -229,21 +229,21 @@ describe("openllm adapter", () => {
     }
 
     // A fullname evaluated under several precisions gets the disambiguating suffix.
-    expect(b.targets[1].name).toBe("Qwen/Qwen2-7B (bfloat16)");
-    expect(b.targets[2].name).toBe("Qwen/Qwen2-7B (float16)");
+    expect(b.subjects[1].name).toBe("Qwen/Qwen2-7B (bfloat16)");
+    expect(b.subjects[2].name).toBe("Qwen/Qwen2-7B (float16)");
 
     // Flagged and malformed rows never surface.
-    expect(b.targets.some((t) => t.name.includes("bad/model"))).toBe(false);
-    expect(b.targets.some((t) => t.name.includes("nameless"))).toBe(false);
-    expect(b.targets.some((t) => t.name.includes("no-scores"))).toBe(false);
+    expect(b.subjects.some((t) => t.name.includes("bad/model"))).toBe(false);
+    expect(b.subjects.some((t) => t.name.includes("nameless"))).toBe(false);
+    expect(b.subjects.some((t) => t.name.includes("no-scores"))).toBe(false);
   });
 
   it("omits non-number cells and falls back to retrieved_at when the date is missing", () => {
     const [b] = adapt(archive as never);
-    const tiny = b.targets.find((t) => t.key === "tiny-model-4bit");
+    const tiny = b.subjects.find((t) => t.key === "tiny-model-4bit");
     expect(tiny).toBeDefined();
     const measurement = b.measurements.find(
-      (m) => m.run_key === "final" && m.target_key === tiny!.key,
+      (m) => m.run_key === "final" && m.subject_key === tiny!.key,
     );
     expect(measurement).toBeDefined();
     expect(measurement!.created_at).toBe(T_RETRIEVED); // null Submission Date → retrieved_at
@@ -259,17 +259,17 @@ describe("openllm adapter", () => {
   });
 
   it("caps to the top N by average plus every official-provider row", () => {
-    const [b] = adapt(archive as never, { topTargets: 2 });
-    expect(b.targets.map((t) => t.key)).toEqual([
+    const [b] = adapt(archive as never, { topSubjects: 2 });
+    expect(b.subjects.map((t) => t.key)).toEqual([
       "meta-llama-llama-3-1-70b-instruct-bfloat16",
       "qwen-qwen2-7b-bfloat16",
       "official-low-org-model-bfloat16", // rank 5 by average, kept because Official Providers
     ]);
     // Only one Qwen precision survives the cap → the suffix is no longer needed.
-    expect(b.targets[1].name).toBe("Qwen/Qwen2-7B");
+    expect(b.subjects[1].name).toBe("Qwen/Qwen2-7B");
   });
 
-  it("defaults the cap to 300 targets", () => {
+  it("defaults the cap to 300 subjects", () => {
     const many = Array.from({ length: 305 }, (_, i) =>
       makeRow({
         eval_name: `org_model-${i}_bfloat16`,
@@ -288,18 +288,18 @@ describe("openllm adapter", () => {
     const big = makeArchive({ "page-000.json": makePage(many, many.length) });
 
     const [b] = adapt(big as never);
-    expect(b.targets).toHaveLength(301); // top 300 + 1 official straggler
-    expect(b.targets.at(-1)!.key).toBe("official-tail-bfloat16");
-    expect(b.targets.some((t) => t.key === "org-model-304-bfloat16")).toBe(false);
+    expect(b.subjects).toHaveLength(301); // top 300 + 1 official straggler
+    expect(b.subjects.at(-1)!.key).toBe("official-tail-bfloat16");
+    expect(b.subjects.some((t) => t.key === "org-model-304-bfloat16")).toBe(false);
 
     const [full] = adapt(big as never, fullOptions);
-    expect(full.targets).toHaveLength(306);
+    expect(full.subjects).toHaveLength(306);
   });
 
   it("fullOptions lifts the cap entirely", () => {
-    expect(fullOptions.topTargets).toBe(Number.POSITIVE_INFINITY);
+    expect(fullOptions.topSubjects).toBe(Number.POSITIVE_INFINITY);
     const [b] = adapt(archive as never, fullOptions);
-    expect(b.targets).toHaveLength(5);
+    expect(b.subjects).toHaveLength(5);
   });
 
   it("throws loudly when the archive shape is unrecognizable", () => {

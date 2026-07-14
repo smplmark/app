@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { resolveApiKey } from "../auth/apikey";
 import { verifySessionToken } from "../auth/jwt";
 import { API_KEY_PREFIX } from "../config";
+import { getAccountById } from "../data/accounts";
 import { touchLastUsed } from "../data/api_keys";
 import { UnauthorizedError } from "../errors";
 import type { AuthContext } from "../types";
@@ -19,26 +20,33 @@ const MISSING =
 
 /** Resolve a bearer token (either credential type) to an auth context. Throws on any failure. */
 async function resolve(c: AppContext, token: string): Promise<AuthContext> {
+  let ctx: AuthContext;
   if (token.startsWith(API_KEY_PREFIX)) {
-    const { ctx, keyId } = await resolveApiKey(c.env.DB, token, Date.now());
+    const resolved = await resolveApiKey(c.env.DB, token, Date.now());
+    ctx = resolved.ctx;
     // Best-effort last-used stamp, off the hot path.
     try {
-      c.executionCtx.waitUntil(touchLastUsed(c.env.DB, keyId, Date.now()));
+      c.executionCtx.waitUntil(touchLastUsed(c.env.DB, resolved.keyId, Date.now()));
     } catch {
       // no execution context (e.g. some test harnesses) — skip silently.
     }
-    return ctx;
+  } else {
+    const claims = await verifySessionToken(c.env, token);
+    ctx = {
+      source: "SESSION",
+      account_id: claims.account_id,
+      scope_type: "ACCOUNT",
+      scope_ref: null,
+      user_id: claims.sub,
+      role: claims.role,
+      session_id: claims.jti,
+    };
   }
-  const claims = await verifySessionToken(c.env, token);
-  return {
-    source: "SESSION",
-    account_id: claims.account_id,
-    scope_type: "ACCOUNT",
-    scope_ref: null,
-    user_id: claims.sub,
-    role: claims.role,
-    session_id: claims.jti,
-  };
+  // A soft-deleted account is blocked here — its tokens (session or API key) simply stop resolving.
+  if ((await getAccountById(c.env.DB, ctx.account_id)) === null) {
+    throw new UnauthorizedError("This account is no longer available.");
+  }
+  return ctx;
 }
 
 /** Require a valid credential. Sets `auth` on the context. */

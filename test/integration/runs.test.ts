@@ -6,8 +6,9 @@ import {
   apiPut,
   bearer,
   makeBenchmark,
+  makeMeasurement,
   makeRun,
-  makeTarget,
+  makeSubject,
   publish,
   register,
   resetDb,
@@ -18,7 +19,7 @@ beforeEach(resetDb);
 
 async function scaffold(token: string, runAttrs: Record<string, unknown> = {}) {
   const b = await makeBenchmark(token);
-  const t = await makeTarget(token, b.id);
+  const t = await makeSubject(token, b.id);
   const r = await makeRun(token, b.id, runAttrs);
   return { b, t, r };
 }
@@ -62,6 +63,43 @@ describe("run liveness + actions", () => {
       bearer(me.token),
     );
     expect(reuse.status).toBe(201);
+  });
+
+  it("auto-generates a run key when omitted and defaults started_at to now", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const before = Date.now();
+    const res = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b.id } } },
+      bearer(me.token),
+    );
+    expect(res.status).toBe(201);
+    const run = ((await res.json()) as { data: Resource }).data;
+    // A key was generated (run-…) and started_at defaulted to roughly now.
+    expect(run.attributes.key).toMatch(/^run-/);
+    const started = Date.parse(run.attributes.started_at as string);
+    expect(started).toBeGreaterThanOrEqual(before - 1000);
+    expect(started).toBeLessThanOrEqual(Date.now() + 1000);
+
+    // Two omitted-key runs under the same benchmark don't collide.
+    const res2 = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b.id } } },
+      bearer(me.token),
+    );
+    expect(res2.status).toBe(201);
+    const run2 = ((await res2.json()) as { data: Resource }).data;
+    expect(run2.attributes.key).not.toBe(run.attributes.key);
+
+    // An explicit null started_at is preserved (no start time).
+    const res3 = await apiPost(
+      "/api/v1/runs",
+      { data: { type: "run", attributes: { benchmark: b.id, started_at: null } } },
+      bearer(me.token),
+    );
+    expect(res3.status).toBe(201);
+    expect(((await res3.json()) as { data: Resource }).data.attributes.started_at).toBeNull();
   });
 
   it("a new run is live (ended_at null)", async () => {
@@ -127,10 +165,26 @@ describe("started_at freeze + delete rules", () => {
     expect(changed.status).toBe(409);
   });
 
-  it("forbids deleting a run of a published benchmark", async () => {
+  it("deletes a draft benchmark's run freely (even with measurements)", async () => {
     const me = await register();
-    const { b, r } = await scaffold(me.token);
+    const { b, t, r } = await scaffold(me.token);
+    await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
+    expect(b.attributes.status).toBe("PRIVATE");
+    expect((await apiDelete(`/api/v1/runs/${r.id}`, bearer(me.token))).status).toBe(204);
+  });
+
+  it("on a published benchmark, deletes an empty run but not one with measurements", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const t = await makeSubject(me.token, b.id);
+    const withData = await makeRun(me.token, b.id, {});
+    const empty = await makeRun(me.token, b.id, { key: "empty" });
+    await makeMeasurement(me.token, withData.id, t.id, { metrics: { skew_ms: 1 } });
     await publish(me.token, me.user_id, b.id);
-    expect((await apiDelete(`/api/v1/runs/${r.id}`, bearer(me.token))).status).toBe(409);
+
+    // The run carrying measurements is append-only → 409 (invalidate instead).
+    expect((await apiDelete(`/api/v1/runs/${withData.id}`, bearer(me.token))).status).toBe(409);
+    // The empty run holds no published data → deletable.
+    expect((await apiDelete(`/api/v1/runs/${empty.id}`, bearer(me.token))).status).toBe(204);
   });
 });

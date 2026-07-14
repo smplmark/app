@@ -4,14 +4,14 @@
 // against fixture archives.
 
 /**
- * @typedef {Object} IngestMeasurement a single (run, target) data point
+ * @typedef {Object} IngestMeasurement a single (run, subject) data point
  * @property {string} run_key the key of the run (occasion) — must be a run of the same benchmark
- * @property {string} target_key the key of the target measured — must be a target of the same benchmark
+ * @property {string} subject_key the key of the subject measured — must be a subject of the same benchmark
  * @property {number} created_at epoch-ms (source timestamp, or the archive's retrieved_at)
- * @property {Record<string, number>} metrics numeric measures (keys must match the observation_schema)
+ * @property {Record<string, number>} metrics numeric measures (keys must match the measurement_schema)
  * @property {Record<string, unknown>} [meta] non-numeric context
  *
- * @typedef {Object} IngestRun a measurement occasion; a benchmark child that spans whatever targets
+ * @typedef {Object} IngestRun a measurement occasion; a benchmark child that spans whatever subjects
  *   have measurements in it (one comparative sweep, or one run per independent result)
  * @property {string} key unique within its benchmark
  * @property {string} [name]
@@ -19,18 +19,18 @@
  * @property {number} [started_at] epoch-ms
  * @property {number} [ended_at] epoch-ms — ingested runs are completed, not live
  *
- * @typedef {Object} IngestTarget
+ * @typedef {Object} IngestSubject
  * @property {string} key benchmark-local handle (measurements reference it); the importer maps it to
  *   an account-scoped, unique-per-account stored key
  * @property {string} name
- * @property {string} [source_external_id] a stable id the SOURCE assigns this target (a model id, a
+ * @property {string} [source_external_id] a stable id the SOURCE assigns this subject (a model id, a
  *   system name, …). When two of a source's benchmarks emit the same source_external_id, the importer
- *   treats them as ONE account-owned target and links it into both (M:N dedup). Omit when the source
- *   has no cross-benchmark identity — the target then stays scoped to its benchmark.
+ *   treats them as ONE account-owned subject and links it into both (M:N dedup). Omit when the source
+ *   has no cross-benchmark identity — the subject then stays scoped to its benchmark.
  * @property {Record<string, unknown>} [details]
  *
- * @typedef {Object} IngestBenchmark benchmark → { targets, runs } → measurements (each measurement
- *   names one run + one target, both benchmark children)
+ * @typedef {Object} IngestBenchmark benchmark → { subjects, runs } → measurements (each measurement
+ *   names one run + one subject, both benchmark children)
  * @property {string} key unique within the owning publisher account
  * @property {string} name
  * @property {string} description one-line tagline
@@ -38,10 +38,10 @@
  * @property {string | null} methodology null — sources' methodology is theirs to publish, never paraphrased here
  * @property {"HARDWARE"|"DATABASE"|"ML_AI"|"STORAGE"|"NETWORK"|"OTHER"} category
  * @property {string[]} tags lowercase slugs
- * @property {object} observationSchema the benchmark's observation_schema (metrics/derived/chart)
+ * @property {object} measurementSchema the benchmark's measurement_schema (metrics/derived/chart)
  * @property {number} [published_at] epoch-ms — when the SOURCE published this dataset; omitted
  *   when the archive carries no usable publication date (the importer falls back to retrieved_at)
- * @property {IngestTarget[]} targets
+ * @property {IngestSubject[]} subjects
  * @property {IngestRun[]} runs
  * @property {IngestMeasurement[]} measurements
  *
@@ -66,7 +66,7 @@
  */
 
 /**
- * URL-safe lowercase slug for target/run keys derived from free-form source strings.
+ * URL-safe lowercase slug for subject/run keys derived from free-form source strings.
  * @param {unknown} raw
  * @param {number} [maxLen]
  */
@@ -83,7 +83,7 @@ export function slugify(raw, maxLen = 80) {
 
 /**
  * Slugify with collision suffixes (`-2`, `-3`, …) so distinct source names never merge into one
- * key. `seen` persists across calls for one keyspace (e.g. one benchmark's targets).
+ * key. `seen` persists across calls for one keyspace (e.g. one benchmark's subjects).
  * @param {string} raw
  * @param {Map<string, number>} seen
  * @param {number} [maxLen]

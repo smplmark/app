@@ -1,4 +1,4 @@
-// Targeted coverage for the remaining conditional branches: scope edges, expiry, optional-field
+// Subjected coverage for the remaining conditional branches: scope edges, expiry, optional-field
 // defaults, and private-benchmark mutation paths the happy-path tests skip.
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import {
   bearer,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   mintKey,
   publish,
   register,
@@ -22,7 +22,7 @@ import {
 beforeEach(resetDb);
 
 describe("benchmark create defaults + scoped-key visibility", () => {
-  it("defaults an omitted observation_schema to empty", async () => {
+  it("defaults an omitted measurement_schema to empty", async () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
@@ -30,7 +30,7 @@ describe("benchmark create defaults + scoped-key visibility", () => {
       bearer(me.token),
     );
     expect(res.status).toBe(201);
-    expect(((await res.json()) as { data: Resource }).data.attributes.observation_schema).toEqual({
+    expect(((await res.json()) as { data: Resource }).data.attributes.measurement_schema).toEqual({
       metrics: [],
       derived: [],
     });
@@ -101,17 +101,17 @@ describe("api key expiry + rotate scope", () => {
 });
 
 describe("measurements scope edges", () => {
-  it("returns 404 for unknown scope targets and 200 for a published target scope", async () => {
+  it("returns 404 for unknown scope subjects and 200 for a published subject scope", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     const r = await makeRun(me.token, b.id);
     await apiPost(
       "/api/v1/measurements",
-      { data: { type: "measurement", attributes: { run: r.id, target: t.id, created_at: Date.UTC(2026, 6, 1) } } },
+      { data: { type: "measurement", attributes: { run: r.id, subject: t.id, created_at: Date.UTC(2026, 6, 1) } } },
       bearer(me.token),
     );
-    expect((await apiGet("/api/v1/measurements?filter[target]=nope", bearer(me.token))).status).toBe(404);
+    expect((await apiGet("/api/v1/measurements?filter[subject]=nope", bearer(me.token))).status).toBe(404);
     expect((await apiGet("/api/v1/measurements?filter[benchmark]=nope", bearer(me.token))).status).toBe(404);
 
     await publish(me.token, me.user_id, b.id);
@@ -141,13 +141,13 @@ describe("private run mutation + invalidate default", () => {
   });
 });
 
-describe("targets published read + expired verification", () => {
-  it("serves a published target to anonymous readers", async () => {
+describe("subjects published read + expired verification", () => {
+  it("serves a published subject to anonymous readers", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     await publish(me.token, me.user_id, b.id);
-    expect((await apiGet(`/api/v1/targets/${t.id}`)).status).toBe(200);
+    expect((await apiGet(`/api/v1/subjects/${t.id}`)).status).toBe(200);
   });
 
   it("rejects an expired verification token", async () => {

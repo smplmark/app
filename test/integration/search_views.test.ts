@@ -5,8 +5,8 @@ import {
   apiPost,
   apiPut,
   bearer,
-  linkTarget,
-  makeAccountTarget,
+  linkSubject,
+  makeAccountSubject,
   makeBenchmark,
   publish,
   register,
@@ -84,25 +84,25 @@ describe("filter[search]", () => {
     expect((await apiGet("/api/v1/benchmarks?filter[search]=" + "x".repeat(200))).status).toBe(400);
   });
 
-  it("matches a target's name or key, so a model or system finds its benchmark", async () => {
+  it("matches a subject's name or key, so a model or system finds its benchmark", async () => {
     const owner = await register();
     const llm = await makeBenchmark(owner.token, { key: "llm-bench", name: "LLM Bench", category: "ML_AI" });
     const db = await makeBenchmark(owner.token, { key: "db-bench", name: "DB Bench", category: "DATABASE" });
-    // Target NAME differs from its key, to prove the name (not only the key) is searched.
-    const t1 = await makeAccountTarget(owner.token, "model-a", { name: "Meta Llama-3.1-70B Instruct" });
-    await linkTarget(owner.token, llm.id, t1.id);
-    const t2 = await makeAccountTarget(owner.token, "postgres-16", { name: "PostgreSQL 16" });
-    await linkTarget(owner.token, db.id, t2.id);
+    // Subject NAME differs from its key, to prove the name (not only the key) is searched.
+    const t1 = await makeAccountSubject(owner.token, "model-a", { name: "Meta Llama-3.1-70B Instruct" });
+    await linkSubject(owner.token, llm.id, t1.id);
+    const t2 = await makeAccountSubject(owner.token, "postgres-16", { name: "PostgreSQL 16" });
+    await linkSubject(owner.token, db.id, t2.id);
     await publish(owner.token, owner.user_id, llm.id);
     await publish(owner.token, owner.user_id, db.id);
 
-    // Neither benchmark's own text contains "llama" — only the target's name does (case-insensitive).
+    // Neither benchmark's own text contains "llama" — only the subject's name does (case-insensitive).
     expect(await keysFor("/api/v1/benchmarks?filter[search]=llama")).toEqual(["llm-bench"]);
-    // Multi-term "llama 3" still ANDs to the one benchmark whose target name carries both words.
+    // Multi-term "llama 3" still ANDs to the one benchmark whose subject name carries both words.
     expect(await keysFor("/api/v1/benchmarks?filter[search]=llama%203")).toEqual(["llm-bench"]);
-    // A target key matches too.
+    // A subject key matches too.
     expect(await keysFor("/api/v1/benchmarks?filter[search]=postgres")).toEqual(["db-bench"]);
-    // A term in neither the benchmark nor any of its targets still finds nothing.
+    // A term in neither the benchmark nor any of its subjects still finds nothing.
     expect(await keysFor("/api/v1/benchmarks?filter[search]=nonexistentxyz")).toEqual([]);
   });
 
@@ -117,7 +117,7 @@ describe("filter[search]", () => {
       {
         data: {
           type: "benchmark",
-          attributes: { name: "Renamed Xyzzy", observation_schema: SKEW_SCHEMA, tags: ["newtag"] },
+          attributes: { name: "Renamed Xyzzy", measurement_schema: SKEW_SCHEMA, tags: ["newtag"] },
         },
       },
       bearer(owner.token),

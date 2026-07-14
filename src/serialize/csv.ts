@@ -1,9 +1,9 @@
 // Serialize measurement resources to CSV (§9 / ADR-014 content negotiation). Columns: id, created_at,
-// run, target, then one column per metric name (union across the page, sorted), then meta (a JSON
+// run, subject, then one column per metric name (union across the page, sorted), then meta (a JSON
 // cell). RFC-4180 quoting; rows separated by CRLF. Empty input yields a header-only document.
 import type { ResourceObject } from "../http/jsonapi";
 
-const FIXED_LEADING = ["id", "created_at", "run", "target"];
+const FIXED_LEADING = ["id", "created_at", "run", "subject"];
 
 function quote(cell: string): string {
   if (/[",\r\n]/.test(cell)) {
@@ -40,7 +40,7 @@ export function measurementsToCsv(resources: ResourceObject[]): string {
       r.id,
       cellFor(r.attributes.created_at),
       cellFor(r.attributes.run),
-      cellFor(r.attributes.target),
+      cellFor(r.attributes.subject),
       ...sortedMetricKeys.map((k) => cellFor(metrics[k])),
       cellFor(r.attributes.meta),
     ];

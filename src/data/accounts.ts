@@ -6,7 +6,6 @@ export interface CreateAccountInput {
   key: string;
   name: string;
   description?: string | null;
-  url?: string | null;
 }
 
 export async function createAccount(
@@ -18,21 +17,20 @@ export async function createAccount(
     key: input.key,
     name: input.name,
     description: input.description ?? null,
-    url: input.url ?? null,
     allow_personal_publish: 0,
     created_at: Date.now(),
+    deleted_at: null,
   };
   try {
     await db
       .prepare(
-        "INSERT INTO account (id, key, name, description, url, allow_personal_publish, created_at) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO account (id, key, name, description, allow_personal_publish, created_at) VALUES (?,?,?,?,?,?)",
       )
       .bind(
         row.id,
         row.key,
         row.name,
         row.description,
-        row.url,
         row.allow_personal_publish,
         row.created_at,
       )
@@ -48,13 +46,17 @@ export async function createAccount(
   return row;
 }
 
+// All account reads exclude soft-deleted rows (deleted_at IS NULL) — a deleted account is invisible.
+
 export async function getAccountById(
   db: D1Database,
   id: string,
 ): Promise<AccountRow | null> {
   return (
-    (await db.prepare("SELECT * FROM account WHERE id = ?").bind(id).first<AccountRow>()) ??
-    null
+    (await db
+      .prepare("SELECT * FROM account WHERE id = ? AND deleted_at IS NULL")
+      .bind(id)
+      .first<AccountRow>()) ?? null
   );
 }
 
@@ -63,8 +65,10 @@ export async function getAccountByKey(
   key: string,
 ): Promise<AccountRow | null> {
   return (
-    (await db.prepare("SELECT * FROM account WHERE key = ?").bind(key).first<AccountRow>()) ??
-    null
+    (await db
+      .prepare("SELECT * FROM account WHERE key = ? AND deleted_at IS NULL")
+      .bind(key)
+      .first<AccountRow>()) ?? null
   );
 }
 
@@ -76,17 +80,24 @@ export async function getPublicAccountById(
   return (
     (await db
       .prepare(
-        "SELECT * FROM account WHERE id = ? AND EXISTS (SELECT 1 FROM benchmark WHERE benchmark.account_id = account.id AND benchmark.status IN ('PUBLISHED', 'WITHDRAWN'))",
+        "SELECT * FROM account WHERE id = ? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM benchmark WHERE benchmark.account_id = account.id AND benchmark.status IN ('PUBLISHED', 'WITHDRAWN'))",
       )
       .bind(id)
       .first<AccountRow>()) ?? null
   );
 }
 
+/** Soft-delete an account: stamp deleted_at so it's blocked at auth and freed from the key index. */
+export async function softDeleteAccount(db: D1Database, id: string): Promise<void> {
+  await db
+    .prepare("UPDATE account SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .bind(Date.now(), id)
+    .run();
+}
+
 export interface UpdateAccountInput {
   name: string;
   description: string | null;
-  url: string | null;
   /** 0/1. The personal-publish opt-in (admins only, via account settings). */
   allow_personal_publish: number;
 }
@@ -102,17 +113,15 @@ export async function updateAccount(
     ...existing,
     name: input.name,
     description: input.description,
-    url: input.url,
     allow_personal_publish: input.allow_personal_publish,
   };
   await db
     .prepare(
-      "UPDATE account SET name=?, description=?, url=?, allow_personal_publish=? WHERE id=?",
+      "UPDATE account SET name=?, description=?, allow_personal_publish=? WHERE id=?",
     )
     .bind(
       updated.name,
       updated.description,
-      updated.url,
       updated.allow_personal_publish,
       id,
     )

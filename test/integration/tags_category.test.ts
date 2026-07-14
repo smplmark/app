@@ -77,7 +77,7 @@ describe("benchmark category + tags", () => {
           type: "benchmark",
           attributes: {
             name: "Renamed",
-            observation_schema: SKEW_SCHEMA,
+            measurement_schema: SKEW_SCHEMA,
             tags: ["three"],
             category: "NETWORK",
           },
@@ -93,7 +93,7 @@ describe("benchmark category + tags", () => {
     // Omitting tags/category is a full-replace back to the defaults.
     const cleared = await apiPut(
       `/api/v1/benchmarks/${bench.id}`,
-      { data: { type: "benchmark", attributes: { name: "Renamed", observation_schema: SKEW_SCHEMA } } },
+      { data: { type: "benchmark", attributes: { name: "Renamed", measurement_schema: SKEW_SCHEMA } } },
       bearer(token),
     );
     expect(cleared.status).toBe(200);
@@ -114,7 +114,7 @@ describe("benchmark category + tags", () => {
           type: "benchmark",
           attributes: {
             name: "Scheduler Latency",
-            observation_schema: SKEW_SCHEMA,
+            measurement_schema: SKEW_SCHEMA,
             tags: ["new-tag"],
             category: "NETWORK",
           },
@@ -214,7 +214,7 @@ describe("INGESTED benchmarks (importer-seeded)", () => {
     ).run();
     await env.DB.prepare(
       `INSERT INTO benchmark (id, account_id, key, name, description, status, published_at,
-         observation_schema, created_at, updated_at, draft, published_as_kind, attribution_snapshot, category)
+         measurement_schema, created_at, updated_at, draft, published_as_kind, attribution_snapshot, category)
        VALUES (?, 'acct-system', 'blender-open-data', 'Blender Open Data', 'Render performance', 'PUBLISHED',
          1783123200000, '{"metrics":[{"name":"median_score","type":"number"}],"derived":[]}',
          1783123200000, 1783123200000, 0, 'INGESTED', ?, 'HARDWARE')`,
@@ -244,7 +244,7 @@ describe("INGESTED benchmarks (importer-seeded)", () => {
     await insertIngested();
     await expect(
       env.DB.prepare(
-        `INSERT INTO benchmark (id, account_id, key, name, status, observation_schema, created_at, updated_at, draft, published_as_kind)
+        `INSERT INTO benchmark (id, account_id, key, name, status, measurement_schema, created_at, updated_at, draft, published_as_kind)
          VALUES (?, 'acct-system', 'bad', 'Bad', 'PUBLISHED', '{}', 0, 0, 0, 'ALIEN')`,
       )
         .bind(crypto.randomUUID())

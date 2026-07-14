@@ -22,11 +22,17 @@
   --topbar-height: 56px;
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --accent-strong: #245ec2;
     --accent-soft: color-mix(in srgb, var(--accent) 12%, #ffffff);
     --shadow: 0 16px 36px rgba(18, 18, 20, 0.08);
   }
+}
+/* Explicit user override (profile → theme). Same values as the OS-light block above. */
+:root[data-theme="light"] {
+  --accent-strong: #245ec2;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, #ffffff);
+  --shadow: 0 16px 36px rgba(18, 18, 20, 0.08);
 }
 
 /* ================================================================
@@ -58,7 +64,8 @@
 .sidebarHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  position: relative;
   padding: 0.75rem;
   min-height: var(--topbar-height);
   gap: 0.5rem;
@@ -87,6 +94,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
   width: 32px;
   height: 32px;
   padding: 0;
@@ -278,6 +289,9 @@
    Page, panel, headings
    ================================================================ */
 .appContent .page { display: grid; gap: 1.25rem; }
+/* Empty leading containers (e.g. an unused #load-error / message slot) must not reserve a grid row,
+   or their gap piles onto the top padding and pushes the toolbar/banner/table down. */
+.appContent .page > :empty { display: none; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.4rem; }
 .panel.isFlush { padding: 0; overflow: hidden; }
 
@@ -374,6 +388,63 @@
 .dataTableEmpty { text-align: center; padding: 2rem 1rem; color: var(--text-muted); font-style: italic; }
 .dataTable tr:last-child td { border-bottom: none; }
 
+/* Name-with-avatar cell */
+.cellUser { display: inline-flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.cellUserName { font-weight: 600; color: var(--text); }
+.cellUser .muted { font-weight: 400; }
+
+/* Sortable column header */
+.dataTable th.isSortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.dataTable th.isSortable:hover { color: var(--text); }
+.sortCaret { font-size: 0.7em; opacity: 0.75; margin-left: 0.15rem; }
+
+/* Table footer (row count + prev/next), inside the flush panel below the table */
+.dataTableFooter { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 0.8rem 1rem; border-top: 1px solid var(--border); }
+.dataTableCount { font-size: 0.82rem; color: var(--text-muted); }
+.dataTablePager { display: flex; gap: 0.5rem; }
+
+/* API-key list "Key" cell: truncated prefix + a Copy link */
+.keyCell { white-space: nowrap; }
+.keyCell .buttonLink { margin-left: 0.5rem; }
+
+/* Publisher icon (SM.publisherIcon): monogram, optionally covered by the domain's favicon */
+.pubIcon { position: relative; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; overflow: hidden; flex-shrink: 0; }
+.pubIconMono { line-height: 1; }
+.pubIconImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
+
+/* Icon-choice preview (publisher detail) — shows the actual favicon we resolved, or a fallback notice. */
+.iconPreview { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.85rem; }
+.iconPreviewBox { flex-shrink: 0; display: inline-flex; }
+.iconPreviewImg { width: 44px; height: 44px; border-radius: 8px; object-fit: contain; background: var(--surface); border: 1px solid var(--border); padding: 4px; }
+.iconPreviewCaption { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--text-muted); }
+.iconPreviewCaption.isWarn { color: var(--danger); }
+.iconPreviewCaption code { font-family: var(--mono); font-size: 0.85em; }
+
+/* Reusable copy-to-clipboard icon button (SM.copyButton) */
+.copyIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin-left: 0.35rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 150ms ease, color 150ms ease;
+}
+.copyIconBtn:hover { background: var(--surface-alt); color: var(--text); }
+.copyIconBtn.isCopied { color: var(--success); }
+.domainValueCell code { word-break: break-all; }
+
+/* Toolbar filter dropdown (e.g. the users "All roles" filter) */
+.filterSelect { height: 38px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 0.85rem; padding: 0 0.6rem; cursor: pointer; }
+.filterSelect:hover { border-color: var(--accent-strong); }
+
 /* Status pills */
 .statusPill { display: inline-flex; padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
 .statusPill.is-published, .statusPill.is-active, .statusPill.is-live { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
@@ -403,10 +474,91 @@
 .toolbarIconBtn:hover { background: var(--surface-alt); color: var(--text); }
 
 /* ================================================================
+   Subjects — two-pane (subject types | subjects of the selected type)
+   ================================================================ */
+.subjectsLayout { display: grid; grid-template-columns: 240px 1fr; gap: 1.25rem; align-items: start; }
+/* The types pane stretches the full height of the content viewport and stays put on scroll; its list
+   scrolls internally. `top`/`height` account for the sticky top bar + the .appContent padding. */
+.typesPane { position: sticky; top: calc(var(--topbar-height) + 1.5rem); height: calc(100vh - var(--topbar-height) - 3rem); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.typesPaneHead { display: flex; align-items: center; justify-content: space-between; padding: 0.7rem 0.55rem 0.7rem 0.9rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.typesPaneTitle { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.typesList { display: flex; flex-direction: column; padding: 0.35rem; gap: 2px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.typeItem { display: flex; flex-direction: column; gap: 0.1rem; text-align: left; padding: 0.5rem 0.6rem; border: none; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
+.typeItem:hover { background: var(--surface-alt); }
+.typeItem.isActive { background: var(--accent-soft); }
+.typeItemName { font-size: 0.9rem; font-weight: 600; }
+.typeItem.isActive .typeItemName { color: var(--accent); }
+.typeItemMeta { font-size: 0.74rem; color: var(--text-muted); }
+.subjectsMain { min-width: 0; }
+.subjectsMainHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.subjectsMainHeadText h1 { margin: 0; font-size: 1.35rem; }
+.subjectsMainSub { margin: 0.2rem 0 0; font-size: 0.85rem; color: var(--text-muted); }
+.iconBtn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.iconBtn:hover { border-color: var(--accent-strong); color: var(--text); }
+
+/* Subject-type Fields table (view + edit) */
+.typePill { display: inline-flex; align-items: center; padding: 0.12rem 0.55rem; border-radius: 999px; font-size: 0.74rem; font-weight: 600; background: var(--surface-alt); border: 1px solid var(--border); color: var(--text); }
+.fieldNameMain code { font-size: 0.86rem; }
+.fieldRowDesc { display: block; margin-top: 0.2rem; font-size: 0.8rem; font-weight: 400; color: var(--text-muted); max-width: 62ch; }
+.reqBadge { font-size: 0.82rem; font-weight: 600; color: var(--accent); }
+
+/* Single-field editor modal — per-type extras (max-length stepper, enum values) */
+.fieldModalBlock { display: grid; gap: 0.5rem; font-size: 0.92rem; color: var(--text-muted); }
+.stepper { display: inline-flex; align-items: stretch; width: fit-content; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.stepper input { width: 5.5rem; border: none; background: transparent; color: var(--text); font: inherit; text-align: center; padding: 0.5rem; -moz-appearance: textfield; }
+.stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.stepperBtn { border: none; background: var(--surface-alt); color: var(--text); width: 2.4rem; font-size: 1.15rem; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.stepperBtn:first-child { border-right: 1px solid var(--border); }
+.stepperBtn:last-child { border-left: 1px solid var(--border); }
+.stepperBtn:hover { background: color-mix(in srgb, var(--accent) 18%, var(--surface-alt)); }
+.enumEditor { display: grid; gap: 0.4rem; }
+.enumValueRow { display: flex; gap: 0.5rem; align-items: center; }
+.enumValueInput { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.75rem; background: var(--surface); color: var(--text); font: inherit; font-size: 0.92rem; min-height: 40px; }
+.enumValueInput:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.enumAdd { justify-self: start; }
+.fieldCheckRow { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.fieldCheckRow input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.subjectFormFields { display: grid; gap: 0.75rem; margin-top: 0.25rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
+
+/* Metric editor — the formula op <select> lives in a .fieldModalBlock (outside .field), and a
+   derived-kind pill gets an accent so STORED vs DERIVED reads at a glance in tables + the header. */
+.mfSelect { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 0.62rem 0.8rem; background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.92rem; font-weight: 500; min-height: 42px; }
+.mfSelect:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.typePill.kindDerived { background: color-mix(in srgb, var(--accent) 16%, var(--surface-alt)); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent-strong); }
+
+/* Runs tab — a master-detail inside the benchmark's tab panel: a narrow run picker on the left, the
+   selected run's measurements on the right. (Distinct from the page-level .typesPane, which is sticky
+   and viewport-tall — this pane lives inside a tab and is bounded by max-height instead.) */
+.runsLayout { display: grid; grid-template-columns: 240px 1fr; gap: 1.25rem; align-items: start; }
+.runsPane { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; max-height: min(60vh, 520px); }
+.runsPaneHead { display: flex; align-items: center; justify-content: space-between; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.runsPaneTitle { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.runsList { display: flex; flex-direction: column; padding: 0.35rem; gap: 2px; overflow-y: auto; }
+.runItem { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; text-align: left; padding: 0.5rem 0.6rem; border: none; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
+.runItem:hover { background: var(--surface-alt); }
+.runItem.isActive { background: var(--accent-soft); }
+.runItemName { font-size: 0.85rem; font-weight: 600; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runItem.isActive .runItemName { color: var(--accent); }
+.runsMain { min-width: 0; }
+.measHead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.measHeadText { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.measHeadText h2 { margin: 0; font-size: 1.05rem; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
+.measHeadActions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.measEmpty { color: var(--text-muted); padding: 1.5rem 0; }
+
+@media (max-width: 720px) {
+  .subjectsLayout { grid-template-columns: 1fr; }
+  .typesPane { position: static; height: auto; }
+  .typesList { flex-direction: row; overflow-x: auto; overflow-y: hidden; flex: 0 0 auto; }
+  .runsLayout { grid-template-columns: 1fr; }
+  .runsPane { max-height: none; }
+}
+
+/* ================================================================
    Modal
    ================================================================ */
 .modalOverlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1rem; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); }
-.modalPanel { position: relative; width: min(100%, 520px); display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow); }
+.modalPanel { position: relative; width: min(100%, 520px); max-height: calc(100vh - 2rem); overflow-y: auto; display: grid; gap: 1rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--surface); box-shadow: var(--shadow); }
 .modalHeader { display: grid; gap: 0.4rem; padding-right: 1.75rem; }
 .modalTitle { font-size: 1.15rem; font-weight: 700; margin: 0; }
 .modalDescription { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
@@ -416,13 +568,40 @@
 .modalCloseBtn:hover { background: var(--surface-alt); color: var(--text); }
 .modalCloseBtn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
 
+/* Toasts — brief, centered (top) notifications, e.g. verification results. */
+.toastHost { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; pointer-events: none; }
+.toast {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  max-width: min(92vw, 460px); padding: 0.7rem 1rem;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); box-shadow: var(--shadow);
+  color: var(--text); font-size: 0.9rem; font-weight: 600;
+  pointer-events: auto; cursor: default;
+  opacity: 0; transform: translateY(-8px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.toast.isIn { opacity: 1; transform: translateY(0); }
+.toast.isOut { opacity: 0; transform: translateY(-8px); }
+.toast svg { flex-shrink: 0; }
+.toast.toast-success { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.toast.toast-success svg { color: var(--success); }
+.toast.toast-error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.toast.toast-error svg { color: var(--danger); }
+
+/* Guidance list (e.g. the "not verified yet" modal) + inline DNS hints. */
+.tipList { margin: 0 0 1rem; padding-left: 1.15rem; display: grid; gap: 0.5rem; }
+.tipList li { font-size: 0.86rem; line-height: 1.5; color: var(--text-muted); }
+.txtHint { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--text-muted); }
+.txtHint code, .tipList code { font-family: var(--mono); font-size: 0.85em; background: var(--surface-alt); padding: 0.05rem 0.32rem; border-radius: 4px; }
+
 /* Key reveal box (plaintext API key shown once) */
 .keyReveal {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.75rem; background: var(--surface-alt); border: 1px solid var(--border);
-  border-radius: 8px; font-family: var(--mono); font-size: 0.82rem; word-break: break-all; color: var(--text);
+  border-radius: 8px; font-family: var(--mono); font-size: 0.82rem; color: var(--text);
 }
-.keyReveal code { flex: 1; }
+/* Keep the key on one line (the modal is sized to fit it); scroll rather than wrap on narrow screens. */
+.keyReveal code { flex: 1; min-width: 0; white-space: nowrap; overflow-x: auto; }
 
 /* ================================================================
    Empty state
@@ -459,25 +638,123 @@
 .miniLabel { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 0.5rem; }
 
 /* ================================================================
-   Profile page
+   Profile page — a conforming detail page (DetailHeader + Edit → Save),
+   so it reuses .detailHeader / .detailGrid / .detailField from below.
    ================================================================ */
-.profileLayout { display: grid; gap: 2.5rem; grid-template-columns: minmax(0, 1.4fr) minmax(240px, 0.8fr); align-items: start; }
-.profileMain { display: flex; align-items: flex-start; gap: 1.25rem; min-width: 0; }
-.profileMainText { display: grid; gap: 0.75rem; flex: 1; min-width: 0; }
-.profileNameRow { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.profileName { font-size: 1.35rem; margin: 0; }
-.profilePicHelp { margin: 0; font-size: 0.85rem; line-height: 1.5; max-width: 48ch; color: var(--text-muted); }
-.profileEditActions { display: flex; gap: 0.5rem; }
-.profileInfo { display: grid; gap: 0.9rem; padding-left: 2.5rem; border-left: 1px solid var(--border); }
-.profileRow { display: grid; gap: 0.15rem; }
-.profileRowLabel { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
-.profileRowValue { font-size: 1rem; }
-.profileVerifyValue { display: inline-flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.profileHeaderLeft { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+.profileHeaderText { min-width: 0; }
+.profileDetailPanel { margin-top: 1.25rem; }
+.profilePicHelp { margin: 1.25rem 0 0; font-size: 0.85rem; line-height: 1.5; max-width: 48ch; color: var(--text-muted); }
+.detailFieldHelp { margin: 0; font-size: 0.8rem; font-weight: 400; color: var(--text-muted); }
+.detailFieldValue .buttonLink { margin-left: 0.5rem; }
 
-@media (max-width: 720px) {
-  .profileLayout { grid-template-columns: 1fr; gap: 1.5rem; }
-  .profileInfo { padding-left: 0; padding-top: 1.5rem; border-left: none; border-top: 1px solid var(--border); }
+/* Danger zone (account settings) — a destructive-action panel with a red edge */
+.dangerZone { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.dangerZoneHeader { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--danger); margin-bottom: 0.85rem; }
+.dangerZoneRow { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.dangerZoneRow p { margin: 0.25rem 0 0; font-size: 0.85rem; max-width: 52ch; }
+
+/* Segmented control — the standard single-select "radio button" group across the console (theme
+   picker, invite-role, publisher icon, …). A row of joined segments in one bordered track; the
+   selected segment fills with the accent. Markup: a .radioGroup wrapping <label class="radioPill">
+   options, each with a hidden <input type="radio"> + a .radioPillLabel. Any legacy .radioDot is
+   hidden — selection shows by the fill, not a dot. */
+.radioGroup { display: inline-flex; width: fit-content; max-width: 100%; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 9px; }
+.radioPill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background 140ms ease, color 140ms ease;
 }
+.radioPill input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; pointer-events: none; }
+.radioDot { display: none; } /* segmented control shows selection by the fill, not a dot */
+.radioPillLabel { font: inherit; color: inherit; }
+.radioPill:first-child { border-radius: 8px 0 0 8px; }
+.radioPill:last-child { border-radius: 0 8px 8px 0; }
+.radioPill + .radioPill { border-left: 1px solid var(--border); } /* divider between segments */
+.radioPill:not(:has(input:checked)):hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.radioPill:has(input:checked) { background: var(--accent); color: #fff; border-left-color: transparent; }
+.radioPill:has(input:checked) + .radioPill { border-left-color: transparent; } /* drop the divider abutting the fill */
+.radioPill:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Option cards — a stacked single-select where each option carries a title + description (e.g. the
+   welcome wizard's publishing choice). A richer pattern than the compact segmented .radioGroup. */
+.choiceGroup { display: grid; gap: 0.6rem; }
+.choiceCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+.choiceCard input { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; pointer-events: none; }
+.choiceDot {
+  width: 16px;
+  height: 16px;
+  margin-top: 0.15rem;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: border-color 150ms ease;
+}
+.choiceDot::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform 150ms ease;
+}
+.choiceText { display: grid; gap: 0.25rem; }
+.choiceTitle { font-size: 0.92rem; font-weight: 700; color: var(--text); }
+.choiceDesc { font-size: 0.82rem; line-height: 1.45; color: var(--text-muted); }
+.choiceCard:hover { border-color: var(--accent-strong); }
+.choiceCard:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choiceCard:has(input:checked) .choiceDot { border-color: var(--accent); }
+.choiceCard:has(input:checked) .choiceDot::after { transform: scale(1); }
+.choiceCard:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ================================================================
+   First-run welcome wizard (rendered inside the shared modal)
+   ================================================================ */
+.wzScreen { display: grid; gap: 1.15rem; }
+.wzHero { display: grid; justify-items: center; gap: 0.7rem; text-align: center; padding: 0.5rem 0 0.25rem; }
+.wzHeroMark { width: 52px; height: 52px; border-radius: 14px; box-shadow: var(--shadow); }
+.wzHead { display: grid; gap: 0.4rem; padding-right: 1.5rem; }
+.wzTitle { font-size: 1.2rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+.wzText { margin: 0; color: var(--text-muted); font-size: 0.9rem; line-height: 1.55; }
+.wzText code { font-family: var(--mono); font-size: 0.85em; background: var(--surface-alt); padding: 0.05rem 0.35rem; border-radius: 5px; }
+.wzTxt { padding: 0.9rem 1rem; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 10px; }
+/* The verify screen widens (see console-welcome.js) so the fixed-length TXT value fits on one line. */
+.wzWide .wzTxt code { word-break: normal; }
+.wzSteps { display: flex; gap: 0.4rem; justify-content: center; }
+.wzDot { width: 7px; height: 7px; border-radius: 999px; background: var(--border); transition: background 150ms ease, width 150ms ease; }
+.wzDot.isActive { width: 20px; background: var(--accent); }
+
+/* Wizard chips — the selected subjects/metrics on the benchmark-create wizard's link steps. */
+.wzChips { display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 1.5rem; }
+.wzChips:empty::after { content: "None added yet."; color: var(--text-muted); font-size: 0.85rem; }
+.wzChip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.3rem 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-alt); font-size: 0.82rem; }
+.wzChip button { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer; line-height: 1; font-size: 1rem; }
+.wzChip button:hover { background: var(--surface); color: var(--danger); }
 
 /* ================================================================
    Auth pages (login / signup)
@@ -564,11 +841,13 @@
 .detailHeaderSecondary { font-size: 0.85rem; color: var(--text-muted); font-family: var(--mono); }
 .detailHeaderActions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-.detailsTabHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--border); margin: 1.25rem 0; min-height: calc(34px + 0.5rem); }
+.detailsTabHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--border); margin: 0; min-height: calc(34px + 0.5rem); }
 .modalTabBar { display: flex; gap: 0; }
 .modalTabBtn { padding: 0.5rem 1rem; border: none; background: none; cursor: pointer; font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 120ms ease, border-color 120ms ease; }
 .modalTabBtn:hover { color: var(--text); }
 .modalTabBtn.isActive { color: var(--text); font-weight: 700; border-bottom-color: var(--accent); }
+.tabBadge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; margin-left: 0.4rem; padding: 0 0.35rem; border-radius: 999px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 0.72rem; font-weight: 700; color: var(--text-muted); vertical-align: middle; }
+.modalTabBtn.isActive .tabBadge { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .detailsTabActions { display: flex; justify-content: flex-end; gap: 0.5rem; padding-bottom: 0.5rem; flex-wrap: wrap; }
 
 .detailsTabPanel { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.35rem 1.5rem; background: var(--surface); }
@@ -598,5 +877,4 @@
 @media (max-width: 640px) {
   .appContent { padding: 1rem; }
   .topBar { padding: 0 1rem; }
-  .profileMain { flex-direction: column; }
 }

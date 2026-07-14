@@ -31,7 +31,24 @@ describe("benchmark create + read", () => {
     expect(b.attributes.published_at).toBeNull();
   });
 
-  it("defaults to an empty observation_schema when none is supplied, as a draft", async () => {
+  it("auto-generates the key from the name when omitted (unique within the account)", async () => {
+    const me = await register();
+    const mk = (name: string) => apiPost(
+      "/api/v1/benchmarks",
+      { data: { type: "benchmark", attributes: { name } } },
+      bearer(me.token),
+    );
+    const first = ((await (await mk("CPU Throughput 2026")).json()) as { data: Resource }).data;
+    expect(first.attributes.key).toBe("cpu-throughput-2026");
+    // A second benchmark with the same name gets a numeric suffix.
+    const second = ((await (await mk("CPU Throughput 2026")).json()) as { data: Resource }).data;
+    expect(second.attributes.key).toBe("cpu-throughput-2026-2");
+    // An explicit key is still honored.
+    const explicit = ((await (await apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: { key: "my-key", name: "Whatever" } } }, bearer(me.token))).json()) as { data: Resource }).data;
+    expect(explicit.attributes.key).toBe("my-key");
+  });
+
+  it("defaults to an empty measurement_schema when none is supplied, as a draft", async () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
@@ -40,7 +57,7 @@ describe("benchmark create + read", () => {
     );
     expect(res.status).toBe(201);
     const b = ((await res.json()) as { data: Resource }).data;
-    expect(b.attributes.observation_schema).toEqual({ metrics: [], derived: [] });
+    expect(b.attributes.measurement_schema).toEqual({ metrics: [], derived: [] });
     expect(b.attributes.draft).toBe(true);
     expect(b.attributes.created_by).toBe(me.user_id);
   });
@@ -112,13 +129,18 @@ describe("publish gate + lifecycle", () => {
     expect((published.attributes.published_as as { kind: string }).kind).toBe("PERSONAL");
   });
 
-  it("won't publish a benchmark that is still a draft (409)", async () => {
+  it("publishes directly from a draft (no separate ready step)", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
     await allowPersonalPublish(b.id);
+    // A benchmark is created as a draft; publishing it directly succeeds (two-stage lifecycle).
+    expect(b.attributes.draft).toBe(true);
     const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, undefined, bearer(me.token));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
+    const published = ((await res.json()) as { data: Resource }).data;
+    expect(published.attributes.status).toBe("PUBLISHED");
+    expect(published.attributes.draft).toBe(false);
   });
 
   it("publish is a one-way door (re-publish → 409)", async () => {
@@ -169,7 +191,7 @@ describe("interpretation freeze + append-only", () => {
     // Cosmetic prose edit is allowed.
     const ok = await apiPut(
       `/api/v1/benchmarks/${b.id}`,
-      putBody({ name: "Renamed", description: "new tagline", observation_schema: SKEW_SCHEMA }),
+      putBody({ name: "Renamed", description: "new tagline", measurement_schema: SKEW_SCHEMA }),
       bearer(me.token),
     );
     expect(ok.status).toBe(200);
@@ -179,7 +201,7 @@ describe("interpretation freeze + append-only", () => {
       `/api/v1/benchmarks/${b.id}`,
       putBody({
         name: "Renamed",
-        observation_schema: {
+        measurement_schema: {
           metrics: [],
           derived: [{ name: "skew_ms", expr: { "+": [1, 1] } }],
           chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
@@ -208,7 +230,7 @@ describe("tenant isolation", () => {
     const b = await register("b@example.com");
     expect((await apiGet(`/api/v1/benchmarks/${bench.id}`, bearer(b.token))).status).toBe(404);
     expect(
-      (await apiPut(`/api/v1/benchmarks/${bench.id}`, putBody({ name: "x", observation_schema: SKEW_SCHEMA }), bearer(b.token))).status,
+      (await apiPut(`/api/v1/benchmarks/${bench.id}`, putBody({ name: "x", measurement_schema: SKEW_SCHEMA }), bearer(b.token))).status,
     ).toBe(404);
     expect((await apiDelete(`/api/v1/benchmarks/${bench.id}`, bearer(b.token))).status).toBe(404);
   });

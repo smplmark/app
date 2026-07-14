@@ -84,15 +84,16 @@ export function n(value) {
  */
 export function buildWipeSql() {
   const owned = `SELECT id FROM benchmark WHERE published_as_kind = 'INGESTED'`;
-  // Ingested targets are account-owned (not benchmark children), but their ids are deterministic
+  // Ingested subjects are account-owned (not benchmark children), but their ids are deterministic
   // (`ing-<slug>-t-<key>`), so they're identified by the same `ing-%` convention the view-day prune
-  // uses. Drop everything that references them (measurements, links) before the target rows, and the
+  // uses. Drop everything that references them (measurements, links) before the subject rows, and the
   // links/measurements of any ingested benchmark's runs, child-first for the per-statement FK check.
   return [
-    `DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id IN (${owned})) OR target_id LIKE 'ing-%'`,
-    `DELETE FROM benchmark_target WHERE benchmark_id IN (${owned}) OR target_id LIKE 'ing-%'`,
+    `DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id IN (${owned})) OR subject_id LIKE 'ing-%'`,
+    `DELETE FROM benchmark_subject WHERE benchmark_id IN (${owned}) OR subject_id LIKE 'ing-%'`,
     `DELETE FROM run WHERE benchmark_id IN (${owned})`,
-    `DELETE FROM target WHERE id LIKE 'ing-%'`,
+    `DELETE FROM subject WHERE id LIKE 'ing-%'`,
+    `DELETE FROM subject_type WHERE id LIKE 'ing-st-%'`,
     `DELETE FROM benchmark_tag WHERE benchmark_id IN (${owned})`,
     `DELETE FROM benchmark WHERE published_as_kind = 'INGESTED'`,
     `DELETE FROM tag WHERE id NOT IN (SELECT DISTINCT tag_id FROM benchmark_tag)`,
@@ -105,7 +106,7 @@ const MAX_BYTES_PER_STATEMENT = 80_000;
 
 /**
  * Multi-row INSERT chunked by row count and statement size.
- * @param {string} head e.g. "INSERT INTO target (…) VALUES"
+ * @param {string} head e.g. "INSERT INTO subject (…) VALUES"
  * @param {string[]} rows "(…)" tuples
  * @returns {string[]}
  */
@@ -146,7 +147,7 @@ function chunkInsert(head, rows) {
  */
 export function buildInsertSql(entries) {
   const statements = [];
-  const counts = { accounts: 0, benchmarks: 0, targets: 0, benchmark_targets: 0, runs: 0, measurements: 0, tag_links: 0, sources: 0, clamped: 0 };
+  const counts = { accounts: 0, subject_types: 0, benchmarks: 0, subjects: 0, benchmark_subjects: 0, runs: 0, measurements: 0, tag_links: 0, sources: 0, clamped: 0 };
   if (entries.length > LIMITS.benchmarksPerAccount) {
     throw new Error(
       `${entries.length} benchmarks exceeds the platform limit of ${LIMITS.benchmarksPerAccount} per account (see src/limits.ts) — tighten the adapters' curation caps`,
@@ -167,7 +168,7 @@ export function buildInsertSql(entries) {
   }
   for (const { source, retrievedAt, count } of bySource.values()) {
     statements.push(
-      `INSERT OR IGNORE INTO account (id, key, name, description, url, created_at, allow_personal_publish) VALUES (${q(publisherAccountId(source.publisher.slug))}, ${q(source.publisher.slug)}, ${q(source.publisher.name)}, ${q(source.description ?? null)}, ${q(source.url)}, ${n(retrievedAt)}, 0)`,
+      `INSERT OR IGNORE INTO account (id, key, name, description, created_at, allow_personal_publish) VALUES (${q(publisherAccountId(source.publisher.slug))}, ${q(source.publisher.slug)}, ${q(source.publisher.name)}, ${q(source.description ?? null)}, ${n(retrievedAt)}, 0)`,
     );
     counts.accounts += 1;
     statements.push(
@@ -177,27 +178,49 @@ export function buildInsertSql(entries) {
   }
 
   const benchRows = [];
-  const targetRows = [];
-  const benchmarkTargetRows = [];
+  const subjectTypeRows = [];
+  const subjectRows = [];
+  const benchmarkSubjectRows = [];
+
+  // "Importer gets types": each source gets ONE subject_type (id `ing-st-<slug>`) whose fields are
+  // inferred from the union of its subjects' detail keys — the field name (identifier) is the snake_case
+  // slug of the raw detail key, its label is that raw key, the type is inferred from the values
+  // (all-number → NUMBER, all-boolean → BOOLEAN, else STRING), all optional. Subjects store their
+  // details re-keyed to those field names.
+  /** @param {string} s */
+  const fieldNameSlug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+  /** @type {Map<string, { slug: string, retrievedAt: number, fields: Map<string, { name: string, kinds: Set<string> }> }>} */
+  const typeStateBySource = new Map();
+  /** @param {string} sourceKey @param {string} slug @param {number} retrievedAt */
+  function subjectTypeState(sourceKey, slug, retrievedAt) {
+    let s = typeStateBySource.get(sourceKey);
+    if (!s) {
+      s = { slug, retrievedAt, fields: new Map() };
+      typeStateBySource.set(sourceKey, s);
+    }
+    return s;
+  }
+  /** @param {string} slug */
+  const subjectTypeIdFor = (slug) => `ing-st-${slug}`;
   const runRows = [];
   const measurementRows = [];
   const tagStatements = [];
   const seenBenchKeys = new Set();
 
-  // Per-source (= per-account) target state, persisted across the source's benchmarks:
-  //   • dedupToTarget maps a stable dedup identity → the one target row shared for it, so the same
-  //     real target measured under several of a source's benchmarks becomes ONE account-owned row
+  // Per-source (= per-account) subject state, persisted across the source's benchmarks:
+  //   • dedupToSubject maps a stable dedup identity → the one subject row shared for it, so the same
+  //     real subject measured under several of a source's benchmarks becomes ONE account-owned row
   //     linked many times (M:N). The identity is the adapter's source_external_id when present;
-  //     otherwise the target is scoped to its benchmark (no cross-benchmark dedup — Mike's rule).
-  //   • usedKeys enforces the account-unique key: two *different* targets that slugify the same are
+  //     otherwise the subject is scoped to its benchmark (no cross-benchmark dedup — Mike's rule).
+  //   • usedKeys enforces the account-unique key: two *different* subjects that slugify the same are
   //     suffixed (-2, -3, …), since keys are now unique per account, not per benchmark.
-  const targetStateBySource = new Map();
+  const subjectStateBySource = new Map();
   /** @param {string} sourceKey */
-  function targetState(sourceKey) {
-    let s = targetStateBySource.get(sourceKey);
+  function subjectState(sourceKey) {
+    let s = subjectStateBySource.get(sourceKey);
     if (!s) {
-      s = { dedupToTarget: new Map(), usedKeys: new Set() };
-      targetStateBySource.set(sourceKey, s);
+      s = { dedupToSubject: new Map(), usedKeys: new Set() };
+      subjectStateBySource.set(sourceKey, s);
     }
     return s;
   }
@@ -211,9 +234,9 @@ export function buildInsertSql(entries) {
     if (seenBenchKeys.has(dedupKey)) throw new Error(`duplicate benchmark key for publisher ${slug}: ${b.key}`);
     seenBenchKeys.add(dedupKey);
     assertKeyLength(b.key, "benchmark");
-    if (b.targets.length > LIMITS.targetsPerBenchmark) {
+    if (b.subjects.length > LIMITS.subjectsPerBenchmark) {
       throw new Error(
-        `${b.key}: ${b.targets.length} targets exceeds the platform limit of ${LIMITS.targetsPerBenchmark} (see src/limits.ts) — tighten the adapter's curation cap`,
+        `${b.key}: ${b.subjects.length} subjects exceeds the platform limit of ${LIMITS.subjectsPerBenchmark} (see src/limits.ts) — tighten the adapter's curation cap`,
       );
     }
     if (b.runs.length > LIMITS.runsPerBenchmark) {
@@ -229,7 +252,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(publisherAccountId(slug))}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.observationSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
+      `(${q(bid)}, ${q(publisherAccountId(slug))}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.measurementSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
     );
     counts.benchmarks += 1;
 
@@ -241,23 +264,23 @@ export function buildInsertSql(entries) {
       counts.tag_links += 1;
     }
 
-    // Targets are account-owned and linked into the benchmark (M:N). A benchmark-local key resolves
-    // (via localKeyToTid) to the shared/account-scoped target id — dedup by source_external_id may
+    // Subjects are account-owned and linked into the benchmark (M:N). A benchmark-local key resolves
+    // (via localKeyToTid) to the shared/account-scoped subject id — dedup by source_external_id may
     // fold two local keys onto one row. The account-unique stored key is suffixed on collision.
-    const st = targetState(source.key);
+    const st = subjectState(source.key);
     const localKeyToTid = new Map();
     const localKeys = new Set();
-    for (const t of b.targets) {
-      if (localKeys.has(t.key)) throw new Error(`duplicate target key in ${b.key}: ${t.key}`);
+    for (const t of b.subjects) {
+      if (localKeys.has(t.key)) throw new Error(`duplicate subject key in ${b.key}: ${t.key}`);
       localKeys.add(t.key);
-      assertKeyLength(t.key, `${b.key} target`);
+      assertKeyLength(t.key, `${b.key} subject`);
       const dedupId =
         t.source_external_id !== undefined && t.source_external_id !== null
           ? `ext:${t.source_external_id}`
           : `bench:${b.key} ${t.key}`;
-      let entry = st.dedupToTarget.get(dedupId);
+      let entry = st.dedupToSubject.get(dedupId);
       if (entry === undefined) {
-        // A new distinct target: give it an account-unique key (suffix if a different target already
+        // A new distinct subject: give it an account-unique key (suffix if a different subject already
         // took the slug), then a deterministic account-scoped id.
         let key = t.key;
         if (st.usedKeys.has(key)) {
@@ -265,30 +288,46 @@ export function buildInsertSql(entries) {
           while (st.usedKeys.has(`${key}-${i}`)) i += 1;
           key = `${key}-${i}`;
         }
-        assertKeyLength(key, `${b.key} target (account-unique)`);
+        assertKeyLength(key, `${b.key} subject (account-unique)`);
         st.usedKeys.add(key);
-        if (st.usedKeys.size > LIMITS.targetsPerAccount) {
+        if (st.usedKeys.size > LIMITS.subjectsPerAccount) {
           throw new Error(
-            `${slug}: more than ${LIMITS.targetsPerAccount} distinct targets (see src/limits.ts)`,
+            `${slug}: more than ${LIMITS.subjectsPerAccount} distinct subjects (see src/limits.ts)`,
           );
         }
         const tid = `ing-${slug}-t-${key}`;
-        targetRows.push(
-          `(${q(tid)}, ${q(publisherAccountId(slug))}, ${q(key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(t.details === undefined ? null : JSON.stringify(t.details))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+        // Ensure this source has a subject_type (even with no fields), then re-key the subject's
+        // details to the type's field names and record each field's inferred value type.
+        const tState = subjectTypeState(source.key, slug, retrievedAt);
+        let storedDetails = null;
+        if (t.details !== undefined && t.details !== null && typeof t.details === "object") {
+          const rekeyed = /** @type {Record<string, unknown>} */ ({});
+          for (const [rawKey, val] of Object.entries(t.details)) {
+            if (val === undefined || val === null || val === "") continue;
+            const fk = fieldNameSlug(rawKey) || rawKey;
+            rekeyed[fk] = val;
+            let fs = tState.fields.get(fk);
+            if (!fs) { fs = { name: rawKey, kinds: new Set() }; tState.fields.set(fk, fs); }
+            fs.kinds.add(typeof val === "number" ? "NUMBER" : typeof val === "boolean" ? "BOOLEAN" : "STRING");
+          }
+          if (Object.keys(rekeyed).length > 0) storedDetails = JSON.stringify(rekeyed);
+        }
+        subjectRows.push(
+          `(${q(tid)}, ${q(publisherAccountId(slug))}, ${q(subjectTypeIdFor(slug))}, ${q(key)}, ${q(clamp(t.name, LIMITS.nameLength, counts))}, ${q(storedDetails)}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
         );
-        counts.targets += 1;
+        counts.subjects += 1;
         entry = { id: tid };
-        st.dedupToTarget.set(dedupId, entry);
+        st.dedupToSubject.set(dedupId, entry);
       }
       localKeyToTid.set(t.key, entry.id);
-      // Link the (possibly shared) target into this benchmark exactly once.
+      // Link the (possibly shared) subject into this benchmark exactly once.
       const pair = `${bid} ${entry.id}`;
       if (!linkedPairs.has(pair)) {
         linkedPairs.add(pair);
-        benchmarkTargetRows.push(
+        benchmarkSubjectRows.push(
           `(${q(`${bid}-bt-${entry.id}`)}, ${q(bid)}, ${q(entry.id)}, ${n(retrievedAt)})`,
         );
-        counts.benchmark_targets += 1;
+        counts.benchmark_subjects += 1;
       }
     }
 
@@ -304,17 +343,17 @@ export function buildInsertSql(entries) {
       counts.runs += 1;
     }
 
-    // A measurement names a (run, target) pair. The run must be this benchmark's; the target key is
-    // the benchmark-local handle, resolved to the shared/account-scoped target id via localKeyToTid.
-    // Repeated (run, target) pairs are allowed on purpose — a run can measure the same target more
+    // A measurement names a (run, subject) pair. The run must be this benchmark's; the subject key is
+    // the benchmark-local handle, resolved to the shared/account-scoped subject id via localKeyToTid.
+    // Repeated (run, subject) pairs are allowed on purpose — a run can measure the same subject more
     // than once (the measurement table has no unique constraint), e.g. AMLB's per-fold results.
     for (const m of b.measurements) {
       if (!runKeys.has(m.run_key)) {
         throw new Error(`measurement in ${b.key} references unknown run ${JSON.stringify(m.run_key)}`);
       }
-      const tid = localKeyToTid.get(m.target_key);
+      const tid = localKeyToTid.get(m.subject_key);
       if (tid === undefined) {
-        throw new Error(`measurement in ${b.key} references unknown target ${JSON.stringify(m.target_key)}`);
+        throw new Error(`measurement in ${b.key} references unknown subject ${JSON.stringify(m.subject_key)}`);
       }
       const rid = `${bid}-r-${m.run_key}`;
       measurementRows.push(
@@ -324,26 +363,48 @@ export function buildInsertSql(entries) {
     }
   }
 
+  // One subject_type per source, with the fields inferred from its subjects' details (see above).
+  for (const { source, retrievedAt } of bySource.values()) {
+    const slug = source.publisher.slug;
+    const tState = typeStateBySource.get(source.key);
+    const fieldDefs = tState
+      ? [...tState.fields.entries()].map(([name, fs]) => ({
+          name,
+          label: fs.name,
+          type: fs.kinds.size === 1 ? [...fs.kinds][0] : "STRING",
+          required: false,
+        }))
+      : [];
+    subjectTypeRows.push(
+      `(${q(subjectTypeIdFor(slug))}, ${q(publisherAccountId(slug))}, 'subject', ${q(`${source.publisher.name} subject`)}, ${q(JSON.stringify(fieldDefs))}, ${n(retrievedAt)}, ${n(retrievedAt)})`,
+    );
+    counts.subject_types += 1;
+  }
+
   statements.push(
     ...chunkInsert(
-      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, observation_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, closed_at) VALUES",
+      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, closed_at) VALUES",
       benchRows,
     ),
     ...tagStatements,
     ...chunkInsert(
-      "INSERT INTO target (id, account_id, key, name, details, created_at, updated_at) VALUES",
-      targetRows,
+      "INSERT INTO subject_type (id, account_id, key, name, fields, created_at, updated_at) VALUES",
+      subjectTypeRows,
     ),
     ...chunkInsert(
-      "INSERT INTO benchmark_target (id, benchmark_id, target_id, created_at) VALUES",
-      benchmarkTargetRows,
+      "INSERT INTO subject (id, account_id, subject_type_id, key, name, details, created_at, updated_at) VALUES",
+      subjectRows,
+    ),
+    ...chunkInsert(
+      "INSERT INTO benchmark_subject (id, benchmark_id, subject_id, created_at) VALUES",
+      benchmarkSubjectRows,
     ),
     ...chunkInsert(
       "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES",
       runRows,
     ),
     ...chunkInsert(
-      "INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip) VALUES",
+      "INSERT INTO measurement (run_id, subject_id, created_at, metrics, meta, client_ip) VALUES",
       measurementRows,
     ),
     // Rebuild the search index for the ingested scope (same expression as migration 0005 /

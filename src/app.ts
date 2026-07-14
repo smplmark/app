@@ -11,16 +11,18 @@ import { accountUsers } from "./routes/account_users";
 import { apiKeys } from "./routes/api_keys";
 import { auth } from "./routes/auth";
 import { benchmarks } from "./routes/benchmarks";
-import { benchmarkTargets } from "./routes/benchmark_targets";
+import { benchmarkMetrics } from "./routes/benchmark_metrics";
+import { benchmarkSubjects } from "./routes/benchmark_subjects";
 import { emails } from "./routes/emails";
 import { externalSources } from "./routes/external_sources";
 import { invitations } from "./routes/invitations";
 import { jobs } from "./routes/jobs";
 import { measurements } from "./routes/measurements";
-import { publisherDomains } from "./routes/publisher_domains";
-import { publisherIdentities } from "./routes/publisher_identities";
+import { metrics } from "./routes/metrics";
+import { publishers } from "./routes/publishers";
 import { runs } from "./routes/runs";
-import { targets } from "./routes/targets";
+import { subjects } from "./routes/subjects";
+import { subjectTypes } from "./routes/subject_types";
 import { users } from "./routes/users";
 
 // ── Routing ──────────────────────────────────────────────────────────────────
@@ -70,10 +72,10 @@ export function createApp() {
       if (!authed && devLoginEnabled(c.env)) {
         return c.redirect("/api/v1/auth/dev-login", 302);
       }
-      const target = new URL(url);
-      target.pathname = authed ? "/account" : "/login";
+      const subject = new URL(url);
+      subject.pathname = authed ? "/account" : "/login";
       const asset = await c.env.ASSETS.fetch(
-        new Request(target, { method: "GET", headers: c.req.raw.headers }),
+        new Request(subject, { method: "GET", headers: c.req.raw.headers }),
       );
       // Same URL, two possible bodies → never let a shared cache serve one visitor's page to another.
       const res = new Response(asset.body, asset);
@@ -105,13 +107,15 @@ export function createApp() {
   app.route("/api/v1/emails", emails);
   app.route("/api/v1/api_keys", apiKeys);
   app.route("/api/v1/benchmarks", benchmarks);
-  app.route("/api/v1/targets", targets);
-  app.route("/api/v1/benchmark_targets", benchmarkTargets);
+  app.route("/api/v1/subjects", subjects);
+  app.route("/api/v1/subject_types", subjectTypes);
+  app.route("/api/v1/metrics", metrics);
+  app.route("/api/v1/benchmark_metrics", benchmarkMetrics);
+  app.route("/api/v1/benchmark_subjects", benchmarkSubjects);
   app.route("/api/v1/runs", runs);
   app.route("/api/v1/measurements", measurements);
   app.route("/api/v1/external_sources", externalSources);
-  app.route("/api/v1/publisher_identities", publisherIdentities);
-  app.route("/api/v1/publisher_domains", publisherDomains);
+  app.route("/api/v1/publishers", publishers);
   // System triggers for the Smpl Jobs scheduler (shared-secret auth; not in the public spec).
   app.route("/api/v1/jobs", jobs);
 
@@ -120,7 +124,7 @@ export function createApp() {
     c.json(buildOpenApiDocument(appUrl(c.env, c.req.url))),
   );
   app.get("/api-reference", (c) =>
-    // The banner's site links target the website origin directly (bare origin on the logo);
+    // The banner's site links subject the website origin directly (bare origin on the logo);
     // in the local loop that's the local website Worker.
     c.html(scalarHtml("/api/openapi.json", c.env.DEV_WWW_ORIGIN || "https://www.smplmark.org")),
   );

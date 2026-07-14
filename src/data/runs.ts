@@ -78,6 +78,19 @@ export async function getRunById(
   );
 }
 
+/** Is `key` already taken by a run under this benchmark? Backs auto-generated-key uniqueness. */
+export async function runKeyExists(
+  db: D1Database,
+  benchmarkId: string,
+  key: string,
+): Promise<boolean> {
+  const r = await db
+    .prepare("SELECT 1 AS x FROM run WHERE benchmark_id = ? AND key = ?")
+    .bind(benchmarkId, key)
+    .first<{ x: number }>();
+  return r !== null;
+}
+
 export interface ListRunsInput {
   /** Runs are benchmark-owned; a listing is always scoped to one benchmark. */
   benchmarkId: string;

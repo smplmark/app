@@ -5,7 +5,7 @@ import type {
   BenchmarkRow,
   Category,
   PublishedKind,
-  ObservationSchema,
+  MeasurementSchema,
   Status,
 } from "../types";
 import { isUniqueViolation } from "./d1";
@@ -47,7 +47,7 @@ export interface CreateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
-  observation_schema: ObservationSchema;
+  measurement_schema: MeasurementSchema;
   category: Category;
   /** The creating user, or null if an API key created it. */
   created_by_user_id: string | null;
@@ -70,7 +70,7 @@ export async function createBenchmark(
     published_at: null,
     withdrawn_at: null,
     withdrawal_reason: null,
-    observation_schema: JSON.stringify(input.observation_schema),
+    measurement_schema: JSON.stringify(input.measurement_schema),
     created_by_user_id: input.created_by_user_id,
     draft: 1,
     published_by_user_id: null,
@@ -88,7 +88,7 @@ export async function createBenchmark(
   try {
     await db
       .prepare(
-        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, observation_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
+        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
       )
       .bind(
         row.id,
@@ -99,7 +99,7 @@ export async function createBenchmark(
         row.about,
         row.methodology,
         row.status,
-        row.observation_schema,
+        row.measurement_schema,
         row.created_by_user_id,
         row.draft,
         row.category,
@@ -158,6 +158,19 @@ export async function countBenchmarksForAccount(
     .bind(accountId)
     .first<{ n: number }>();
   return r?.n ?? 0;
+}
+
+/** Is `key` already taken by a benchmark in this account? Backs auto-generated-key uniqueness. */
+export async function benchmarkKeyExists(
+  db: D1Database,
+  accountId: string,
+  key: string,
+): Promise<boolean> {
+  const r = await db
+    .prepare("SELECT 1 AS x FROM benchmark WHERE account_id = ? AND key = ?")
+    .bind(accountId, key)
+    .first<{ x: number }>();
+  return r !== null;
 }
 
 export async function getBenchmarkById(
@@ -241,12 +254,12 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
   }
   if (input.searchTerms !== undefined) {
     for (const term of input.searchTerms) {
-      // Each term matches the benchmark's own text OR any of its linked targets' name/key, so
+      // Each term matches the benchmark's own text OR any of its linked subjects' name/key, so
       // searching a model or system (e.g. "llama 3") surfaces the benchmark that contains it —
-      // targets aren't in search_text. EXISTS short-circuits through the benchmark_target join and
+      // subjects aren't in search_text. EXISTS short-circuits through the benchmark_subject join and
       // keeps the outer query join-free so COUNT stays correct.
       clauses.push(
-        "(search_text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM benchmark_target bt JOIN target ON target.id = bt.target_id WHERE bt.benchmark_id = benchmark.id AND (lower(target.name) LIKE ? ESCAPE '\\' OR lower(target.key) LIKE ? ESCAPE '\\')))",
+        "(search_text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM benchmark_subject bt JOIN subject ON subject.id = bt.subject_id WHERE bt.benchmark_id = benchmark.id AND (lower(subject.name) LIKE ? ESCAPE '\\' OR lower(subject.key) LIKE ? ESCAPE '\\')))",
       );
       binds.push(likePattern(term), likePattern(term), likePattern(term));
     }
@@ -304,7 +317,7 @@ export interface UpdateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
-  observation_schema: ObservationSchema;
+  measurement_schema: MeasurementSchema;
   /** Browse metadata — editable at any status, like `name`. */
   category: Category;
 }
@@ -322,20 +335,20 @@ export async function updateBenchmark(
     description: input.description,
     about: input.about,
     methodology: input.methodology,
-    observation_schema: JSON.stringify(input.observation_schema),
+    measurement_schema: JSON.stringify(input.measurement_schema),
     category: input.category,
     updated_at: Date.now(),
   };
   await db
     .prepare(
-      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, observation_schema=?, category=?, updated_at=? WHERE id=?",
+      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, measurement_schema=?, category=?, updated_at=? WHERE id=?",
     )
     .bind(
       updated.name,
       updated.description,
       updated.about,
       updated.methodology,
-      updated.observation_schema,
+      updated.measurement_schema,
       updated.category,
       updated.updated_at,
       id,
@@ -387,7 +400,7 @@ export async function publishBenchmark(
 ): Promise<BenchmarkRowWithPublisher | null> {
   await db
     .prepare(
-      "UPDATE benchmark SET status='PUBLISHED', published_at=?, published_by_user_id=?, published_as_kind=?, published_identity_id=?, attribution_snapshot=?, updated_at=? WHERE id=?",
+      "UPDATE benchmark SET status='PUBLISHED', draft=0, published_at=?, published_by_user_id=?, published_as_kind=?, published_identity_id=?, attribution_snapshot=?, updated_at=? WHERE id=?",
     )
     .bind(
       now,
@@ -418,7 +431,7 @@ export async function withdrawBenchmark(
 }
 
 /**
- * Hard-delete a PRIVATE benchmark and its whole subtree (the route guarantees PRIVATE). Targets are
+ * Hard-delete a PRIVATE benchmark and its whole subtree (the route guarantees PRIVATE). Subjects are
  * NOT deleted — they are account-owned and may be linked to other benchmarks; only this benchmark's
  * links (and the measurements under its runs) go away.
  */
@@ -430,7 +443,7 @@ export async function deleteBenchmarkCascade(db: D1Database, id: string): Promis
       )
       .bind(id),
     db.prepare("DELETE FROM run WHERE benchmark_id = ?").bind(id),
-    db.prepare("DELETE FROM benchmark_target WHERE benchmark_id = ?").bind(id),
+    db.prepare("DELETE FROM benchmark_subject WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark_tag WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark WHERE id = ?").bind(id),
   ]);

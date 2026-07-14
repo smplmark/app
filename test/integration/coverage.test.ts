@@ -12,7 +12,7 @@ import {
   bearer,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   markVerified,
   mintKey,
   publish,
@@ -23,8 +23,8 @@ import {
 
 beforeEach(resetDb);
 
-const measurement = (runId: string, targetId: string, attrs: Record<string, unknown> = {}) => ({
-  data: { type: "measurement", attributes: { run: runId, target: targetId, ...attrs } },
+const measurement = (runId: string, subjectId: string, attrs: Record<string, unknown> = {}) => ({
+  data: { type: "measurement", attributes: { run: runId, subject: subjectId, ...attrs } },
 });
 
 describe("list params", () => {
@@ -46,10 +46,10 @@ describe("list params", () => {
     const byKey = await apiGet("/api/v1/benchmarks?filter[key]=aaa");
     expect(((await byKey.json()) as { data: Resource[] }).data.length).toBe(1);
 
-    const t = await makeTarget(me.token, b1.id, "tk");
+    const t = await makeSubject(me.token, b1.id, "tk");
     await makeRun(me.token, b1.id);
-    const targets = await apiGet(`/api/v1/targets?filter[benchmark]=${b1.id}&filter[key]=tk&meta[total]=true&sort=-created_at`, bearer(me.token));
-    expect(((await targets.json()) as { data: Resource[] }).data.length).toBe(1);
+    const subjects = await apiGet(`/api/v1/subjects?filter[benchmark]=${b1.id}&filter[key]=tk&meta[total]=true&sort=-created_at`, bearer(me.token));
+    expect(((await subjects.json()) as { data: Resource[] }).data.length).toBe(1);
     const runs = await apiGet(`/api/v1/runs?filter[benchmark]=${b1.id}&filter[key]=default&meta[total]=true&sort=key`, bearer(me.token));
     expect(((await runs.json()) as { data: Resource[] }).data.length).toBe(1);
 
@@ -73,7 +73,7 @@ describe("edge + not-found paths", () => {
     const me = await register();
     expect((await apiGet("/api/v1/benchmarks/nope")).status).toBe(404);
     expect((await apiPut("/api/v1/benchmarks/nope", { data: { type: "benchmark", attributes: { name: "x" } } }, bearer(me.token))).status).toBe(404);
-    expect((await apiGet("/api/v1/targets/nope", bearer(me.token))).status).toBe(404);
+    expect((await apiGet("/api/v1/subjects/nope", bearer(me.token))).status).toBe(404);
     expect((await apiGet("/api/v1/runs/nope", bearer(me.token))).status).toBe(404);
     expect((await apiGet("/api/v1/benchmarks/x")).status).toBe(404);
     // No credential at all.
@@ -92,7 +92,7 @@ describe("edge + not-found paths", () => {
   it("accepts ISO created_at and a meta bag on measurements", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     const r = await makeRun(me.token, b.id);
     const res = await apiPost(
       "/api/v1/measurements",

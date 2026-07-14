@@ -82,6 +82,9 @@ export interface ListApiKeysInput {
   limit: number;
   offset: number;
   includeTotal: boolean;
+  /** Optional scope filter — the tabbed UI lists only the keys scoped to a given resource. */
+  scope_type?: ScopeType;
+  scope_ref?: string | null;
 }
 
 const API_KEY_COLUMNS: Record<string, string> = {
@@ -95,18 +98,31 @@ export async function listApiKeys(
   input: ListApiKeysInput,
 ): Promise<{ rows: ApiKeyRow[]; total?: number }> {
   const order = orderByClause(input.sort, (f) => API_KEY_COLUMNS[f], "id");
+  // Optional scope filter: scope_type alone, or scope_type + a specific scope_ref (BENCHMARK/RUN tabs).
+  const filters: string[] = [];
+  const filterBinds: unknown[] = [];
+  if (input.scope_type !== undefined) {
+    filters.push("scope_type = ?");
+    filterBinds.push(input.scope_type);
+  }
+  if (input.scope_ref !== undefined && input.scope_ref !== null) {
+    filters.push("scope_ref = ?");
+    filterBinds.push(input.scope_ref);
+  }
+  const where = `WHERE account_id = ?${filters.length ? " AND " + filters.join(" AND ") : ""}`;
+
   const rows = (
     await db
-      .prepare(`SELECT * FROM api_key WHERE account_id = ? ${order} LIMIT ? OFFSET ?`)
-      .bind(input.account_id, input.limit, input.offset)
+      .prepare(`SELECT * FROM api_key ${where} ${order} LIMIT ? OFFSET ?`)
+      .bind(input.account_id, ...filterBinds, input.limit, input.offset)
       .all<ApiKeyRow>()
   ).results;
 
   let total: number | undefined;
   if (input.includeTotal) {
     const r = await db
-      .prepare("SELECT COUNT(*) AS n FROM api_key WHERE account_id = ?")
-      .bind(input.account_id)
+      .prepare(`SELECT COUNT(*) AS n FROM api_key ${where}`)
+      .bind(input.account_id, ...filterBinds)
       .first<{ n: number }>();
     total = r?.n ?? 0;
   }
@@ -122,6 +138,20 @@ export async function revokeApiKey(
     .prepare("UPDATE api_key SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
     .bind(now, id)
     .run();
+}
+
+/** Rename a key (the only mutable field; scope and expiry are fixed at creation). */
+export async function updateApiKeyName(
+  db: D1Database,
+  id: string,
+  name: string,
+): Promise<void> {
+  await db.prepare("UPDATE api_key SET name = ? WHERE id = ?").bind(name, id).run();
+}
+
+/** Hard-delete a key. (Revoke keeps the row marked revoked; Delete removes it outright.) */
+export async function deleteApiKey(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM api_key WHERE id = ?").bind(id).run();
 }
 
 /** Best-effort last-used stamp (called via ctx.waitUntil off the hot path). */

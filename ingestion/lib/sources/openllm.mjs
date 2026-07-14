@@ -47,8 +47,8 @@ const PAGE_LENGTH = 100;
 export const robotsPaths = ["/api/datasets/open-llm-leaderboard/contents", "/rows"];
 
 /** `--full`: lift the default curation cap (see SOURCES.md "Default import cap"). */
-export const fullOptions = /** @type {{ topTargets: number }} */ ({
-  topTargets: Number.POSITIVE_INFINITY,
+export const fullOptions = /** @type {{ topSubjects: number }} */ ({
+  topSubjects: Number.POSITIVE_INFINITY,
 });
 
 /** @param {number} page */
@@ -267,11 +267,11 @@ function averageOf(row) {
 
 /**
  * @param {import("../model.mjs").Archive} archive
- * @param {{ topTargets?: number }} [options]
+ * @param {{ topSubjects?: number }} [options]
  * @returns {import("../model.mjs").IngestBenchmark[]}
  */
 export function adapt(archive, options = {}) {
-  const topTargets = options.topTargets ?? 300;
+  const topSubjects = options.topSubjects ?? 300;
   const retrievedAt = archive.manifest.retrieved_at;
 
   const pageNames = archive.manifest.files
@@ -302,7 +302,7 @@ export function adapt(archive, options = {}) {
     const zv = averageOf(z);
     return zv < av ? -1 : zv > av ? 1 : 0;
   });
-  const kept = ranked.filter((row, i) => i < topTargets || row.official);
+  const kept = ranked.filter((row, i) => i < topSubjects || row.official);
 
   // Disambiguate display names only where needed: a fullname evaluated under several precisions
   // gets " (<precision>)" appended; the (common) single-precision case keeps the bare fullname.
@@ -318,8 +318,8 @@ export function adapt(archive, options = {}) {
   }
 
   const seen = new Map();
-  /** @type {import("../model.mjs").IngestTarget[]} */
-  const targets = [];
+  /** @type {import("../model.mjs").IngestSubject[]} */
+  const subjects = [];
   /** @type {import("../model.mjs").IngestMeasurement[]} */
   const measurements = [];
   for (const row of kept) {
@@ -338,15 +338,15 @@ export function adapt(archive, options = {}) {
     if (row.moe !== null) obsMeta.moe = row.moe;
     if (row.merged !== null) obsMeta.merged = row.merged;
 
-    const targetKey = uniqueSlug(row.evalName, seen);
-    targets.push({
-      key: targetKey,
+    const subjectKey = uniqueSlug(row.evalName, seen);
+    subjects.push({
+      key: subjectKey,
       name: ambiguous && row.precision !== null ? `${row.fullname} (${row.precision})` : row.fullname,
       details,
     });
     measurements.push({
       run_key: "final",
-      target_key: targetKey,
+      subject_key: subjectKey,
       created_at: row.submittedAt ?? retrievedAt,
       metrics: row.metrics,
       meta: obsMeta,
@@ -364,8 +364,8 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "open-weights", "huggingface"],
-      observationSchema: SCHEMA,
-      targets,
+      measurementSchema: SCHEMA,
+      subjects,
       runs: [{ key: "final", name: "Final leaderboard result" }],
       measurements,
     },

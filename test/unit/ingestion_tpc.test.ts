@@ -52,20 +52,20 @@ const archive = {
 
 const byKey = (bs: ReturnType<typeof adapt>) => new Map(bs.map((b) => [b.key, b]));
 
-// observationSchema is typed `object` on the shared IngestBenchmark shape; the adapters give it a
+// measurementSchema is typed `object` on the shared IngestBenchmark shape; the adapters give it a
 // known structure, so a narrow cast keeps the assertions readable.
 type Schema = { metrics: { name: string; unit?: string }[]; chart: { y: string } };
-const schemaOf = (b: { observationSchema: object }) => b.observationSchema as Schema;
+const schemaOf = (b: { measurementSchema: object }) => b.measurementSchema as Schema;
 const metaOf = (o: { meta?: Record<string, unknown> }) => o.meta as Record<string, unknown>;
 
-// The flat model: measurements name a run + a target. TPC is 1:1:1, so find the single measurement
-// (and its run) for a given target by matching target_key, then run_key.
+// The flat model: measurements name a run + a subject. TPC is 1:1:1, so find the single measurement
+// (and its run) for a given subject by matching subject_key, then run_key.
 type Bench = ReturnType<typeof adapt>[number];
-const measurementFor = (b: Bench, targetKey: string) => {
-  const m = b.measurements.find((x) => x.target_key === targetKey);
-  if (!m) throw new Error(`no measurement for target ${targetKey}`);
+const measurementFor = (b: Bench, subjectKey: string) => {
+  const m = b.measurements.find((x) => x.subject_key === subjectKey);
+  if (!m) throw new Error(`no measurement for subject ${subjectKey}`);
   const run = b.runs.find((r) => r.key === m.run_key);
-  if (!run) throw new Error(`no run ${m.run_key} for target ${targetKey}`);
+  if (!run) throw new Error(`no run ${m.run_key} for subject ${subjectKey}`);
   return { measurement: m, run };
 };
 
@@ -110,10 +110,10 @@ describe("tpc adapt", () => {
     expect(schemaOf(c).metrics.map((m) => m.name)).toEqual(["tpmc", "price_per_tpmc"]);
     expect(schemaOf(c).chart.y).toBe("tpmc");
     // 3 usable results (the empty-tpmC "Ghost" row is dropped).
-    expect(c.targets).toHaveLength(3);
+    expect(c.subjects).toHaveLength(3);
 
     // Sorted by throughput desc → PolarDB first.
-    const top = c.targets[0];
+    const top = c.subjects[0];
     expect(top.name).toBe("PolarDB Limitless (Alibaba)");
     const { measurement: topMeas, run: topRun } = measurementFor(c, top.key);
     expect(topMeas.metrics).toEqual({ tpmc: 2055076649, price_per_tpmc: 0.8 });
@@ -128,7 +128,7 @@ describe("tpc adapt", () => {
     expect(topRun.ended_at).toBe(Date.UTC(2025, 0, 27));
 
     // The historical Bull result keeps its lifecycle status; earliest date drives published_at.
-    const bull = c.targets.find((t) => t.name.includes("Escala"))!;
+    const bull = c.subjects.find((t) => t.name.includes("Escala"))!;
     expect(metaOf(measurementFor(c, bull.key).measurement).tpc_status).toBe("historical");
     expect(c.published_at).toBe(Date.UTC(2001, 4, 28));
   });
@@ -137,8 +137,8 @@ describe("tpc adapt", () => {
     const h = map.get("tpc-h")!;
     expect(schemaOf(h).metrics.map((m) => m.name)).toEqual(["qphh", "price_per_qphh", "scale_factor_gb"]);
     // Only the clean HPE row survives; the "Super, System" row is dropped (currency read "5000").
-    expect(h.targets).toHaveLength(1);
-    const { measurement: hMeas, run: hRun } = measurementFor(h, h.targets[0].key);
+    expect(h.subjects).toHaveLength(1);
+    const { measurement: hMeas, run: hRun } = measurementFor(h, h.subjects[0].key);
     expect(hMeas.metrics).toEqual({ qphh: 1184211.5, price_per_qphh: 263.13, scale_factor_gb: 1000 });
     expect(metaOf(hMeas).source_url).toBe("https://www.tpc.org/3401");
     expect(hRun.name).toBe("Scale factor 1000 GB");
@@ -147,7 +147,7 @@ describe("tpc adapt", () => {
   it("honors the per-family default cap, keeping the highest-throughput slice", () => {
     const capped = byKey(adapt(archive, { topResults: 1 }));
     const c = capped.get("tpc-c")!;
-    expect(c.targets).toHaveLength(1);
-    expect(c.targets[0].name).toBe("PolarDB Limitless (Alibaba)"); // the single fastest result
+    expect(c.subjects).toHaveLength(1);
+    expect(c.subjects[0].name).toBe("PolarDB Limitless (Alibaba)"); // the single fastest result
   });
 });

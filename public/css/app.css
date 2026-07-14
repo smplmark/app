@@ -1,4 +1,7 @@
-/* Dark is the default theme; light is applied when the user's OS prefers it. */
+/* Dark is the default theme. Light is applied when the user's OS prefers it (the media query),
+   unless the user has picked an explicit theme on their profile — a `data-theme` attribute on
+   <html> then wins. `:root:not([data-theme])` scopes the OS default to "no explicit choice", so
+   data-theme="dark" holds dark even on an OS-light machine; data-theme="light" forces light. */
 :root {
   --bg: #0e1116;
   --panel: #161b22;
@@ -18,7 +21,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #f6f8fa;
     --panel: #ffffff;
     --panel-2: #f1f4f8;
@@ -30,6 +33,19 @@
     --ok: #1a7f37;
     --tab-active-bg: #ffffff;
   }
+}
+/* Explicit user override (profile → theme). Same values as the OS-light block above. */
+:root[data-theme="light"] {
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --panel-2: #f1f4f8;
+  --border: #d6dce4;
+  --text: #1f2328;
+  --muted: #5b6570;
+  --accent: #2f6fe0;
+  --accent-2: #d1481f;
+  --ok: #1a7f37;
+  --tab-active-bg: #ffffff;
 }
 
 * { box-sizing: border-box; }

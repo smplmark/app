@@ -8,10 +8,9 @@ import {
   serializeBenchmark,
   serializeInvitation,
   serializeMeasurement,
-  serializePublisherDomain,
-  serializePublisherIdentity,
+  serializePublisher,
   serializeRun,
-  serializeTarget,
+  serializeSubject,
   serializeUser,
 } from "../../src/serialize/resource";
 import type { BenchmarkRowWithPublisher } from "../../src/data/benchmarks";
@@ -22,11 +21,10 @@ import type {
   BenchmarkRow,
   InvitationRow,
   MeasurementRow,
-  PublisherDomainRow,
-  PublisherIdentityRow,
+  PublisherRow,
   RunRow,
-  ObservationSchema,
-  TargetRow,
+  MeasurementSchema,
+  SubjectRow,
   UserRow,
 } from "../../src/types";
 
@@ -46,15 +44,15 @@ describe("serializeUser", () => {
 });
 
 describe("serializeAccount", () => {
-  it("emits key/name/description/url, the personal-publish flag, and ISO created_at", () => {
+  it("emits key/name/description, the personal-publish flag, and ISO created_at", () => {
     const row: AccountRow = {
       id: "a1", key: "smplkit", name: "smplkit",
-      description: "we build things", url: "https://smplkit.com",
-      allow_personal_publish: 1, created_at: T0,
+      description: "we build things",
+      allow_personal_publish: 1, created_at: T0, deleted_at: null,
     };
     expect(serializeAccount(row).attributes).toEqual({
       key: "smplkit", name: "smplkit", description: "we build things",
-      url: "https://smplkit.com", allow_personal_publish: true, created_at: ISO0,
+      allow_personal_publish: true, created_at: ISO0,
     });
     expect(serializeAccount({ ...row, allow_personal_publish: 0 }).attributes.allow_personal_publish).toBe(false);
   });
@@ -62,7 +60,7 @@ describe("serializeAccount", () => {
 
 describe("serializeAccountUser", () => {
   it("synthesizes a composite id and bare reference fields", () => {
-    const row: AccountUserRow = { account_id: "a1", user_id: "u1", role: "OWNER", created_at: T0 };
+    const row: AccountUserRow = { account_id: "a1", user_id: "u1", role: "OWNER", created_at: T0, settings: null };
     expect(serializeAccountUser(row)).toEqual({
       type: "account_user",
       id: "a1:u1",
@@ -71,7 +69,7 @@ describe("serializeAccountUser", () => {
   });
 
   it("surfaces joined identity fields when present", () => {
-    const row = { account_id: "a1", user_id: "u1", role: "MEMBER" as const, created_at: T0, email: "m@b.com", display_name: null, email_verified: 1 };
+    const row = { account_id: "a1", user_id: "u1", role: "MEMBER" as const, created_at: T0, settings: null, email: "m@b.com", display_name: null, email_verified: 1 };
     expect(serializeAccountUser(row).attributes).toEqual({
       account: "a1", user: "u1", role: "MEMBER", created_at: ISO0,
       email: "m@b.com", display_name: null, verified: true,
@@ -141,7 +139,7 @@ describe("serializeBenchmark", () => {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
     description: null, about: null, methodology: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
-    observation_schema: "{}",
+    measurement_schema: "{}",
     created_by_user_id: "u1", draft: 1,
     published_by_user_id: null, published_as_kind: null, published_identity_id: null,
     attribution_snapshot: null, category: "OTHER",
@@ -193,23 +191,20 @@ describe("serializeBenchmark", () => {
     });
   });
 
-  it("renders an ORGANIZATION attribution badge, parsing observation_schema and keeping a soft identity ref", () => {
+  it("renders an ORGANIZATION attribution badge from the frozen verified domain + icon", () => {
     const row: BenchmarkRowWithPublisher = {
       ...priv, about: "long", methodology: "how", status: "WITHDRAWN", draft: 0,
       published_at: T0, withdrawn_at: T0, withdrawal_reason: "bad data",
-      observation_schema: JSON.stringify({ metrics: [], derived: [] }),
-      published_by_user_id: "admin1", published_as_kind: "ORGANIZATION", published_identity_id: "pi1",
-      attribution_snapshot: JSON.stringify({ name: "Acme", logo_url: null, verified_domains: ["acme.com", "acme.io"] }),
+      measurement_schema: JSON.stringify({ metrics: [], derived: [] }),
+      published_by_user_id: "admin1", published_as_kind: "ORGANIZATION", published_identity_id: "pub1",
+      attribution_snapshot: JSON.stringify({ domain: "acme.com", icon: "favicon" }),
     };
     const out = serializeBenchmark(row, []);
     expect(out.attributes.status).toBe("WITHDRAWN");
     expect(out.attributes.withdrawal_reason).toBe("bad data");
-    expect(out.attributes.observation_schema).toEqual({ metrics: [], derived: [] });
+    expect(out.attributes.measurement_schema).toEqual({ metrics: [], derived: [] });
     expect(out.attributes.published_by).toBe("admin1");
-    expect(out.attributes.published_as).toEqual({
-      kind: "ORGANIZATION", identity: "pi1", name: "Acme", logo_url: null,
-      verified_domains: ["acme.com", "acme.io"],
-    });
+    expect(out.attributes.published_as).toEqual({ kind: "ORGANIZATION", domain: "acme.com", icon: "favicon" });
   });
 
   it("renders an INGESTED attribution badge with source provenance and an ISO retrieved_at", () => {
@@ -235,65 +230,47 @@ describe("serializeBenchmark", () => {
   });
 });
 
-describe("serializePublisherIdentity", () => {
-  it("emits account/key/name/logo_url and ISO timestamps", () => {
-    const row: PublisherIdentityRow = {
-      id: "pi1", account_id: "a1", key: "microsoft", name: "Microsoft",
-      logo_url: "https://cdn/ms.png", created_at: T0, updated_at: T0,
-    };
-    expect(serializePublisherIdentity(row)).toEqual({
-      type: "publisher_identity",
-      id: "pi1",
-      attributes: {
-        account: "a1", key: "microsoft", name: "Microsoft",
-        logo_url: "https://cdn/ms.png", created_at: ISO0, updated_at: ISO0,
-      },
-    });
-    expect(serializePublisherIdentity({ ...row, logo_url: null }).attributes.logo_url).toBeNull();
-  });
-});
-
-describe("serializePublisherDomain", () => {
-  const base: PublisherDomainRow = {
-    id: "pd1", account_id: "a1", publisher_identity_id: "pi1", domain: "microsoft.com",
+describe("serializePublisher", () => {
+  const base: PublisherRow = {
+    id: "pub1", account_id: "a1", domain: "microsoft.com",
     verification_token: "smplmark-verify=xyz", status: "PENDING",
-    verified_at: null, last_checked_at: null, created_at: T0,
+    verified_at: null, last_checked_at: null, icon: "monogram", created_at: T0,
   };
-  it("surfaces the DNS token and computes `verified`; nulls when never checked", () => {
-    const out = serializePublisherDomain(base);
-    expect(out).toEqual({
-      type: "publisher_domain",
-      id: "pd1",
+  it("surfaces the DNS token, icon, and computes `verified`; nulls when never checked", () => {
+    expect(serializePublisher(base)).toEqual({
+      type: "publisher",
+      id: "pub1",
       attributes: {
-        account: "a1", publisher_identity: "pi1", domain: "microsoft.com",
+        account: "a1", domain: "microsoft.com",
         status: "PENDING", verification_token: "smplmark-verify=xyz", verified: false,
-        verified_at: null, last_checked_at: null, created_at: ISO0,
+        verified_at: null, last_checked_at: null, icon: "monogram", created_at: ISO0,
       },
     });
   });
-  it("marks a VERIFIED domain verified and maps its timestamps", () => {
-    const out = serializePublisherDomain({ ...base, status: "VERIFIED", verified_at: T0, last_checked_at: T0 });
+  it("marks a VERIFIED publisher verified and maps its timestamps", () => {
+    const out = serializePublisher({ ...base, status: "VERIFIED", verified_at: T0, last_checked_at: T0, icon: "favicon" });
     expect(out.attributes.verified).toBe(true);
     expect(out.attributes.verified_at).toBe(ISO0);
-    expect(out.attributes.last_checked_at).toBe(ISO0);
+    expect(out.attributes.icon).toBe("favicon");
   });
-  it("a LAPSED domain is not verified but keeps its last verified_at", () => {
-    const out = serializePublisherDomain({ ...base, status: "LAPSED", verified_at: T0, last_checked_at: T0 });
+  it("a LAPSED publisher is not verified but keeps its last verified_at", () => {
+    const out = serializePublisher({ ...base, status: "LAPSED", verified_at: T0, last_checked_at: T0 });
     expect(out.attributes.verified).toBe(false);
     expect(out.attributes.status).toBe("LAPSED");
   });
 });
 
-describe("serializeTarget", () => {
-  const row: TargetRow = {
-    id: "t1", account_id: "a1", key: "sched-a", name: "Scheduler A",
+describe("serializeSubject", () => {
+  const row: SubjectRow = {
+    id: "t1", account_id: "a1", subject_type_id: "st1", key: "sched-a", name: "Scheduler A",
     details: JSON.stringify({ region: "us-east-1" }),
     created_at: T0, updated_at: T0,
   };
-  it("maps account and parses details; null details → null", () => {
-    expect(serializeTarget(row).attributes.account).toBe("a1");
-    expect(serializeTarget(row).attributes.details).toEqual({ region: "us-east-1" });
-    expect(serializeTarget({ ...row, details: null }).attributes.details).toBeNull();
+  it("maps account + subject_type and parses details; null details → null", () => {
+    expect(serializeSubject(row).attributes.account).toBe("a1");
+    expect(serializeSubject(row).attributes.subject_type).toBe("st1");
+    expect(serializeSubject(row).attributes.details).toEqual({ region: "us-east-1" });
+    expect(serializeSubject({ ...row, details: null }).attributes.details).toBeNull();
   });
 });
 
@@ -321,20 +298,20 @@ describe("serializeRun", () => {
 });
 
 describe("serializeMeasurement", () => {
-  const schema: ObservationSchema = {
+  const schema: MeasurementSchema = {
     metrics: [],
     derived: [{ name: "skew_ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }],
   };
   const ctx: DerivedContext = { created_at: T0 + 87, run: { started_at: null, ended_at: null } };
-  const base: Pick<MeasurementRow, "id" | "run_id" | "target_id" | "created_at" | "metrics" | "meta"> = {
-    id: 48213, run_id: "r1", target_id: "tg1", created_at: T0 + 87, metrics: null, meta: null,
+  const base: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta"> = {
+    id: 48213, run_id: "r1", subject_id: "tg1", created_at: T0 + 87, metrics: null, meta: null,
   };
 
   it("computes derived metrics, stringifies id", () => {
     const out = serializeMeasurement(base, schema, ctx);
     expect(out.id).toBe("48213");
     expect(out.attributes).toEqual({
-      created_at: "2026-07-01T09:00:00.087Z", run: "r1", target: "tg1", metrics: { skew_ms: 87 },
+      created_at: "2026-07-01T09:00:00.087Z", run: "r1", subject: "tg1", metrics: { skew_ms: 87 },
     });
   });
 

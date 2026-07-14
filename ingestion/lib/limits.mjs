@@ -3,8 +3,11 @@
 // asserts the two stay identical — change them together.
 export const LIMITS = {
   benchmarksPerAccount: 100,
-  targetsPerAccount: 200_000,
-  targetsPerBenchmark: 20_000,
+  subjectsPerAccount: 200_000,
+  subjectsPerBenchmark: 20_000,
+  subjectTypesPerAccount: 1000,
+  metricsPerAccount: 1000,
+  metricsPerBenchmark: 200,
   runsPerBenchmark: 20_000,
   keyLength: 100,
   nameLength: 200,

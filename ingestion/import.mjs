@@ -9,7 +9,7 @@
 //                             [--remote] [--dry-run]
 //
 //   --source     which archives to import (default: every non-held source with an archive present)
-//   --limit N    representative sample of at most N targets per benchmark (iteration mode)
+//   --limit N    representative sample of at most N subjects per benchmark (iteration mode)
 //   --full       lift each adapter's default curation caps (import everything in the archive)
 //   --with-held  include sources in HELD_SOURCES (license riders awaiting Mike's call)
 //   --remote     execute against production D1 (default: local). Mind the ~100k writes/day tier.
@@ -108,7 +108,7 @@ for (const key of requested) {
   }
   console.log(
     `[${key}] adapted ${benchmarks.length} benchmark(s): ${benchmarks
-      .map((b) => `${b.key} (${b.targets.length} targets)`)
+      .map((b) => `${b.key} (${b.subjects.length} subjects)`)
       .join(", ")}`,
   );
 }
@@ -127,9 +127,9 @@ const wipe = buildWipeSql();
 const { statements, counts } = buildInsertSql(sampled);
 const all = [...wipe, ...statements];
 const totalInserts =
-  counts.benchmarks + counts.targets + counts.runs + counts.measurements + counts.tag_links;
+  counts.benchmarks + counts.subjects + counts.runs + counts.measurements + counts.tag_links;
 console.log(
-  `SQL built: ${all.length} statements — ${counts.benchmarks} benchmarks, ${counts.targets} targets, ${counts.runs} runs, ${counts.measurements} measurements, ${counts.tag_links} tag links (~${totalInserts} row writes + wipe)` +
+  `SQL built: ${all.length} statements — ${counts.benchmarks} benchmarks, ${counts.subjects} subjects, ${counts.runs} runs, ${counts.measurements} measurements, ${counts.tag_links} tag links (~${totalInserts} row writes + wipe)` +
     (counts.clamped > 0 ? ` — ${counts.clamped} over-limit display string(s) clamped` : ""),
 );
 
@@ -162,11 +162,11 @@ if (args.remote) {
 }
 
 for (const name of files) {
-  const target = args.remote ? "--remote" : "--local";
-  console.log(`executing ${name} (${target})…`);
+  const dbEnv = args.remote ? "--remote" : "--local";
+  console.log(`executing ${name} (${dbEnv})…`);
   const res = spawnSync(
     "npx",
-    ["wrangler", "d1", "execute", "smplmark", target, "--yes", `--file=${path.join(BUILD_ROOT, name)}`],
+    ["wrangler", "d1", "execute", "smplmark", dbEnv, "--yes", `--file=${path.join(BUILD_ROOT, name)}`],
     { stdio: "inherit", cwd: path.join(import.meta.dirname, "..") },
   );
   if (res.status !== 0) {

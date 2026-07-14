@@ -14,6 +14,7 @@ import { sha256Hex } from "../auth/crypto";
 import { accountHasVerifiedUser, getAccountById } from "../data/accounts";
 import {
   type BenchmarkRowWithPublisher,
+  benchmarkKeyExists,
   countBenchmarksForAccount,
   createBenchmark,
   setBenchmarkClosed,
@@ -28,8 +29,7 @@ import {
 } from "../data/benchmarks";
 import { recordBenchmarkView } from "../data/views";
 import { LIMITS } from "../limits";
-import { getPublisherIdentityById } from "../data/publisher_identities";
-import { listVerifiedDomains } from "../data/publisher_domains";
+import { getPublisherById } from "../data/publishers";
 import {
   listTagsForBenchmark,
   listTagsForBenchmarks,
@@ -55,9 +55,10 @@ import { paginationMeta } from "../query/pagination";
 import { parseSearchQuery } from "../query/search";
 import {
   assertFrozenCompatible,
-  parseObservationSchema,
-  validateObservationSchema,
-} from "../schema/observation_schema";
+  parseMeasurementSchema,
+  validateMeasurementSchema,
+} from "../schema/measurement_schema";
+import { kebab } from "../schema/subject_type";
 import { serializeBenchmark } from "../serialize/resource";
 import {
   CATEGORIES,
@@ -66,12 +67,12 @@ import {
   type Category,
   type OrgAttributionSnapshot,
   type PersonalAttributionSnapshot,
-  type ObservationSchema,
+  type MeasurementSchema,
   type Status,
 } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
-const EMPTY_SCHEMA: ObservationSchema = { metrics: [], derived: [] };
+const EMPTY_SCHEMA: MeasurementSchema = { metrics: [], derived: [] };
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = [
   "name",
@@ -111,6 +112,25 @@ async function loadOwned(c: Context<AppBindings>, id: string): Promise<Benchmark
   return row;
 }
 
+/** Resolve the benchmark key: use the supplied one, or auto-generate a unique kebab key from the name. */
+async function resolveBenchmarkKey(
+  db: D1Database,
+  accountId: string,
+  attrs: Record<string, unknown>,
+  name: string,
+): Promise<string> {
+  if (typeof attrs.key === "string" && attrs.key.trim().length > 0) {
+    return requireString(attrs, "key", LIMITS.keyLength);
+  }
+  const base = kebab(name) || "benchmark";
+  if (!(await benchmarkKeyExists(db, accountId, base))) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!(await benchmarkKeyExists(db, accountId, candidate))) return candidate;
+  }
+  return `${base}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
 /** The draft/ready flag transitions (§2): the author (a writer) or any admin. */
 function assertCanManageDraft(auth: AuthContext, benchmark: BenchmarkRow): void {
   if (!(canAdmin(auth) || (isAuthor(auth, benchmark) && canWrite(auth)))) {
@@ -127,13 +147,14 @@ benchmarks.post("/", requireAuth, async (c) => {
   }
   requireWrite(auth);
   const attrs = await readAttributes(c);
-  const key = requireString(attrs, "key", LIMITS.keyLength);
   const name = requireString(attrs, "name", LIMITS.nameLength);
+  // The key is optional: when omitted it's auto-generated from the name (unique within the account).
+  const key = await resolveBenchmarkKey(c.env.DB, auth.account_id, attrs, name);
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
-  const observation_schema =
-    "observation_schema" in attrs ? validateObservationSchema(attrs.observation_schema) : EMPTY_SCHEMA;
+  const measurement_schema =
+    "measurement_schema" in attrs ? validateMeasurementSchema(attrs.measurement_schema) : EMPTY_SCHEMA;
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
@@ -150,7 +171,7 @@ benchmarks.post("/", requireAuth, async (c) => {
     description,
     about,
     methodology,
-    observation_schema,
+    measurement_schema,
     category,
     created_by_user_id: auth.user_id, // null when an API key creates it
   });
@@ -224,15 +245,15 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
-  const observation_schema =
-    "observation_schema" in attrs ? validateObservationSchema(attrs.observation_schema) : EMPTY_SCHEMA;
-  // Full-replace semantics, like observation_schema: absent → the defaults, not "keep".
+  const measurement_schema =
+    "measurement_schema" in attrs ? validateMeasurementSchema(attrs.measurement_schema) : EMPTY_SCHEMA;
+  // Full-replace semantics, like measurement_schema: absent → the defaults, not "keep".
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
   // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable.
   if (existing.status !== "PRIVATE") {
-    assertFrozenCompatible(parseObservationSchema(existing.observation_schema), observation_schema);
+    assertFrozenCompatible(parseMeasurementSchema(existing.measurement_schema), measurement_schema);
   }
 
   const row = await updateBenchmark(c.env.DB, existing.id, {
@@ -240,7 +261,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     description,
     about,
     methodology,
-    observation_schema,
+    measurement_schema,
     category,
   });
   await setBenchmarkTags(c.env.DB, existing.id, tags);
@@ -304,7 +325,7 @@ benchmarks.post("/:id/actions/return_to_draft", requireAuth, async (c) => {
 });
 
 // ── Close / reopen ───────────────────────────────────────────────────────────
-// The publisher's reversible "complete" signal: a closed benchmark accepts no new targets, runs,
+// The publisher's reversible "complete" signal: a closed benchmark accepts no new subjects, runs,
 // or measurements. History stays append-only either way — closing is a lifecycle signal, not a
 // credibility invariant, which is why reopening is allowed (any sequence of close/reopen/append is
 // inherently visible in the measurements' timestamps).
@@ -345,35 +366,30 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
   if (existing.status !== "PRIVATE") {
     throw new ConflictError("Only a private benchmark can be published.");
   }
-  if (existing.draft !== 0) {
-    throw new ConflictError("Mark the benchmark ready before publishing.");
-  }
   if (!(await accountHasVerifiedUser(c.env.DB, existing.account_id))) {
     throw new ForbiddenError("Verify your email address before publishing a benchmark.");
   }
 
   const attrs = await readAttributes(c).catch(() => ({}) as Record<string, unknown>);
-  const identityRef = optionalStringOrNull(attrs, "publisher_identity") ?? null;
+  const publisherRef = optionalStringOrNull(attrs, "publisher") ?? null;
   const now = Date.now();
 
-  // ORGANIZATION publish — a publisher_identity is named (and isn't the "self" sentinel).
-  if (identityRef !== null && identityRef !== "self") {
+  // ORGANIZATION publish — a verified publisher (domain) is named (and isn't the "self" sentinel).
+  if (publisherRef !== null && publisherRef !== "self") {
     if (!canPublishOrg(auth)) throw new ForbiddenError(RBAC_REASONS.publishOrg);
-    const identity = await getPublisherIdentityById(c.env.DB, identityRef);
-    if (!identity || identity.account_id !== existing.account_id) throw new NotFoundError();
-    const verified = await listVerifiedDomains(c.env.DB, identity.id);
-    if (verified.length === 0) {
-      throw new ConflictError("This organization identity has no verified domain.");
+    const publisher = await getPublisherById(c.env.DB, publisherRef);
+    if (!publisher || publisher.account_id !== existing.account_id) throw new NotFoundError();
+    if (publisher.status !== "VERIFIED") {
+      throw new ConflictError("This publisher's domain is not verified.");
     }
     const snapshot: OrgAttributionSnapshot = {
-      name: identity.name,
-      logo_url: identity.logo_url,
-      verified_domains: verified.map((d) => d.domain),
+      domain: publisher.domain,
+      icon: publisher.icon,
     };
     const row = await publishBenchmark(c.env.DB, existing.id, now, {
       published_by_user_id: auth.user_id,
       published_as_kind: "ORGANIZATION",
-      published_identity_id: identity.id,
+      published_identity_id: publisher.id,
       attribution_snapshot: JSON.stringify(snapshot),
     });
     return resourceResponse(

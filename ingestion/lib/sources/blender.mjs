@@ -214,8 +214,8 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     .slice(0, topDevices);
 
   const seen = new Map();
-  /** @type {import("../model.mjs").IngestTarget[]} */
-  const targets = [];
+  /** @type {import("../model.mjs").IngestSubject[]} */
+  const subjects = [];
   /** @type {import("../model.mjs").IngestMeasurement[]} */
   const measurements = [];
   // Only runs actually referenced by a surviving measurement are emitted.
@@ -223,15 +223,15 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
   const usedRunKeys = new Set();
 
   for (const d of ranked) {
-    const targetKey = uniqueSlug(d.name, seen);
+    const subjectKey = uniqueSlug(d.name, seen);
     // The device name is Blender's native stable id — the same device recurs across the CPU and GPU
-    // benchmarks, so it dedups into one account-owned target linked into both (M:N).
-    targets.push({ key: targetKey, name: d.name, source_external_id: d.name, details: undefined });
+    // benchmarks, so it dedups into one account-owned subject linked into both (M:N).
+    subjects.push({ key: subjectKey, name: d.name, source_external_id: d.name, details: undefined });
     for (const entry of d.entries) {
       usedRunKeys.add(entry.runKey);
       measurements.push({
         run_key: entry.runKey,
-        target_key: targetKey,
+        subject_key: subjectKey,
         created_at: retrievedAt,
         metrics: entry.metrics,
       });
@@ -246,8 +246,8 @@ function buildBenchmark({ key, name, description, tags, slices, archive, topDevi
     methodology: null,
     category: "HARDWARE",
     tags,
-    observationSchema: SCHEMA,
-    targets,
+    measurementSchema: SCHEMA,
+    subjects,
     runs: [...runsByKey.values()].filter((r) => usedRunKeys.has(r.key)),
     measurements,
   };

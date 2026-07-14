@@ -5,6 +5,7 @@ import {
   apiGet,
   apiPost,
   bearer,
+  makeAccountSubject,
   makeBenchmark,
   publish,
   register,
@@ -42,13 +43,13 @@ describe("string-size limits (400)", () => {
     ).toBe(201);
   });
 
-  it("rejects over-limit target and run fields", async () => {
+  it("rejects over-limit subject and run fields", async () => {
     const { token } = await register();
     const bench = await makeBenchmark(token);
     const longKey = "k".repeat(LIMITS.keyLength + 1);
     const t = await apiPost(
-      "/api/v1/targets",
-      { data: { type: "target", attributes: { key: longKey, name: "T" } } },
+      "/api/v1/subjects",
+      { data: { type: "subject", attributes: { key: longKey, name: "T" } } },
       bearer(token),
     );
     expect(t.status).toBe(400);
@@ -72,7 +73,7 @@ describe("count ceilings (409)", () => {
     const now = Date.now();
     await bulkInsert(
       "benchmark",
-      "id, account_id, key, name, status, observation_schema, created_at, updated_at, draft, category",
+      "id, account_id, key, name, status, measurement_schema, created_at, updated_at, draft, category",
       Array.from(
         { length: LIMITS.benchmarksPerAccount },
         (_, i) => `('bulk-${i}', '${account_id}', 'bulk-${i}', 'B${i}', 'PRIVATE', '{}', ${now}, ${now}, 1, 'OTHER')`,
@@ -88,14 +89,14 @@ describe("count ceilings (409)", () => {
     expect(body.errors[0].detail).toContain(String(LIMITS.benchmarksPerAccount));
   });
 
-  it("caps targets linked to a benchmark", async () => {
+  it("caps subjects linked to a benchmark", async () => {
     const { token, account_id } = await register();
     const bench = await makeBenchmark(token);
     const now = Date.now();
-    const n = LIMITS.targetsPerBenchmark;
-    // Fill the benchmark to its link ceiling: n account-owned targets, each linked once.
+    const n = LIMITS.subjectsPerBenchmark;
+    // Fill the benchmark to its link ceiling: n account-owned subjects, each linked once.
     await bulkInsert(
-      "target",
+      "subject",
       "id, account_id, key, name, created_at, updated_at",
       Array.from(
         { length: n },
@@ -103,20 +104,15 @@ describe("count ceilings (409)", () => {
       ),
     );
     await bulkInsert(
-      "benchmark_target",
-      "id, benchmark_id, target_id, created_at",
+      "benchmark_subject",
+      "id, benchmark_id, subject_id, created_at",
       Array.from({ length: n }, (_, i) => `('bulk-bt-${i}', '${bench.id}', 'bulk-t-${i}', ${now})`),
     );
-    // One more target, then linking it exceeds the per-benchmark cap.
-    const extra = await apiPost(
-      "/api/v1/targets",
-      { data: { type: "target", attributes: { key: "extra", name: "T" } } },
-      bearer(token),
-    );
-    const extraId = ((await extra.json()) as { data: Resource }).data.id;
+    // One more subject, then linking it exceeds the per-benchmark cap.
+    const extraId = (await makeAccountSubject(token, "extra")).id;
     const res = await apiPost(
-      "/api/v1/benchmark_targets",
-      { data: { type: "benchmark_target", attributes: { benchmark: bench.id, target: extraId } } },
+      "/api/v1/benchmark_subjects",
+      { data: { type: "benchmark_subject", attributes: { benchmark: bench.id, subject: extraId } } },
       bearer(token),
     );
     expect(res.status).toBe(409);
@@ -124,7 +120,7 @@ describe("count ceilings (409)", () => {
 
   // Runs are per-benchmark now; the count ceiling (LIMITS.runsPerBenchmark = 20k) is too large to
   // bulk-insert, so the collision this test guards is run-key uniqueness *within a benchmark* (409).
-  // runsPerTarget no longer exists — a run is a benchmark child, not a target child.
+  // runsPerSubject no longer exists — a run is a benchmark child, not a subject child.
   it("rejects a duplicate run key within a benchmark", async () => {
     const { token } = await register();
     const bench = await makeBenchmark(token);
@@ -161,7 +157,7 @@ describe("GET /runs?filter[benchmark]", () => {
   });
 
   it("404s when the benchmark scope filter is missing", async () => {
-    // Runs are benchmark-scoped: filter[benchmark] is required, and its absence 404s (mirrors targets.ts).
+    // Runs are benchmark-scoped: filter[benchmark] is required, and its absence 404s (mirrors subjects.ts).
     expect((await apiGet("/api/v1/runs")).status).toBe(404);
   });
 

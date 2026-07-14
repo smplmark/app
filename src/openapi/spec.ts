@@ -170,29 +170,29 @@ function registerEntity(
   return { Attributes, Resource, Response, ListResponse, Request };
 }
 
-// ── observation_schema (nested value object on benchmark) ─────────────────────────
+// ── measurement_schema (nested value object on benchmark) ─────────────────────────
 
 const X_KINDS = ["TIME", "NUMBER", "CATEGORY"] as const;
 
 const MetricDecl = z
   .object({
-    name: z.string().openapi({ description: "The metric's identifier, used as its key in observation payloads." }),
+    name: z.string().openapi({ description: "The metric's identifier, used as its key in measurement payloads." }),
     type: z.string().openapi({ description: "The value type of the metric, e.g. \"number\"." }),
     unit: z.string().optional().openapi({ description: "A display unit for the metric, e.g. \"ms\" or \"tokens\"." }),
     description: z.string().optional().openapi({ description: "A human-readable explanation of what the metric measures." }),
   })
-  .openapi("MetricDecl", { description: "A metric a client supplies directly on each observation." });
+  .openapi("MetricDecl", { description: "A metric a client supplies directly on each measurement." });
 
 const DerivedDecl = z
   .object({
     name: z.string().openapi({ description: "The derived metric's identifier, as it appears in the computed metrics map." }),
     expr: jsonObject(
-      "A JSON Logic expression evaluated on read against the observation and its run context (e.g. elapsed_ms = created_at − run.started_at).",
+      "A JSON Logic expression evaluated on read against the measurement and its run context (e.g. elapsed_ms = created_at − run.started_at).",
     ),
     unit: z.string().optional().openapi({ description: "A display unit for the derived value, e.g. \"ms\"." }),
     description: z.string().optional().openapi({ description: "A human-readable explanation of what the derived value represents." }),
   })
-  .openapi("DerivedDecl", { description: "A metric computed when an observation is read, from other metrics and run context." });
+  .openapi("DerivedDecl", { description: "A metric computed when an measurement is read, from other metrics and run context." });
 
 const ChartDecl = z
   .object({
@@ -205,17 +205,17 @@ const ChartDecl = z
   })
   .openapi("ChartDecl", { description: "The default chart the benchmark page renders. Visitors may override it." });
 
-const ObservationSchema = registry.register(
-  "ObservationSchema",
+const MeasurementSchema = registry.register(
+  "MeasurementSchema",
   z
     .object({
-      metrics: z.array(MetricDecl).openapi({ description: "The metrics clients supply on each observation." }),
+      metrics: z.array(MetricDecl).openapi({ description: "The metrics clients supply on each measurement." }),
       derived: z.array(DerivedDecl).openapi({ description: "Metrics computed on read from stored metrics and run context." }),
       chart: ChartDecl.optional(),
     })
     .openapi({
       description:
-        "The shape of the benchmark's observations. Stored and derived metrics are merged into one map; the derived values are computed when the observation is read.",
+        "The shape of the benchmark's measurements. Stored and derived metrics are merged into one map; the derived values are computed when the measurement is read.",
     }),
 );
 
@@ -235,6 +235,15 @@ const user = registerEntity(
   }),
 );
 
+const UserSettings = registry.register(
+  "UserSettings",
+  z.record(z.unknown()).openapi({
+    type: "object",
+    description:
+      "The current user's personal preferences for this account — for example the console theme. An opaque object whose keys and values are defined by the client and stored unchanged; empty when nothing has been saved.",
+  }),
+);
+
 const account = registerEntity(
   "Account",
   "account",
@@ -242,14 +251,12 @@ const account = registerEntity(
     key: z.string().openapi({ description: "The account's human-readable, URL-safe identifier." }),
     name: z.string().openapi({ description: "The account's display name." }),
     description: z.string().nullable().openapi({ description: "A short description of the account, or null." }),
-    url: z.string().nullable().openapi({ description: "The account's website URL, or null." }),
     allow_personal_publish: z.boolean().openapi({ description: "Whether members may publish their own benchmarks under their personal identity without an admin. When false, publishing is routed through an admin." }),
     created_at: dateTime("When the account was created."),
   }),
   z.object({
     name: z.string().openapi({ description: "The account's display name." }),
     description: z.string().nullable().openapi({ description: "A short description of the account." }),
-    url: z.string().nullable().openapi({ description: "The account's website URL." }),
     allow_personal_publish: z.boolean().optional().openapi({ description: "Whether members may publish their own benchmarks under their personal identity. Omit to leave the current setting unchanged." }),
   }),
 );
@@ -374,11 +381,9 @@ const PublishedAs = z
   .object({
     kind: z
       .enum(["PERSONAL", "ORGANIZATION", "INGESTED"])
-      .openapi({ description: "How the benchmark is attributed: PERSONAL (its author), ORGANIZATION (a publisher identity), or INGESTED (openly licensed results imported from a third-party source)." }),
-    identity: z.string().nullable().optional().openapi({ description: "The publisher identity the benchmark was published under (ORGANIZATION only). Null if that identity has since been deleted." }),
-    name: z.string().optional().openapi({ description: "The organization brand name captured at publish (ORGANIZATION only)." }),
-    logo_url: z.string().nullable().optional().openapi({ description: "The organization logo captured at publish (ORGANIZATION only), or null." }),
-    verified_domains: z.array(z.string()).optional().openapi({ description: "The domains that were verified at the instant of publish (ORGANIZATION only)." }),
+      .openapi({ description: "How the benchmark is attributed: PERSONAL (its author), ORGANIZATION (a verified publisher domain), or INGESTED (openly licensed results imported from a third-party source)." }),
+    domain: z.string().optional().openapi({ description: "The verified publisher domain the benchmark was published under (ORGANIZATION only), e.g. \"microsoft.com\"." }),
+    icon: z.enum(["monogram", "favicon"]).optional().openapi({ description: "How the publisher's icon is shown (ORGANIZATION only): a domain-initial monogram, or the domain's favicon." }),
     display_name: z.string().nullable().optional().openapi({ description: "The author's display name captured at publish (PERSONAL only), or null." }),
     gravatar_hash: z.string().optional().openapi({ description: "A SHA-256 hash of the author's email captured at publish (PERSONAL only), for rendering an avatar." }),
     source_name: z.string().optional().openapi({ description: "The name of the source the results were ingested from (INGESTED only), e.g. \"Blender Open Data\"." }),
@@ -428,7 +433,7 @@ const benchmark = registerEntity(
     published_at: dateTime("When the benchmark was published, or null if it has not been published.").nullable(),
     withdrawn_at: dateTime("When the benchmark was withdrawn, or null.").nullable(),
     withdrawal_reason: z.string().nullable().openapi({ description: "The stated reason the benchmark was withdrawn, or null." }),
-    observation_schema: ObservationSchema,
+    measurement_schema: MeasurementSchema,
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
       .openapi({ description: "The benchmark's coarse browse category. Exactly one per benchmark; tags carry finer-grained classification." }),
@@ -439,18 +444,18 @@ const benchmark = registerEntity(
       .number()
       .int()
       .openapi({ description: "All-time page-view count for the benchmark. A raw, best-effort popularity signal — not an audited metric." }),
-    closed: z.boolean().openapi({ description: "Whether the publisher has marked the benchmark complete. A closed benchmark accepts no new targets, runs, or measurements; existing data stays public. Reversible." }),
+    closed: z.boolean().openapi({ description: "Whether the publisher has marked the benchmark complete. A closed benchmark accepts no new subjects, runs, or measurements; existing data stays public. Reversible." }),
     closed_at: dateTime("When the benchmark was closed, or null while open.").nullable(),
     created_at: dateTime("When the benchmark was created."),
     updated_at: dateTime("When the benchmark was last updated."),
   }),
   z.object({
-    key: z.string().max(100).openapi({ description: "The benchmark's human-readable, URL-safe identifier. At most 100 characters." }),
+    key: z.string().max(100).optional().openapi({ description: "The benchmark's human-readable, URL-safe identifier, unique within your account. At most 100 characters. Auto-generated from the name if omitted." }),
     name: z.string().max(200).openapi({ description: "The benchmark's display name. At most 200 characters." }),
     description: z.string().max(500).optional().openapi({ description: "A one-line summary of the benchmark. At most 500 characters." }),
     about: z.string().max(20000).optional().openapi({ description: "A longer description of the benchmark. At most 20,000 characters." }),
     methodology: z.string().max(20000).optional().openapi({ description: "How the benchmark is run and measured. At most 20,000 characters." }),
-    observation_schema: ObservationSchema.optional(),
+    measurement_schema: MeasurementSchema.optional(),
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])
       .optional()
@@ -462,35 +467,129 @@ const benchmark = registerEntity(
   }),
 );
 
-const target = registerEntity(
-  "Target",
-  "target",
+const subject = registerEntity(
+  "Subject",
+  "subject",
   z.object({
-    account: idRef("The account that owns the target."),
-    key: z.string().openapi({ description: "The target's human-readable identifier, unique within its account." }),
-    name: z.string().openapi({ description: "The target's display name." }),
-    details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the target, or null.", type: "object" }),
-    created_at: dateTime("When the target was created."),
-    updated_at: dateTime("When the target was last updated."),
+    account: idRef("The account that owns the subject."),
+    subject_type: idRef("The subject type this subject conforms to."),
+    key: z.string().openapi({ description: "The subject's human-readable identifier, unique within its account." }),
+    name: z.string().openapi({ description: "The subject's display name." }),
+    details: z.record(z.unknown()).nullable().openapi({ description: "The subject's field values, keyed by field name. Values for fields the subject type defines are validated and normalized against it; any other keys are stored as supplied (the subject type is an open schema).", type: "object" }),
+    created_at: dateTime("When the subject was created."),
+    updated_at: dateTime("When the subject was last updated."),
   }),
   z.object({
-    key: z.string().max(100).openapi({ description: "The target's human-readable identifier, unique within your account. At most 100 characters." }),
-    name: z.string().max(200).openapi({ description: "The target's display name. At most 200 characters." }),
-    details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the target.", type: "object" }),
+    subject_type: idRef("The id of the subject type this subject conforms to. Required; fixed at creation."),
+    key: z.string().max(100).optional().openapi({ description: "The subject's human-readable identifier, unique within your account. At most 100 characters. Auto-generated from the name if omitted." }),
+    name: z.string().max(200).openapi({ description: "The subject's display name. At most 200 characters." }),
+    details: z.record(z.unknown()).optional().openapi({ description: "The subject's field values, keyed by field name. Keys the subject type defines are validated against it (required fields, value types, string max_length, enum options); any other keys are stored as-is — the subject type is an open schema, so a subject may carry arbitrary extra fields.", type: "object" }),
   }),
 );
 
-const benchmarkTarget = registerEntity(
-  "BenchmarkTarget",
-  "benchmark_target",
+const subjectFieldType = z.enum(["STRING", "NUMBER", "BOOLEAN", "ENUM", "DATE"]);
+const subjectType = registerEntity(
+  "SubjectType",
+  "subject_type",
   z.object({
-    benchmark: idRef("The benchmark the target is linked to."),
-    target: idRef("The target linked to the benchmark."),
+    account: idRef("The account that owns the subject type."),
+    key: z.string().openapi({ description: "The subject type's identifier, derived from its name (kebab-case) and unique within the account." }),
+    name: z.string().openapi({ description: "The subject type's display name." }),
+    fields: z
+      .array(
+        z.object({
+          name: z.string().openapi({ description: "The field's identifier — the key it occupies in a subject's `details` object (snake_case: lowercase alphanumerics and underscores, unique within the type)." }),
+          label: z.string().openapi({ description: "The field's human-readable display name." }),
+          description: z.string().optional().openapi({ description: "An optional longer description of the field." }),
+          type: subjectFieldType.openapi({ description: "The field's value type." }),
+          required: z.boolean().openapi({ description: "Whether a subject of this type must supply this field." }),
+          max_length: z.number().int().optional().openapi({ description: "Maximum length; present only for STRING fields." }),
+          options: z.array(z.string()).optional().openapi({ description: "The allowed values; present only for ENUM fields." }),
+        }),
+      )
+      .openapi({ description: "The typed fields that subjects of this type carry." }),
+    created_at: dateTime("When the subject type was created."),
+    updated_at: dateTime("When the subject type was last updated."),
+  }),
+  z.object({
+    name: z.string().max(200).openapi({ description: "The subject type's display name. Its key is derived from this automatically — do not supply a key. At most 200 characters." }),
+    fields: z
+      .array(
+        z.object({
+          label: z.string().openapi({ description: "The field's human-readable display name." }),
+          name: z.string().optional().openapi({ description: "The field's identifier — the key it occupies in a subject's `details` object. Normalized to snake_case (lowercase alphanumerics and underscores); derived from `label` when omitted; made unique within the type." }),
+          description: z.string().max(500).optional().openapi({ description: "An optional longer description of the field. At most 500 characters." }),
+          type: subjectFieldType.openapi({ description: "The field's value type." }),
+          required: z.boolean().optional().openapi({ description: "Whether the field is required. Defaults to false." }),
+          max_length: z.number().int().optional().openapi({ description: "Maximum length, for a STRING field." }),
+          options: z.array(z.string()).optional().openapi({ description: "The allowed values, required for (and only valid on) an ENUM field." }),
+        }),
+      )
+      .optional()
+      .openapi({ description: "The fields subjects of this type carry. Omit for a type with no structured fields yet." }),
+  }),
+);
+
+const metricType = z.enum(["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"]);
+const metricKind = z.enum(["STORED", "DERIVED"]);
+const MetricFormula = z
+  .object({
+    op: z.enum(["SKEW_MS", "SUM", "DIFFERENCE", "RATIO", "PERCENT"]).openapi({ description: "The built-in operation. SKEW_MS takes no operands (it's the offset of `created_at` from the previous minute); the rest are binary over the metrics `a` and `b`." }),
+    a: z.string().optional().openapi({ description: "The first operand metric name (binary formulas)." }),
+    b: z.string().optional().openapi({ description: "The second operand metric name (binary formulas)." }),
+  })
+  .openapi("MetricFormula", { description: "A structured, built-in derived-metric formula (the OOTB set — kept small and closed)." });
+
+const metric = registerEntity(
+  "Metric",
+  "metric",
+  z.object({
+    account: idRef("The account that owns the metric."),
+    name: z.string().openapi({ description: "The metric's identifier — the key it occupies in a measurement's metrics bag (snake_case: lowercase alphanumerics and underscores, unique within the account)." }),
+    label: z.string().openapi({ description: "The metric's human-readable display name." }),
+    description: z.string().nullable().openapi({ description: "An optional longer description of the metric." }),
+    type: metricType.openapi({ description: "The metric's semantic value type." }),
+    kind: metricKind.openapi({ description: "STORED — a value clients POST on each measurement; or DERIVED — computed on read from a formula." }),
+    formula: MetricFormula.nullable().openapi({ description: "The built-in derived formula (DERIVED metrics only); null for STORED." }),
+    expr: z.record(z.unknown()).nullable().openapi({ description: "The JSON Logic the formula compiles to — what the compute-on-read engine evaluates once the metric is attached to a benchmark; null for STORED.", type: "object" }),
+    created_at: dateTime("When the metric was created."),
+    updated_at: dateTime("When the metric was last updated."),
+  }),
+  z.object({
+    name: z.string().optional().openapi({ description: "The metric's identifier. Normalized to snake_case (lowercase alphanumerics and underscores); derived from `label` when omitted; made unique within the account." }),
+    label: z.string().max(200).openapi({ description: "The metric's display name. At most 200 characters." }),
+    description: z.string().max(500).optional().openapi({ description: "An optional longer description. At most 500 characters." }),
+    type: metricType.openapi({ description: "The metric's semantic value type." }),
+    kind: metricKind.optional().openapi({ description: "STORED (the default) or DERIVED." }),
+    formula: MetricFormula.optional().openapi({ description: "Required for a DERIVED metric — the built-in formula to compute it." }),
+  }),
+);
+
+const benchmarkSubject = registerEntity(
+  "BenchmarkSubject",
+  "benchmark_subject",
+  z.object({
+    benchmark: idRef("The benchmark the subject is linked to."),
+    subject: idRef("The subject linked to the benchmark."),
     created_at: dateTime("When the link was created."),
   }),
   z.object({
-    benchmark: idRef("The benchmark to link the target to."),
-    target: idRef("The target to link. Must belong to the same account as the benchmark."),
+    benchmark: idRef("The benchmark to link the subject to."),
+    subject: idRef("The subject to link. Must belong to the same account as the benchmark."),
+  }),
+);
+
+const benchmarkMetric = registerEntity(
+  "BenchmarkMetric",
+  "benchmark_metric",
+  z.object({
+    benchmark: idRef("The benchmark the metric is linked to."),
+    metric: idRef("The metric linked to the benchmark."),
+    created_at: dateTime("When the link was created."),
+  }),
+  z.object({
+    benchmark: idRef("The benchmark to link the metric to."),
+    metric: idRef("The metric to link. Must belong to the same account as the benchmark."),
   }),
 );
 
@@ -514,7 +613,7 @@ const run = registerEntity(
   }),
   z.object({
     benchmark: idRef("The benchmark to attach the run to."),
-    key: z.string().max(100).openapi({ description: "The run's human-readable identifier. At most 100 characters." }),
+    key: z.string().max(100).optional().openapi({ description: "The run's human-readable identifier, unique within its benchmark. At most 100 characters. Auto-generated if omitted." }),
     name: z.string().max(200).optional().openapi({ description: "The run's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the run.", type: "object" }),
     started_at: dateTime("When the run started. Defaults to the time of creation.").optional(),
@@ -526,7 +625,7 @@ const measurement = registerEntity(
   "measurement",
   z.object({
     run: idRef("The run (occasion) this measurement belongs to."),
-    target: idRef("The target this measurement is of."),
+    subject: idRef("The subject this measurement is of."),
     created_at: dateTime("When the measurement was recorded."),
     metrics: z
       .record(z.number())
@@ -540,7 +639,7 @@ const measurement = registerEntity(
   }),
   z.object({
     run: idRef("The run (occasion) to attach the measurement to."),
-    target: idRef("The target being measured. Must be linked to the same benchmark as the run."),
+    subject: idRef("The subject being measured. Must be linked to the same benchmark as the run."),
     created_at: dateTime("When the measurement occurred. Defaults to the time of ingest.").optional(),
     metrics: z
       .record(z.number())
@@ -550,44 +649,39 @@ const measurement = registerEntity(
   }),
 );
 
-const publisherIdentity = registerEntity(
-  "PublisherIdentity",
-  "publisher_identity",
+const publisher = registerEntity(
+  "Publisher",
+  "publisher",
   z.object({
-    account: idRef("The account that owns this publisher identity."),
-    key: z.string().openapi({ description: "The identity's human-readable, URL-safe handle, unique within the account." }),
-    name: z.string().openapi({ description: "The organization's display brand name, e.g. \"Microsoft\"." }),
-    logo_url: z.string().nullable().openapi({ description: "A URL to the organization's logo, or null." }),
-    created_at: dateTime("When the identity was created."),
-    updated_at: dateTime("When the identity was last updated."),
-  }),
-  z.object({
-    key: z.string().openapi({ description: "The identity's human-readable, URL-safe handle." }),
-    name: z.string().openapi({ description: "The organization's display brand name." }),
-    logo_url: z.string().nullable().optional().openapi({ description: "A URL to the organization's logo." }),
-  }),
-);
-
-const publisherDomain = registerEntity(
-  "PublisherDomain",
-  "publisher_domain",
-  z.object({
-    account: idRef("The account that owns this domain claim."),
-    publisher_identity: idRef("The publisher identity this domain belongs to."),
-    domain: z.string().openapi({ description: "The exact registrable domain being claimed, e.g. \"microsoft.com\" (no subdomain inference)." }),
+    account: idRef("The account that owns this publisher."),
+    domain: z.string().openapi({ description: "The exact registrable domain that IS this publisher, e.g. \"microsoft.com\" (no subdomain inference). A benchmark published under this publisher is attributed to this domain." }),
     status: z
       .enum(["PENDING", "VERIFIED", "LAPSED"])
-      .openapi({ description: "The domain's verification state. PENDING awaits a successful check; VERIFIED has proven ownership; LAPSED was verified but the record has since disappeared." }),
-    verification_token: z.string().openapi({ description: "The TXT record value to add to your domain's DNS to prove ownership. Add a TXT record whose value is exactly this string, then run the verify action." }),
+      .openapi({ description: "The domain's verification state. PENDING awaits a successful check; VERIFIED has proven ownership; LAPSED was verified but the DNS record has since disappeared. Only a VERIFIED publisher can be published under." }),
+    verification_token: z.string().openapi({ description: "The TXT record value to add to the domain's DNS to prove ownership. Add a TXT record with this value at either the domain root or the `_smplmark-verify` subdomain (e.g. `_smplmark-verify.example.com`), then run the verify action." }),
     verified: z.boolean().openapi({ description: "Whether the domain is currently verified." }),
     verified_at: dateTime("When the domain was last verified, or null if it has never verified.").nullable(),
     last_checked_at: dateTime("When the domain was last checked, or null if it has never been checked.").nullable(),
-    created_at: dateTime("When the domain claim was created."),
+    icon: z.enum(["monogram", "favicon"]).openapi({ description: "How this publisher's icon is displayed: a domain-initial monogram, or the domain's own favicon." }),
+    created_at: dateTime("When the publisher was created."),
   }),
   z.object({
-    publisher_identity: idRef("The publisher identity to add the domain to."),
-    domain: z.string().openapi({ description: "The exact registrable domain to claim, e.g. \"microsoft.com\"." }),
+    domain: z.string().openapi({ description: "The exact registrable domain to add as a publisher, e.g. \"microsoft.com\"." }),
   }),
+);
+
+const publisherUpdate = registry.register(
+  "PublisherUpdateRequest",
+  z
+    .object({
+      data: z.object({
+        type: z.literal("publisher").openapi({ description: "Always \"publisher\"." }),
+        attributes: z.object({
+          icon: z.enum(["monogram", "favicon"]).openapi({ description: "How to display this publisher's icon: a domain-initial monogram, or the domain's favicon." }),
+        }),
+      }),
+    })
+    .openapi("PublisherUpdateRequest", { description: "A request to change a publisher's icon preference." }),
 );
 
 // ── Auth (non-resource) schemas ──────────────────────────────────────────────
@@ -859,6 +953,38 @@ registry.registerPath({
   },
 });
 
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/users/current/settings",
+  tags: ["Users"],
+  summary: "Get the current user's settings",
+  description:
+    "Returns the current user's saved preferences for this account (such as the console theme) as a JSON object, empty when none are set. Requires a session credential.",
+  security: bearerSecurity,
+  responses: {
+    "200": jsonResponse(UserSettings, "The current user's settings."),
+    "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
+    "403": errorJson("The credential is not permitted to perform this action."),
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v1/users/current/settings",
+  tags: ["Users"],
+  summary: "Replace the current user's settings",
+  description:
+    "Replaces the current user's saved preferences for this account with the supplied object; keys that are omitted are removed. Returns the stored settings. Requires a session credential.",
+  security: bearerSecurity,
+  request: { body: jsonBody(UserSettings, "The settings to store.") },
+  responses: {
+    "200": jsonResponse(UserSettings, "The stored settings."),
+    "400": errorJson("The request was malformed."),
+    "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
+    "403": errorJson("The credential is not permitted to perform this action."),
+  },
+});
+
 // ── Paths: Accounts ──────────────────────────────────────────────────────────
 
 registry.registerPath({
@@ -884,6 +1010,20 @@ registry.registerPath({
     "200": domainResponse(account.Response, "The updated account."),
     "400": errorJson("The request was malformed."),
     "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/accounts/current",
+  tags: ["Accounts"],
+  summary: "Delete the current account",
+  description: "Deletes the account and blocks all further access with its credentials. Owner-only, and only with a session credential (not an API key).",
+  security: bearerSecurity,
+  responses: {
+    "204": { description: "The account was deleted." },
+    "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
+    "403": errorJson("Only the account owner can delete the account."),
   },
 });
 
@@ -1104,6 +1244,11 @@ registry.registerPath({
   tags: ["API keys"],
   summary: "List API keys",
   security: bearerSecurity,
+  parameters: [
+    filterParam("scope_type", "Limit results to keys of this scope: ACCOUNT, BENCHMARK, or RUN."),
+    filterParam("scope_ref", "Limit results to keys scoped to this specific benchmark or run id (use with filter[scope_type])."),
+    ...paginationParams,
+  ],
   responses: {
     "200": domainResponse(apiKey.ListResponse, "The account's API keys. The key value is omitted."),
     "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
@@ -1120,6 +1265,47 @@ registry.registerPath({
   request: { params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the API key." }) }) },
   responses: {
     "200": domainResponse(apiKey.Response, "The key, including its value."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v1/api_keys/{id}",
+  tags: ["API keys"],
+  summary: "Rename an API key",
+  description: "Updates the key's name. Its scope and expiry are fixed at creation and cannot be changed.",
+  security: bearerSecurity,
+  request: {
+    params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the API key." }) }),
+    body: domainBody(
+      z
+        .object({
+          data: z.object({
+            type: z.literal("api_key").openapi({ description: "Always \"api_key\"." }),
+            attributes: z.object({ name: z.string().openapi({ description: "A human-readable label for the key." }) }),
+          }),
+        })
+        .openapi("ApiKeyUpdateRequest", { description: "A request to rename an API key." }),
+      "The key's new name.",
+    ),
+  },
+  responses: {
+    "200": domainResponse(apiKey.Response, "The updated key."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/api_keys/{id}/actions/revoke",
+  tags: ["API keys"],
+  summary: "Revoke an API key",
+  description: "Disables the key immediately. It stops authenticating but stays listed with a revoked status; use Delete to remove it entirely.",
+  security: bearerSecurity,
+  request: { params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the API key." }) }) },
+  responses: {
+    "200": domainResponse(apiKey.Response, "The revoked key."),
     ...commonErrors,
   },
 });
@@ -1142,11 +1328,12 @@ registry.registerPath({
   method: "delete",
   path: "/api/v1/api_keys/{id}",
   tags: ["API keys"],
-  summary: "Revoke an API key",
+  summary: "Delete an API key",
+  description: "Permanently removes the key. To disable a key while keeping a record of it, revoke it instead.",
   security: bearerSecurity,
   request: { params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the API key." }) }) },
   responses: {
-    "204": { description: "The key was revoked." },
+    "204": { description: "The key was deleted." },
     ...commonErrors,
   },
 });
@@ -1184,7 +1371,7 @@ registry.registerPath({
     filterParam("key", "Limit results to the benchmark with this key."),
     filterParam("tag", "Limit results to benchmarks carrying this tag (exact match on the tag's lowercase slug)."),
     filterParam("category", "Limit results to benchmarks in this category: HARDWARE, DATABASE, ML_AI, STORAGE, NETWORK, or OTHER."),
-    filterParam("search", "Free-text search. Every term must match (AND) as a case-insensitive substring of the benchmark's key, name, description, about, methodology, category, tags, ingested source name, or the name or key of any of its targets — so searching for a model or system (e.g. \"llama 3\") finds the benchmark that contains it. Double-quote a phrase to match it exactly, e.g. \"blender 4.2\". At most 8 terms."),
+    filterParam("search", "Free-text search. Every term must match (AND) as a case-insensitive substring of the benchmark's key, name, description, about, methodology, category, tags, ingested source name, or the name or key of any of its subjects — so searching for a model or system (e.g. \"llama 3\") finds the benchmark that contains it. Double-quote a phrase to match it exactly, e.g. \"blender 4.2\". At most 8 terms."),
     ...paginationParams,
   ],
   responses: {
@@ -1220,8 +1407,8 @@ registry.registerPath({
 });
 
 for (const [action, summary, description] of [
-  ["close", "Close a benchmark", "Marks the benchmark complete: no new targets, runs, or measurements may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
-  ["reopen", "Reopen a benchmark", "Clears the complete mark so new targets, runs, and measurements may be added again."],
+  ["close", "Close a benchmark", "Marks the benchmark complete: no new subjects, runs, or measurements may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
+  ["reopen", "Reopen a benchmark", "Clears the complete mark so new subjects, runs, and measurements may be added again."],
 ] as const) {
   registry.registerPath({
     method: "post",
@@ -1327,7 +1514,7 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "Publish a benchmark",
   description:
-    "Makes the benchmark and its data publicly readable, attributing it either to an organization identity (pass publisher_identity, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must be marked ready first, and requires a signed-in user — API keys cannot publish.",
+    "Makes the benchmark and its data publicly readable, attributing it either to a verified publisher domain (pass publisher, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must be marked ready first, and requires a signed-in user — API keys cannot publish.",
   security: bearerSecurity,
   request: {
     params: benchmarkIdParam,
@@ -1338,10 +1525,10 @@ registry.registerPath({
         "application/vnd.api+json": {
           schema: z
             .object({
-              publisher_identity: z
+              publisher: z
                 .string()
                 .optional()
-                .openapi({ description: "The publisher identity to attribute the benchmark to. Omit (or pass \"self\") to publish under the author's personal identity." }),
+                .openapi({ description: "The verified publisher (domain) to attribute the benchmark to. Omit (or pass \"self\") to publish under the author's personal identity." }),
             })
             .openapi("BenchmarkPublishRequest", { description: "How to attribute the published benchmark." }),
         },
@@ -1351,7 +1538,7 @@ registry.registerPath({
   responses: {
     "200": domainResponse(benchmark.Response, "The published benchmark."),
     ...commonErrors,
-    "409": errorJson("The benchmark cannot be published from its current state, or the chosen organization identity has no verified domain."),
+    "409": errorJson("The benchmark cannot be published from its current state, or the chosen publisher's domain is not verified."),
   },
 });
 
@@ -1378,139 +1565,347 @@ registry.registerPath({
   },
 });
 
-// ── Paths: Targets ───────────────────────────────────────────────────────────
+// ── Paths: Subjects ───────────────────────────────────────────────────────────
 
-const targetIdParam = z.object({
-  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the target." }),
+const subjectIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the subject." }),
 });
 
 registry.registerPath({
   method: "post",
-  path: "/api/v1/targets",
-  tags: ["Targets"],
-  summary: "Create a target",
+  path: "/api/v1/subjects",
+  tags: ["Subjects"],
+  summary: "Create a subject",
   description:
-    "Creates a target owned by your account. A target is a reusable entity (a system, model, or configuration you measure); link it into one or more benchmarks with POST /api/v1/benchmark_targets.",
+    "Creates a subject owned by your account. A subject is a reusable entity (a system, model, or configuration you measure); link it into one or more benchmarks with POST /api/v1/benchmark_subjects.",
   security: bearerSecurity,
-  request: { body: domainBody(target.Request, "The target to create.") },
+  request: { body: domainBody(subject.Request, "The subject to create.") },
   responses: {
-    "201": domainResponse(target.Response, "The created target."),
+    "201": domainResponse(subject.Response, "The created subject."),
     ...commonErrors,
-    "409": errorJson("A target with that key already exists in your account, or the account has reached its target limit."),
+    "409": errorJson("A subject with that key already exists in your account, or the account has reached its subject limit."),
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/targets",
-  tags: ["Targets"],
-  summary: "List targets",
+  path: "/api/v1/subjects",
+  tags: ["Subjects"],
+  summary: "List subjects",
   description:
-    "With filter[benchmark], lists the targets linked to that benchmark (public benchmarks are world-visible). Without it, lists your own account's targets and requires authentication.",
+    "With filter[benchmark], lists the subjects linked to that benchmark (public benchmarks are world-visible). Without it, lists your own account's subjects and requires authentication.",
   parameters: [
-    filterParam("benchmark", "Limit results to targets linked to this benchmark id."),
-    filterParam("key", "Limit results to the target with this key."),
+    filterParam("benchmark", "Limit results to subjects linked to this benchmark id."),
+    filterParam("subject_type", "Limit account-scoped results to subjects of this subject type id."),
+    filterParam("key", "Limit results to the subject with this key."),
     ...paginationParams,
   ],
   responses: {
-    "200": domainResponse(target.ListResponse, "A page of targets."),
+    "200": domainResponse(subject.ListResponse, "A page of subjects."),
     "400": errorJson("The query parameters were malformed."),
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/targets/{id}",
-  tags: ["Targets"],
-  summary: "Get a target by id",
-  request: { params: targetIdParam },
+  path: "/api/v1/subjects/{id}",
+  tags: ["Subjects"],
+  summary: "Get a subject by id",
+  request: { params: subjectIdParam },
   responses: {
-    "200": domainResponse(target.Response, "The requested target."),
+    "200": domainResponse(subject.Response, "The requested subject."),
     "404": errorJson("The requested resource was not found."),
   },
 });
 
 registry.registerPath({
   method: "put",
-  path: "/api/v1/targets/{id}",
-  tags: ["Targets"],
-  summary: "Update a target",
+  path: "/api/v1/subjects/{id}",
+  tags: ["Subjects"],
+  summary: "Update a subject",
   security: bearerSecurity,
-  request: { params: targetIdParam, body: domainBody(target.Request, "The updated target.") },
+  request: { params: subjectIdParam, body: domainBody(subject.Request, "The updated subject.") },
   responses: {
-    "200": domainResponse(target.Response, "The updated target."),
+    "200": domainResponse(subject.Response, "The updated subject."),
     ...commonErrors,
   },
 });
 
 registry.registerPath({
   method: "delete",
-  path: "/api/v1/targets/{id}",
-  tags: ["Targets"],
-  summary: "Delete a target",
+  path: "/api/v1/subjects/{id}",
+  tags: ["Subjects"],
+  summary: "Delete a subject",
   description:
-    "Deletes an account-owned target along with its measurements and benchmark links. A target linked to a published benchmark cannot be deleted until it is unlinked there.",
+    "Deletes an account-owned subject along with its measurements and benchmark links. A subject linked to a published benchmark cannot be deleted until it is unlinked there.",
   security: bearerSecurity,
-  request: { params: targetIdParam },
+  request: { params: subjectIdParam },
   responses: {
-    "204": { description: "The target was deleted." },
+    "204": { description: "The subject was deleted." },
     ...commonErrors,
-    "409": errorJson("The target is linked to a published benchmark; unlink it there before deleting."),
+    "409": errorJson("The subject is linked to a published benchmark; unlink it there before deleting."),
   },
 });
 
-// ── Paths: Benchmark targets (the M:N link) ──────────────────────────────────
-
-const benchmarkTargetIdParam = z.object({
-  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the benchmark–target link." }),
+// ── Paths: Subject types (the field schema for subjects) ──────────────────────
+const subjectTypeIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the subject type." }),
 });
 
 registry.registerPath({
   method: "post",
-  path: "/api/v1/benchmark_targets",
-  tags: ["Targets"],
-  summary: "Link a target to a benchmark",
+  path: "/api/v1/subject_types",
+  tags: ["Subject types"],
+  summary: "Create a subject type",
   description:
-    "Adds an existing account-owned target to a benchmark. Adding a target is an append, so it is allowed while the benchmark is a draft or already published — but not while it is marked ready or closed.",
+    "Creates a subject type — a named schema of typed `fields` that subjects of this type conform to. The key is derived from the name automatically. Requires an account-scoped credential.",
   security: bearerSecurity,
-  request: { body: domainBody(benchmarkTarget.Request, "The benchmark and target to link.") },
+  request: { body: domainBody(subjectType.Request, "The subject type to create.") },
   responses: {
-    "201": domainResponse(benchmarkTarget.Response, "The created link."),
+    "201": domainResponse(subjectType.Response, "The created subject type."),
     ...commonErrors,
-    "409": errorJson("The target is already linked to this benchmark, does not belong to the benchmark's account, or the benchmark has reached its target limit."),
+    "409": errorJson("The account has reached its subject-type limit."),
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/benchmark_targets",
-  tags: ["Targets"],
-  summary: "List benchmark–target links",
-  description: "Provide at least one of filter[benchmark] or filter[target] to scope the results.",
+  path: "/api/v1/subject_types",
+  tags: ["Subject types"],
+  summary: "List subject types",
+  description: "Lists your account's subject types. Requires an account-scoped credential.",
+  security: bearerSecurity,
+  parameters: [...paginationParams],
+  responses: {
+    "200": domainResponse(subjectType.ListResponse, "A page of subject types."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/subject_types/{id}",
+  tags: ["Subject types"],
+  summary: "Get a subject type by id",
+  security: bearerSecurity,
+  request: { params: subjectTypeIdParam },
+  responses: {
+    "200": domainResponse(subjectType.Response, "The requested subject type."),
+    ...commonErrors,
+    "404": errorJson("The requested resource was not found."),
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v1/subject_types/{id}",
+  tags: ["Subject types"],
+  summary: "Update a subject type",
+  description: "Updates a subject type's name and fields. Its key is immutable.",
+  security: bearerSecurity,
+  request: { params: subjectTypeIdParam, body: domainBody(subjectType.Request, "The updated subject type.") },
+  responses: {
+    "200": domainResponse(subjectType.Response, "The updated subject type."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/subject_types/{id}",
+  tags: ["Subject types"],
+  summary: "Delete a subject type",
+  security: bearerSecurity,
+  request: { params: subjectTypeIdParam },
+  responses: {
+    "204": { description: "The subject type was deleted." },
+    ...commonErrors,
+  },
+});
+
+// ── Paths: Metrics (the reusable metric catalogue) ───────────────────────────
+const metricIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the metric." }),
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/metrics",
+  tags: ["Metrics"],
+  summary: "Create a metric",
+  description:
+    "Creates a metric — a reusable definition (STORED value or DERIVED, computed on read). The name is normalized to snake_case and derived from the label when omitted. Requires an account-scoped credential.",
+  security: bearerSecurity,
+  request: { body: domainBody(metric.Request, "The metric to create.") },
+  responses: {
+    "201": domainResponse(metric.Response, "The created metric."),
+    ...commonErrors,
+    "409": errorJson("The account has reached its metric limit, or the name is taken."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/metrics",
+  tags: ["Metrics"],
+  summary: "List metrics",
+  description: "Lists your account's metrics. Requires an account-scoped credential.",
+  security: bearerSecurity,
+  parameters: [...paginationParams],
+  responses: {
+    "200": domainResponse(metric.ListResponse, "A page of metrics."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/metrics/{id}",
+  tags: ["Metrics"],
+  summary: "Get a metric by id",
+  security: bearerSecurity,
+  request: { params: metricIdParam },
+  responses: {
+    "200": domainResponse(metric.Response, "The requested metric."),
+    ...commonErrors,
+    "404": errorJson("The requested resource was not found."),
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v1/metrics/{id}",
+  tags: ["Metrics"],
+  summary: "Update a metric",
+  description: "Updates a metric's label, description, type, kind, and formula. Its name is immutable.",
+  security: bearerSecurity,
+  request: { params: metricIdParam, body: domainBody(metric.Request, "The updated metric.") },
+  responses: {
+    "200": domainResponse(metric.Response, "The updated metric."),
+    ...commonErrors,
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/metrics/{id}",
+  tags: ["Metrics"],
+  summary: "Delete a metric",
+  security: bearerSecurity,
+  request: { params: metricIdParam },
+  responses: {
+    "204": { description: "The metric was deleted." },
+    ...commonErrors,
+  },
+});
+
+// ── Paths: Benchmark subjects (the M:N link) ──────────────────────────────────
+
+const benchmarkSubjectIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the benchmark–subject link." }),
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/benchmark_subjects",
+  tags: ["Subjects"],
+  summary: "Link a subject to a benchmark",
+  description:
+    "Adds an existing account-owned subject to a benchmark. Adding a subject is an append, so it is allowed while the benchmark is a draft or already published — but not while it is marked ready or closed.",
+  security: bearerSecurity,
+  request: { body: domainBody(benchmarkSubject.Request, "The benchmark and subject to link.") },
+  responses: {
+    "201": domainResponse(benchmarkSubject.Response, "The created link."),
+    ...commonErrors,
+    "409": errorJson("The subject is already linked to this benchmark, does not belong to the benchmark's account, or the benchmark has reached its subject limit."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/benchmark_subjects",
+  tags: ["Subjects"],
+  summary: "List benchmark–subject links",
+  description: "Provide at least one of filter[benchmark] or filter[subject] to scope the results.",
   parameters: [
     filterParam("benchmark", "Limit results to links of this benchmark id."),
-    filterParam("target", "Limit results to links of this target id."),
+    filterParam("subject", "Limit results to links of this subject id."),
     ...paginationParams,
   ],
   responses: {
-    "200": domainResponse(benchmarkTarget.ListResponse, "A page of links."),
+    "200": domainResponse(benchmarkSubject.ListResponse, "A page of links."),
     "400": errorJson("The query parameters were malformed."),
   },
 });
 
 registry.registerPath({
   method: "delete",
-  path: "/api/v1/benchmark_targets/{id}",
-  tags: ["Targets"],
-  summary: "Unlink a target from a benchmark",
+  path: "/api/v1/benchmark_subjects/{id}",
+  tags: ["Subjects"],
+  summary: "Unlink a subject from a benchmark",
   description:
-    "Removes a target from a benchmark and deletes the measurements it had under that benchmark's runs. The target itself survives (it is account-owned). Only allowed while the benchmark is a draft; a published benchmark's target set is frozen.",
+    "Removes a subject from a benchmark and deletes the measurements it had under that benchmark's runs. The subject itself survives (it is account-owned). Only allowed while the benchmark is a draft; a published benchmark's subject set is frozen.",
   security: bearerSecurity,
-  request: { params: benchmarkTargetIdParam },
+  request: { params: benchmarkSubjectIdParam },
   responses: {
     "204": { description: "The link was removed." },
     ...commonErrors,
-    "409": errorJson("Published benchmark data is append-only; the target cannot be unlinked."),
+    "409": errorJson("Published benchmark data is append-only; the subject cannot be unlinked."),
+  },
+});
+
+// ── Paths: Benchmark metrics (the M:N link) ───────────────────────────────────
+
+const benchmarkMetricIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the benchmark–metric link." }),
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/benchmark_metrics",
+  tags: ["Metrics"],
+  summary: "Link a metric to a benchmark",
+  description:
+    "Links a metric from the account's library to a benchmark, copying its definition into the benchmark's measurement schema (a stored value, or a derived value with its computed expression). Adding a metric is an append, so it is allowed while the benchmark is a draft or already published — but not while it is marked ready or closed.",
+  security: bearerSecurity,
+  request: { body: domainBody(benchmarkMetric.Request, "The benchmark and metric to link.") },
+  responses: {
+    "201": domainResponse(benchmarkMetric.Response, "The created link."),
+    ...commonErrors,
+    "409": errorJson("The metric is already linked to this benchmark, its name is already defined on the benchmark, it does not belong to the benchmark's account, or the benchmark has reached its metric limit."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/benchmark_metrics",
+  tags: ["Metrics"],
+  summary: "List benchmark–metric links",
+  description: "Provide at least one of filter[benchmark] or filter[metric] to scope the results.",
+  parameters: [
+    filterParam("benchmark", "Limit results to links of this benchmark id."),
+    filterParam("metric", "Limit results to links of this metric id."),
+    ...paginationParams,
+  ],
+  responses: {
+    "200": domainResponse(benchmarkMetric.ListResponse, "A page of links."),
+    "400": errorJson("The query parameters were malformed."),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/benchmark_metrics/{id}",
+  tags: ["Metrics"],
+  summary: "Unlink a metric from a benchmark",
+  description:
+    "Removes a metric from a benchmark, dropping its definition from the benchmark's measurement schema. Existing measurement data is retained but the metric is no longer part of the benchmark. Only allowed while the benchmark is a draft; a published benchmark's metric set is frozen.",
+  security: bearerSecurity,
+  request: { params: benchmarkMetricIdParam },
+  responses: {
+    "204": { description: "The link was removed." },
+    ...commonErrors,
+    "409": errorJson("Published benchmark data is append-only; the metric cannot be unlinked."),
   },
 });
 
@@ -1652,7 +2047,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(measurement.Response, "The recorded measurement, with derived metrics computed."),
     ...commonErrors,
-    "409": errorJson("The run and target belong to different benchmarks, or the benchmark/target is closed or the run has ended."),
+    "409": errorJson("The run and subject belong to different benchmarks, or the benchmark/subject is closed or the run has ended."),
   },
 });
 
@@ -1662,11 +2057,11 @@ registry.registerPath({
   tags: ["Measurements"],
   summary: "List measurements",
   description:
-    "Reads measurements for exactly one of a run, target, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data.",
+    "Reads measurements for exactly one of a run, subject, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data.",
   parameters: [
-    filterParam("run", "Read measurements for this run id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
-    filterParam("target", "Read measurements for this target id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
-    filterParam("benchmark", "Read measurements for this benchmark id. Provide exactly one of filter[run], filter[target], or filter[benchmark]."),
+    filterParam("run", "Read measurements for this run id. Provide exactly one of filter[run], filter[subject], or filter[benchmark]."),
+    filterParam("subject", "Read measurements for this subject id. Provide exactly one of filter[run], filter[subject], or filter[benchmark]."),
+    filterParam("benchmark", "Read measurements for this benchmark id. Provide exactly one of filter[run], filter[subject], or filter[benchmark]."),
     filterParam(
       "created_at",
       "Restrict to a time interval using the grammar [start,end) — a half-open range where start is inclusive and end is exclusive; use * for an open edge, e.g. [2026-01-01T00:00:00Z,*).",
@@ -1687,152 +2082,119 @@ registry.registerPath({
       },
     },
     "400": errorJson("The query parameters were malformed, or not exactly one resource filter was provided."),
-    "404": errorJson("The scoped run, target, or benchmark does not exist or is not visible."),
+    "404": errorJson("The scoped run, subject, or benchmark does not exist or is not visible."),
   },
 });
 
-// ── Paths: Publisher identities ──────────────────────────────────────────────
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/measurements/{id}",
+  tags: ["Measurements"],
+  summary: "Delete a measurement",
+  description:
+    "Removes a single measurement. Measurements are append-only once their benchmark is published; deletion is only allowed while the benchmark is a draft. On a published benchmark, invalidate the whole run instead.",
+  security: bearerSecurity,
+  request: {
+    params: z.object({
+      id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the measurement." }),
+    }),
+  },
+  responses: {
+    "204": { description: "The measurement was deleted." },
+    ...commonErrors,
+    "409": errorJson("The measurement's benchmark is published; measurements there are append-only."),
+  },
+});
 
-const publisherIdentityIdParam = z.object({
-  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the publisher identity." }),
+// ── Paths: Publishers ────────────────────────────────────────────────────────
+
+const publisherIdParam = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the publisher." }),
 });
 
 registry.registerPath({
   method: "post",
-  path: "/api/v1/publisher_identities",
-  tags: ["Publisher identities"],
-  summary: "Create a publisher identity",
-  description: "Admin-only. Creates an organization brand a benchmark can later be published under.",
+  path: "/api/v1/publishers",
+  tags: ["Publishers"],
+  summary: "Add a publisher (domain)",
+  description:
+    "Admin-only. A publisher is a domain you publish benchmarks under. Returns a verification token to add to the domain's DNS as a TXT record; then call the verify action to prove ownership.",
   security: bearerSecurity,
-  request: { body: domainBody(publisherIdentity.Request, "The identity to create.") },
+  request: { body: domainBody(publisher.Request, "The domain to add.") },
   responses: {
-    "201": domainResponse(publisherIdentity.Response, "The created publisher identity."),
+    "201": domainResponse(publisher.Response, "The created publisher, including the token to add to DNS."),
     ...commonErrors,
-    "409": errorJson("A publisher identity with that key already exists in the account."),
+    "409": errorJson("That domain is already a publisher for this account."),
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/publisher_identities",
-  tags: ["Publisher identities"],
-  summary: "List publisher identities",
-  description: "Lists the current account's publisher identities.",
+  path: "/api/v1/publishers",
+  tags: ["Publishers"],
+  summary: "List publishers",
+  description: "Lists the current account's publishers (domains).",
   security: bearerSecurity,
-  parameters: [filterParam("key", "Limit results to the identity with this key.")],
+  parameters: [filterParam("status", "Limit results to publishers in this state (PENDING, VERIFIED, LAPSED).")],
   responses: {
-    "200": domainResponse(publisherIdentity.ListResponse, "The account's publisher identities."),
+    "200": domainResponse(publisher.ListResponse, "The account's publishers."),
     ...commonErrors,
   },
 });
 
 registry.registerPath({
   method: "get",
-  path: "/api/v1/publisher_identities/{id}",
-  tags: ["Publisher identities"],
-  summary: "Get a publisher identity by id",
+  path: "/api/v1/publishers/{id}",
+  tags: ["Publishers"],
+  summary: "Get a publisher by id",
   security: bearerSecurity,
-  request: { params: publisherIdentityIdParam },
+  request: { params: publisherIdParam },
   responses: {
-    "200": domainResponse(publisherIdentity.Response, "The requested publisher identity."),
+    "200": domainResponse(publisher.Response, "The requested publisher."),
     ...commonErrors,
   },
 });
 
 registry.registerPath({
   method: "put",
-  path: "/api/v1/publisher_identities/{id}",
-  tags: ["Publisher identities"],
-  summary: "Update a publisher identity",
-  description: "Admin-only.",
+  path: "/api/v1/publishers/{id}",
+  tags: ["Publishers"],
+  summary: "Update a publisher's icon",
+  description: "Admin-only. Sets whether the publisher displays a domain-initial monogram or its favicon. The domain itself is immutable.",
   security: bearerSecurity,
-  request: { params: publisherIdentityIdParam, body: domainBody(publisherIdentity.Request, "The updated identity.") },
+  request: { params: publisherIdParam, body: domainBody(publisherUpdate, "The icon preference to set.") },
   responses: {
-    "200": domainResponse(publisherIdentity.Response, "The updated publisher identity."),
+    "200": domainResponse(publisher.Response, "The updated publisher."),
     ...commonErrors,
-    "409": errorJson("A publisher identity with that key already exists in the account."),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/publishers/{id}/actions/verify",
+  tags: ["Publishers"],
+  summary: "Verify a publisher's domain",
+  description:
+    "Admin-only. Checks the domain's DNS TXT records now — at both the domain root and the `_smplmark-verify` subdomain — for the verification token, and updates the publisher's status accordingly.",
+  security: bearerSecurity,
+  request: { params: publisherIdParam },
+  responses: {
+    "200": domainResponse(publisher.Response, "The publisher, with its updated verification status."),
+    ...commonErrors,
   },
 });
 
 registry.registerPath({
   method: "delete",
-  path: "/api/v1/publisher_identities/{id}",
-  tags: ["Publisher identities"],
-  summary: "Delete a publisher identity",
+  path: "/api/v1/publishers/{id}",
+  tags: ["Publishers"],
+  summary: "Delete a publisher",
   description:
     "Admin-only. Allowed even if a published benchmark references it — that benchmark keeps its frozen attribution badge; only future publishes are affected.",
   security: bearerSecurity,
-  request: { params: publisherIdentityIdParam },
+  request: { params: publisherIdParam },
   responses: {
-    "204": { description: "The publisher identity (and its domains) were deleted." },
-    ...commonErrors,
-  },
-});
-
-// ── Paths: Publisher domains ─────────────────────────────────────────────────
-
-const publisherDomainIdParam = z.object({
-  id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the publisher domain." }),
-});
-
-registry.registerPath({
-  method: "post",
-  path: "/api/v1/publisher_domains",
-  tags: ["Publisher domains"],
-  summary: "Add a domain to a publisher identity",
-  description:
-    "Admin-only. Returns a verification token to add to the domain's DNS as a TXT record; then call the verify action.",
-  security: bearerSecurity,
-  request: { body: domainBody(publisherDomain.Request, "The domain to claim.") },
-  responses: {
-    "201": domainResponse(publisherDomain.Response, "The created domain claim, including the token to add to DNS."),
-    ...commonErrors,
-    "409": errorJson("That domain is already claimed by this identity."),
-  },
-});
-
-registry.registerPath({
-  method: "get",
-  path: "/api/v1/publisher_domains",
-  tags: ["Publisher domains"],
-  summary: "List publisher domains",
-  description: "Lists the current account's domain claims.",
-  security: bearerSecurity,
-  parameters: [
-    filterParam("publisher_identity", "Limit results to domains of this publisher identity id."),
-    filterParam("status", "Limit results to domains in this state (PENDING, VERIFIED, LAPSED)."),
-  ],
-  responses: {
-    "200": domainResponse(publisherDomain.ListResponse, "The account's publisher domains."),
-    ...commonErrors,
-  },
-});
-
-registry.registerPath({
-  method: "post",
-  path: "/api/v1/publisher_domains/{id}/actions/verify",
-  tags: ["Publisher domains"],
-  summary: "Verify a domain",
-  description:
-    "Admin-only. Checks the domain's DNS TXT records now for the verification token and updates the domain's status accordingly.",
-  security: bearerSecurity,
-  request: { params: publisherDomainIdParam },
-  responses: {
-    "200": domainResponse(publisherDomain.Response, "The domain, with its updated verification status."),
-    ...commonErrors,
-  },
-});
-
-registry.registerPath({
-  method: "delete",
-  path: "/api/v1/publisher_domains/{id}",
-  tags: ["Publisher domains"],
-  summary: "Remove a domain claim",
-  description: "Admin-only.",
-  security: bearerSecurity,
-  request: { params: publisherDomainIdParam },
-  responses: {
-    "204": { description: "The domain claim was removed." },
+    "204": { description: "The publisher was deleted." },
     ...commonErrors,
   },
 });
@@ -1865,10 +2227,11 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       { name: "External sources" },
       { name: "Invitations" },
       { name: "Measurements" },
-      { name: "Publisher domains" },
-      { name: "Publisher identities" },
+      { name: "Metrics" },
+      { name: "Publishers" },
       { name: "Runs" },
-      { name: "Targets" },
+      { name: "Subject types" },
+      { name: "Subjects" },
       { name: "Users" },
     ],
   });

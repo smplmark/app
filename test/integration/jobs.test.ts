@@ -33,27 +33,20 @@ function stubTxt(records: string[]): void {
   );
 }
 
-/** Create + verify a domain under a fresh identity (admin `token`); returns the verified domain. */
-async function verifiedDomain(token: string): Promise<Resource> {
-  const identity = ((await (
+/** Create + verify a publisher (domain) for admin `token`; returns the verified publisher. */
+async function verifiedPublisher(token: string): Promise<Resource> {
+  const pub = ((await (
     await apiPost(
-      "/api/v1/publisher_identities",
-      { data: { type: "publisher_identity", attributes: { key: "acme", name: "Acme" } } },
+      "/api/v1/publishers",
+      { data: { type: "publisher", attributes: { domain: "acme.com" } } },
       bearer(token),
     )
   ).json()) as { data: Resource }).data;
-  const dom = ((await (
-    await apiPost(
-      "/api/v1/publisher_domains",
-      { data: { type: "publisher_domain", attributes: { publisher_identity: identity.id, domain: "acme.com" } } },
-      bearer(token),
-    )
-  ).json()) as { data: Resource }).data;
-  stubTxt([dom.attributes.verification_token as string]);
-  const res = await apiPost(`/api/v1/publisher_domains/${dom.id}/actions/verify`, undefined, bearer(token));
+  stubTxt([pub.attributes.verification_token as string]);
+  const res = await apiPost(`/api/v1/publishers/${pub.id}/actions/verify`, undefined, bearer(token));
   expect(((await res.json()) as { data: Resource }).data.attributes.status).toBe("VERIFIED");
   vi.unstubAllGlobals();
-  return dom;
+  return pub;
 }
 
 describe("domain-recheck job auth", () => {
@@ -88,9 +81,9 @@ describe("domain-recheck job run", () => {
     env.JOBS_TRIGGER_SECRET = SECRET;
     const me = await register();
     await markVerified(me.user_id);
-    const dom = await verifiedDomain(me.token);
+    const publisher = await verifiedPublisher(me.token);
 
-    // publish a benchmark under that identity so we can assert the snapshot is untouched
+    // publish a benchmark under that publisher so we can assert the snapshot is untouched
     const bench = ((await (
       await apiPost(
         "/api/v1/benchmarks",
@@ -98,23 +91,22 @@ describe("domain-recheck job run", () => {
         bearer(me.token),
       )
     ).json()) as { data: Resource }).data;
-    const identityId = dom.attributes.publisher_identity as string;
     await apiPost(`/api/v1/benchmarks/${bench.id}/actions/mark_ready`, undefined, bearer(me.token));
     const pub = await apiPost(
       `/api/v1/benchmarks/${bench.id}/actions/publish`,
-      { data: { type: "benchmark", attributes: { publisher_identity: identityId } } },
+      { data: { type: "benchmark", attributes: { publisher: publisher.id } } },
       bearer(me.token),
     );
     expect(pub.status).toBe(200);
     const badgeBefore = ((await pub.json()) as { data: Resource }).data.attributes.published_as;
 
-    // the TXT record disappears; the job lapses the domain
+    // the TXT record disappears; the job lapses the publisher
     stubTxt([]);
     const res = await apiPost(RECHECK, undefined, bearer(SECRET));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ checked: 1, lapsed: 1, truncated: false });
 
-    const domRow = await env.DB.prepare("SELECT status FROM publisher_domain WHERE id = ?").bind(dom.id).first<{ status: string }>();
+    const domRow = await env.DB.prepare("SELECT status FROM publisher WHERE id = ?").bind(publisher.id).first<{ status: string }>();
     expect(domRow?.status).toBe("LAPSED");
 
     // the published benchmark's frozen badge is unchanged

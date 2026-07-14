@@ -5,10 +5,10 @@ import {
   apiPost,
   apiPut,
   bearer,
-  makeAccountTarget,
+  makeAccountSubject,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   publish,
   register,
   resetDb,
@@ -23,10 +23,10 @@ function action(kind: string, id: string, name: string, token: string) {
 }
 
 describe("closed lifecycle — benchmark", () => {
-  it("close blocks new targets/runs/observations; reopen restores; doubles 409", async () => {
+  it("close blocks new subjects/runs/measurements; reopen restores; doubles 409", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
-    const target = await makeTarget(owner.token, bench.id);
+    const subject = await makeSubject(owner.token, bench.id);
     const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
 
@@ -36,14 +36,14 @@ describe("closed lifecycle — benchmark", () => {
     expect(attrs.closed).toBe(true);
     expect(typeof attrs.closed_at).toBe("string");
 
-    // Everything beneath refuses new data. Linking a new target into the closed benchmark is blocked
-    // (the account-level target create itself is fine — only the membership is refused).
-    const t2 = await makeAccountTarget(owner.token, "t2");
+    // Everything beneath refuses new data. Linking a new subject into the closed benchmark is blocked
+    // (the account-level subject create itself is fine — only the membership is refused).
+    const t2 = await makeAccountSubject(owner.token, "t2");
     expect(
       (
         await apiPost(
-          "/api/v1/benchmark_targets",
-          { data: { type: "benchmark_target", attributes: { benchmark: bench.id, target: t2.id } } },
+          "/api/v1/benchmark_subjects",
+          { data: { type: "benchmark_subject", attributes: { benchmark: bench.id, subject: t2.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -61,7 +61,7 @@ describe("closed lifecycle — benchmark", () => {
       (
         await apiPost(
           "/api/v1/measurements",
-          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
+          { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -75,7 +75,7 @@ describe("closed lifecycle — benchmark", () => {
       (
         await apiPost(
           "/api/v1/measurements",
-          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
+          { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -107,7 +107,7 @@ describe("closed lifecycle — ended runs", () => {
   it("an ended run actually refuses new measurements", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
-    const target = await makeTarget(owner.token, bench.id);
+    const subject = await makeSubject(owner.token, bench.id);
     const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
     expect((await action("runs", run.id, "end", owner.token)).status).toBe(200);
@@ -115,7 +115,7 @@ describe("closed lifecycle — ended runs", () => {
       (
         await apiPost(
           "/api/v1/measurements",
-          { data: { type: "measurement", attributes: { run: run.id, target: target.id } } },
+          { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
           bearer(owner.token),
         )
       ).status,
@@ -130,7 +130,7 @@ describe("additive schema freeze", () => {
       {
         data: {
           type: "benchmark",
-          attributes: { name: "Scheduler Latency", observation_schema: schema },
+          attributes: { name: "Scheduler Latency", measurement_schema: schema },
         },
       },
       bearer(token),

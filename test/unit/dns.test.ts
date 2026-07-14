@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   VERIFICATION_TOKEN_PREFIX,
+  domainHasVerificationToken,
   generateVerificationToken,
   lookupTxt,
   txtRecordsContain,
+  verificationNames,
 } from "../../src/publish/dns";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -14,6 +16,16 @@ const json = (body: unknown, status = 200) =>
 /** Capture the outbound request so we can assert the DoH URL + header. */
 function stubDoh(body: unknown, status = 200) {
   const fetchMock = vi.fn(async () => json(body, status));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** Stub DoH so each queried DNS name returns its own TXT records (missing name → resolves empty). */
+function stubDohByName(map: Record<string, string[]>) {
+  const fetchMock = vi.fn(async (url: string) => {
+    const name = new URL(url).searchParams.get("name") ?? "";
+    return json({ Answer: (map[name] ?? []).map((r) => ({ type: 16, data: `"${r}"` })) });
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -29,10 +41,65 @@ describe("generateVerificationToken", () => {
 });
 
 describe("txtRecordsContain", () => {
-  it("is an exact match over the record set", () => {
+  it("matches the token, tolerating surrounding whitespace and wrapping quotes", () => {
     expect(txtRecordsContain(["a", "smplmark-verify=tok", "b"], "smplmark-verify=tok")).toBe(true);
+    expect(txtRecordsContain(["  smplmark-verify=tok  "], "smplmark-verify=tok")).toBe(true);
+    expect(txtRecordsContain(['"smplmark-verify=tok"'], "smplmark-verify=tok")).toBe(true);
+  });
+  it("does not match a different token, an empty set, or an empty needle", () => {
     expect(txtRecordsContain(["smplmark-verify=other"], "smplmark-verify=tok")).toBe(false);
     expect(txtRecordsContain([], "smplmark-verify=tok")).toBe(false);
+    expect(txtRecordsContain(["smplmark-verify=tok"], "")).toBe(false);
+  });
+});
+
+describe("verificationNames", () => {
+  it("is the domain root plus the _smplmark-verify subdomain", () => {
+    expect(verificationNames("example.com")).toEqual(["example.com", "_smplmark-verify.example.com"]);
+  });
+});
+
+describe("domainHasVerificationToken", () => {
+  const TOK = "smplmark-verify=tok";
+
+  it("verifies when the token is at the domain root", async () => {
+    stubDohByName({ "example.com": [TOK] });
+    expect(await domainHasVerificationToken("example.com", TOK)).toBe(true);
+  });
+
+  it("verifies when the token is at the _smplmark-verify subdomain", async () => {
+    stubDohByName({ "_smplmark-verify.example.com": [TOK] });
+    expect(await domainHasVerificationToken("example.com", TOK)).toBe(true);
+  });
+
+  it("returns false when neither accepted name has the token (both resolve cleanly)", async () => {
+    stubDohByName({ "example.com": ["v=spf1 ~all"] });
+    expect(await domainHasVerificationToken("example.com", TOK)).toBe(false);
+  });
+
+  it("does NOT accept the token at an arbitrary subdomain (subdomain tenants must not claim the parent)", async () => {
+    stubDohByName({ "tenant.example.com": [TOK] });
+    expect(await domainHasVerificationToken("example.com", TOK)).toBe(false);
+  });
+
+  it("throws (inconclusive) when a query fails and the token wasn't found on the other name", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const name = new URL(url).searchParams.get("name");
+      return name === "example.com" ? json({}, 500) : json({ Answer: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(domainHasVerificationToken("example.com", TOK)).rejects.toThrow(/inconclusive/);
+  });
+
+  it("still verifies when one query fails but the other has the token", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const name = new URL(url).searchParams.get("name");
+      return name === "example.com"
+        ? json({}, 500)
+        : json({ Answer: [{ type: 16, data: `"${TOK}"` }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await domainHasVerificationToken("example.com", TOK)).toBe(true);
   });
 });
 

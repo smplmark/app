@@ -1,14 +1,13 @@
-// Periodic re-check of VERIFIED publisher domains (a Workers cron trigger; see wrangler.jsonc +
-// src/index.ts). A domain whose TXT record has disappeared flips VERIFIED → LAPSED, which blocks NEW
-// publishes under its identity but never touches a benchmark's frozen attribution_snapshot — the
-// historical public record is immutable. A transient DNS failure never lapses a domain (we only act
-// on a successful lookup that is missing the token). A LAPSED domain returns to VERIFIED on a later
-// successful check via the verify action.
+// Periodic re-check of VERIFIED publishers (a Workers cron trigger; see wrangler.jsonc + src/index.ts).
+// A publisher whose TXT record has disappeared flips VERIFIED → LAPSED, which blocks NEW publishes under
+// it but never touches a benchmark's frozen attribution_snapshot — the historical public record is
+// immutable. A transient DNS failure never lapses a publisher (we only act on a successful lookup that
+// is missing the token). A LAPSED publisher returns to VERIFIED on a later successful verify action.
 import {
-  listVerifiedDomainsPage,
-  setPublisherDomainStatus,
-} from "../data/publisher_domains";
-import { lookupTxt, txtRecordsContain } from "./dns";
+  listVerifiedPublishersPage,
+  setPublisherStatus,
+} from "../data/publishers";
+import { domainHasVerificationToken } from "./dns";
 
 const DEFAULT_PAGE_SIZE = 100;
 /** Safety cap so a runaway table can never make a single cron invocation unbounded. */
@@ -49,31 +48,23 @@ export async function sweepVerifiedDomains(
       truncated = true;
       break;
     }
-    const rows = await listVerifiedDomainsPage(db, pageSize, page * pageSize);
+    const rows = await listVerifiedPublishersPage(db, pageSize, page * pageSize);
     if (rows.length === 0) break;
 
     for (const row of rows) {
-      let records: string[];
+      let found: boolean;
       try {
-        records = await lookupTxt(row.domain);
+        found = await domainHasVerificationToken(row.domain, row.verification_token);
       } catch {
-        // The check itself failed (network / resolver) — never lapse on ambiguity.
+        // The check itself was inconclusive (network / resolver) — never lapse on ambiguity.
         continue;
       }
       checked++;
-      if (!txtRecordsContain(records, row.verification_token)) {
-        await setPublisherDomainStatus(db, row.id, {
-          status: "LAPSED",
-          verified_at: row.verified_at,
-          last_checked_at: now,
-        });
+      if (!found) {
+        await setPublisherStatus(db, row.id, { status: "LAPSED", verified_at: row.verified_at, last_checked_at: now });
         lapsed++;
       } else {
-        await setPublisherDomainStatus(db, row.id, {
-          status: "VERIFIED",
-          verified_at: row.verified_at,
-          last_checked_at: now,
-        });
+        await setPublisherStatus(db, row.id, { status: "VERIFIED", verified_at: row.verified_at, last_checked_at: now });
       }
     }
 

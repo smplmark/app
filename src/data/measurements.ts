@@ -1,14 +1,40 @@
 import type { DateRange } from "../query/daterange";
 import { dateRangePredicate } from "../query/predicates";
 import { orderByClause, type Sort } from "../query/sort";
+import type { MeasurementRow } from "../types";
 
 export interface InsertMeasurementInput {
   run_id: string;
-  target_id: string;
+  subject_id: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
   client_ip: string | null;
+}
+
+/** Does this run carry any measurements? Gates deleting a run of a published benchmark. */
+export async function runHasMeasurements(db: D1Database, runId: string): Promise<boolean> {
+  const r = await db
+    .prepare("SELECT 1 AS x FROM measurement WHERE run_id = ? LIMIT 1")
+    .bind(runId)
+    .first<{ x: number }>();
+  return r !== null;
+}
+
+/** Load one measurement by its rowid (for authz + delete). */
+export async function getMeasurementById(
+  db: D1Database,
+  id: number,
+): Promise<MeasurementRow | null> {
+  return (
+    (await db.prepare("SELECT * FROM measurement WHERE id = ?").bind(id).first<MeasurementRow>()) ??
+    null
+  );
+}
+
+/** Delete one measurement by its rowid. The route guards that the benchmark is still a draft. */
+export async function deleteMeasurement(db: D1Database, id: number): Promise<void> {
+  await db.prepare("DELETE FROM measurement WHERE id = ?").bind(id).run();
 }
 
 /** Insert a measurement; returns the database-assigned rowid. */
@@ -18,11 +44,11 @@ export async function insertMeasurement(
 ): Promise<number> {
   const res = await db
     .prepare(
-      "INSERT INTO measurement (run_id, target_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
+      "INSERT INTO measurement (run_id, subject_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
     )
     .bind(
       input.run_id,
-      input.target_id,
+      input.subject_id,
       input.created_at,
       input.metrics,
       input.meta,
@@ -33,28 +59,28 @@ export async function insertMeasurement(
 }
 
 /**
- * A measurement row for reads, carrying its benchmark's observation_schema and its run's timing
+ * A measurement row for reads, carrying its benchmark's measurement_schema and its run's timing
  * context (for compute-on-read of relative-time derived metrics like elapsed_ms).
  */
 export interface MeasurementListRow {
   id: number;
   run_id: string;
-  target_id: string;
+  subject_id: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
-  observation_schema: string;
+  measurement_schema: string;
   run_started_at: number | null;
   run_ended_at: number | null;
 }
 
 export interface MeasurementScope {
   run?: string;
-  target?: string;
+  subject?: string;
   benchmark?: string;
-  /** For a target scope with an uncovered caller: restrict to the target's PUBLISHED/WITHDRAWN
-   *  benchmarks, so a private sibling benchmark's measurements never leak (a target is shared). */
-  targetPublicOnly?: boolean;
+  /** For a subject scope with an uncovered caller: restrict to the subject's PUBLISHED/WITHDRAWN
+   *  benchmarks, so a private sibling benchmark's measurements never leak (a subject is shared). */
+  subjectPublicOnly?: boolean;
 }
 
 export interface ListMeasurementsInput {
@@ -66,8 +92,8 @@ export interface ListMeasurementsInput {
   includeTotal: boolean;
 }
 
-// A measurement names both its run and its target directly; the benchmark hangs off the run
-// (run.benchmark_id). The target scope filters measurement.target_id, so no target JOIN is needed.
+// A measurement names both its run and its subject directly; the benchmark hangs off the run
+// (run.benchmark_id). The subject scope filters measurement.subject_id, so no subject JOIN is needed.
 const JOINS =
   "FROM measurement" +
   " JOIN run ON run.id = measurement.run_id" +
@@ -92,11 +118,11 @@ function buildWhere(input: ListMeasurementsInput): { sql: string; binds: unknown
   if (input.scope.run !== undefined) {
     clauses.push("measurement.run_id = ?");
     binds.push(input.scope.run);
-  } else if (input.scope.target !== undefined) {
-    clauses.push("measurement.target_id = ?");
-    binds.push(input.scope.target);
-    // A target spans benchmarks; an uncovered caller only sees measurements under its public ones.
-    if (input.scope.targetPublicOnly) {
+  } else if (input.scope.subject !== undefined) {
+    clauses.push("measurement.subject_id = ?");
+    binds.push(input.scope.subject);
+    // A subject spans benchmarks; an uncovered caller only sees measurements under its public ones.
+    if (input.scope.subjectPublicOnly) {
       clauses.push("benchmark.status IN ('PUBLISHED','WITHDRAWN')");
     }
   } else if (input.scope.benchmark !== undefined) {
@@ -116,9 +142,9 @@ export async function listMeasurements(
   const rows = (
     await db
       .prepare(
-        `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.target_id AS target_id,` +
+        `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.subject_id AS subject_id,` +
           ` measurement.created_at AS created_at, measurement.metrics AS metrics, measurement.meta AS meta,` +
-          ` benchmark.observation_schema AS observation_schema,` +
+          ` benchmark.measurement_schema AS measurement_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
           ` ${JOINS} ${where.sql} ${order} LIMIT ? OFFSET ?`,
       )

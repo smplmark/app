@@ -6,7 +6,7 @@ const measurement = (
   id: string,
   created_at: string,
   run: string,
-  target: string,
+  subject: string,
   metrics?: Record<string, unknown>,
   meta?: unknown,
 ): ResourceObject => ({
@@ -15,7 +15,7 @@ const measurement = (
   attributes: {
     created_at,
     run,
-    target,
+    subject,
     ...(metrics ? { metrics } : {}),
     ...(meta !== undefined ? { meta } : {}),
   },
@@ -25,7 +25,7 @@ const rowsOf = (csv: string) => csv.split("\r\n");
 
 describe("measurementsToCsv", () => {
   it("emits a header-only document for an empty result", () => {
-    expect(measurementsToCsv([])).toBe("id,created_at,run,target,meta");
+    expect(measurementsToCsv([])).toBe("id,created_at,run,subject,meta");
   });
 
   it("emits fixed columns, a metric column, and an (empty) meta column", () => {
@@ -33,7 +33,7 @@ describe("measurementsToCsv", () => {
       measurement("1", "2026-07-01T00:00:00.000Z", "r1", "tg1", { skew_ms: 87 }),
     ]);
     expect(csv).toBe(
-      "id,created_at,run,target,skew_ms,meta\r\n1,2026-07-01T00:00:00.000Z,r1,tg1,87,",
+      "id,created_at,run,subject,skew_ms,meta\r\n1,2026-07-01T00:00:00.000Z,r1,tg1,87,",
     );
   });
 
@@ -43,7 +43,7 @@ describe("measurementsToCsv", () => {
       measurement("2", "t2", "r2", "tg2", { p95_ms: 12, throughput: 3 }),
     ]);
     const [header, row1, row2] = rowsOf(csv);
-    expect(header).toBe("id,created_at,run,target,p95_ms,skew_ms,throughput,meta");
+    expect(header).toBe("id,created_at,run,subject,p95_ms,skew_ms,throughput,meta");
     expect(row1).toBe("1,t1,r1,tg1,,5,,");
     expect(row2).toBe("2,t2,r2,tg2,12,,3,");
   });

@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  apiDelete,
   apiGet,
   apiPost,
   bearer,
   makeBenchmark,
+  makeMeasurement,
   makeRun,
-  makeTarget,
+  makeSubject,
   publish,
   register,
   resetDb,
@@ -20,7 +22,7 @@ const measurement = (attrs: Record<string, unknown>) => ({
 
 async function scaffold(token: string) {
   const b = await makeBenchmark(token);
-  const t = await makeTarget(token, b.id);
+  const t = await makeSubject(token, b.id);
   const r = await makeRun(token, b.id);
   return { b, t, r };
 }
@@ -32,42 +34,42 @@ describe("POST /measurements", () => {
     const created = Date.UTC(2026, 6, 1, 10, 0, 0) + 87;
     const res = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, created_at: created }),
+      measurement({ run: r.id, subject: t.id, created_at: created }),
       bearer(me.token),
     );
     expect(res.status).toBe(201);
     const body = ((await res.json()) as { data: Resource }).data;
     expect(body.attributes.run).toBe(r.id);
-    expect(body.attributes.target).toBe(t.id);
+    expect(body.attributes.subject).toBe(t.id);
     expect((body.attributes.metrics as Record<string, number>).skew_ms).toBe(87);
   });
 
-  it("a measurement names a run and a target", async () => {
+  it("a measurement names a run and a subject", async () => {
     const me = await register();
     const { t, r } = await scaffold(me.token);
     const res = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id }),
+      measurement({ run: r.id, subject: t.id }),
       bearer(me.token),
     );
     expect(res.status).toBe(201);
     const body = ((await res.json()) as { data: Resource }).data;
     expect(body.attributes.run).toBe(r.id);
-    expect(body.attributes.target).toBe(t.id);
+    expect(body.attributes.subject).toBe(t.id);
   });
 
-  it("rejects a measurement whose run and target are in different benchmarks", async () => {
+  it("rejects a measurement whose run and subject are in different benchmarks", async () => {
     const me = await register();
-    // Benchmark A gets a run and a target; benchmark B contributes a foreign target.
+    // Benchmark A gets a run and a subject; benchmark B contributes a foreign subject.
     const bA = await makeBenchmark(me.token, { key: "bench-a" });
-    const targetA = await makeTarget(me.token, bA.id, "target-a");
+    const subjectA = await makeSubject(me.token, bA.id, "subject-a");
     const runA = await makeRun(me.token, bA.id);
     const bB = await makeBenchmark(me.token, { key: "bench-b" });
-    const targetB = await makeTarget(me.token, bB.id, "target-b");
+    const subjectB = await makeSubject(me.token, bB.id, "subject-b");
 
     const res = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: runA.id, target: targetB.id }),
+      measurement({ run: runA.id, subject: subjectB.id }),
       bearer(me.token),
     );
     expect(res.status).toBe(409);
@@ -75,7 +77,7 @@ describe("POST /measurements", () => {
     // Same-benchmark pairing still succeeds.
     const ok = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: runA.id, target: targetA.id }),
+      measurement({ run: runA.id, subject: subjectA.id }),
       bearer(me.token),
     );
     expect(ok.status).toBe(201);
@@ -86,13 +88,13 @@ describe("POST /measurements", () => {
     const { t, r } = await scaffold(me.token);
     const ok = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, metrics: { p95_ms: 12.5 } }),
+      measurement({ run: r.id, subject: t.id, metrics: { p95_ms: 12.5 } }),
       bearer(me.token),
     );
     expect(ok.status).toBe(201);
     const bad = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, metrics: { p95_ms: "slow" } }),
+      measurement({ run: r.id, subject: t.id, metrics: { p95_ms: "slow" } }),
       bearer(me.token),
     );
     expect(bad.status).toBe(400);
@@ -104,7 +106,7 @@ describe("POST /measurements", () => {
     const b = await register("b@example.com");
     const res = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id }),
+      measurement({ run: r.id, subject: t.id }),
       bearer(b.token),
     );
     expect(res.status).toBe(404);
@@ -114,17 +116,17 @@ describe("POST /measurements", () => {
     const me = await register();
     const started = Date.UTC(2026, 6, 1, 12, 0, 0);
     const b = await makeBenchmark(me.token, {
-      observation_schema: {
+      measurement_schema: {
         metrics: [],
         derived: [{ name: "elapsed_ms", expr: { "-": [{ var: "created_at" }, { var: "run.started_at" }] } }],
         chart: { x: "elapsed_ms", y: "elapsed_ms", x_kind: "NUMBER" },
       },
     });
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     const r = await makeRun(me.token, b.id, { started_at: started });
     const res = await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, created_at: started + 5000 }),
+      measurement({ run: r.id, subject: t.id, created_at: started + 5000 }),
       bearer(me.token),
     );
     const body = ((await res.json()) as { data: Resource }).data;
@@ -147,7 +149,7 @@ describe("GET /measurements", () => {
     const { b, t, r } = await scaffold(me.token);
     await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, created_at: Date.UTC(2026, 6, 1, 10, 0, 0) }),
+      measurement({ run: r.id, subject: t.id, created_at: Date.UTC(2026, 6, 1, 10, 0, 0) }),
       bearer(me.token),
     );
 
@@ -157,10 +159,10 @@ describe("GET /measurements", () => {
     expect(owner.status).toBe(200);
     expect(((await owner.json()) as { data: Resource[] }).data.length).toBe(1);
 
-    // After publish, anonymous can read by benchmark/target too.
+    // After publish, anonymous can read by benchmark/subject too.
     await publish(me.token, me.user_id, b.id);
     expect((await apiGet(`/api/v1/measurements?filter[benchmark]=${b.id}`)).status).toBe(200);
-    expect((await apiGet(`/api/v1/measurements?filter[target]=${t.id}`)).status).toBe(200);
+    expect((await apiGet(`/api/v1/measurements?filter[subject]=${t.id}`)).status).toBe(200);
   });
 
   it("serves CSV via the Accept header", async () => {
@@ -168,7 +170,7 @@ describe("GET /measurements", () => {
     const { t, r } = await scaffold(me.token);
     await apiPost(
       "/api/v1/measurements",
-      measurement({ run: r.id, target: t.id, created_at: Date.UTC(2026, 6, 1, 10, 0, 0) }),
+      measurement({ run: r.id, subject: t.id, created_at: Date.UTC(2026, 6, 1, 10, 0, 0) }),
       bearer(me.token),
     );
     const res = await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, {
@@ -178,6 +180,36 @@ describe("GET /measurements", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/csv");
     expect(res.headers.get("Vary")).toContain("Accept");
-    expect(await res.text()).toContain("id,created_at,run,target");
+    expect(await res.text()).toContain("id,created_at,run,subject");
+  });
+});
+
+describe("DELETE /measurements/:id", () => {
+  it("deletes a measurement on a draft benchmark, but not once published", async () => {
+    const me = await register();
+    const { b, t, r } = await scaffold(me.token);
+    const m1 = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
+    const m2 = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 2 } });
+
+    // Draft: a measurement is freely deletable.
+    expect((await apiDelete(`/api/v1/measurements/${m1.id}`, bearer(me.token))).status).toBe(204);
+    const after = (await (await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(me.token))).json()) as { data: Resource[] };
+    expect(after.data.map((x) => x.id)).toEqual([m2.id]);
+
+    // Once published, measurements are append-only → 409.
+    await publish(me.token, me.user_id, b.id);
+    expect((await apiDelete(`/api/v1/measurements/${m2.id}`, bearer(me.token))).status).toBe(409);
+  });
+
+  it("404s an unknown id and isolates tenants", async () => {
+    const me = await register();
+    const other = await register("other@example.com");
+    const { t, r } = await scaffold(me.token);
+    const m = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
+
+    expect((await apiDelete("/api/v1/measurements/999999", bearer(me.token))).status).toBe(404);
+    expect((await apiDelete("/api/v1/measurements/not-a-number", bearer(me.token))).status).toBe(404);
+    // Another account can't see or delete it.
+    expect((await apiDelete(`/api/v1/measurements/${m.id}`, bearer(other.token))).status).toBe(404);
   });
 });

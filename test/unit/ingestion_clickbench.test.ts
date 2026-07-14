@@ -87,7 +87,7 @@ describe("clickbench adapter", () => {
     expect(meta.robotsOrigin).toBe("https://raw.githubusercontent.com");
   });
 
-  it("maps one benchmark: target per system+machine, one leaderboard run, per-target measurements", () => {
+  it("maps one benchmark: subject per system+machine, one leaderboard run, per-subject measurements", () => {
     const benchmarks = adapt(archive as never);
     expect(benchmarks).toHaveLength(1);
     const [b] = benchmarks;
@@ -97,42 +97,42 @@ describe("clickbench adapter", () => {
     expect(b.published_at).toBe(Date.UTC(2026, 3, 1));
     expect(b.category).toBe("DATABASE");
     expect(b.tags).toEqual(["olap", "sql", "analytics", "databases"]);
-    expect(b.observationSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });
+    expect(b.measurementSchema).toMatchObject({ chart: { x: null, y: "hot_total_s", x_kind: "CATEGORY" } });
     // One benchmark-level run: the whole leaderboard is one comparative sweep.
     expect(b.runs).toHaveLength(1);
     expect(b.runs[0]).toEqual({ key: "leaderboard", name: "ClickBench leaderboard" });
-    // Every emitted metric key is declared in the observation schema.
-    const declared = new Set((b.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name));
+    // Every emitted metric key is declared in the measurement schema.
+    const declared = new Set((b.measurementSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name));
     for (const m of b.measurements) {
       for (const k of Object.keys(m.metrics)) expect(declared).toContain(k);
     }
-    // Every measurement references the single benchmark-level run and a real target.
-    const targetKeys = new Set(b.targets.map((t: { key: string }) => t.key));
+    // Every measurement references the single benchmark-level run and a real subject.
+    const subjectKeys = new Set(b.subjects.map((t: { key: string }) => t.key));
     for (const m of b.measurements) {
       expect(m.run_key).toBe("leaderboard");
-      expect(targetKeys).toContain(m.target_key);
+      expect(subjectKeys).toContain(m.subject_key);
     }
-    // One measurement per curated target.
-    expect(b.measurements).toHaveLength(b.targets.length);
+    // One measurement per curated subject.
+    expect(b.measurements).toHaveLength(b.subjects.length);
 
     // Malformed rows (error stub, missing result/date/system, non-object) are skipped.
-    expect(b.targets).toHaveLength(4);
-    // Targets are ordered fastest-first by hot_total_s.
-    expect(b.targets.map((t: { key: string }) => t.key)).toEqual([
+    expect(b.subjects).toHaveLength(4);
+    // Subjects are ordered fastest-first by hot_total_s.
+    expect(b.subjects.map((t: { key: string }) => t.key)).toEqual([
       "fast-db-m1",
       "fast-db-m1-2",
       "motherduck-serverless-tier",
       "clickhouse-c6a-4xlarge",
     ]);
 
-    // Each target's measurement carries its own created_at (the entry date) and meta.
-    const measurementFor = (targetKey: string) =>
+    // Each subject's measurement carries its own created_at (the entry date) and meta.
+    const measurementFor = (subjectKey: string) =>
       b.measurements.find(
-        (m: { run_key: string; target_key: string }) =>
-          m.run_key === "leaderboard" && m.target_key === targetKey,
+        (m: { run_key: string; subject_key: string }) =>
+          m.run_key === "leaderboard" && m.subject_key === subjectKey,
       );
 
-    const ch = b.targets[3];
+    const ch = b.subjects[3];
     expect(ch.name).toBe("ClickHouse (c6a.4xlarge)");
     expect(ch.details).toEqual({
       tags: ["C++", "column-oriented"],
@@ -144,7 +144,7 @@ describe("clickbench adapter", () => {
     });
     expect(measurementFor(ch.key)).toEqual({
       run_key: "leaderboard",
-      target_key: ch.key,
+      subject_key: ch.key,
       created_at: Date.UTC(2026, 5, 24),
       metrics: {
         load_time_s: 294,
@@ -166,7 +166,7 @@ describe("clickbench adapter", () => {
 
     // Emoji survives in the display name; "serverless" cluster_size is stringly kept; the null
     // concurrent_qps is NOT emitted as a metric; the comment lands in measurement meta.
-    const md = b.targets[2];
+    const md = b.subjects[2];
     expect(md.name).toBe("MotherDuck ☁️ (serverless-tier)");
     expect(md.details).toEqual({ tags: [], machine: "serverless-tier", cluster_size: "serverless" });
     const mdMeasurement = measurementFor(md.key);
@@ -175,7 +175,7 @@ describe("clickbench adapter", () => {
     expect(mdMeasurement!.meta).toMatchObject({ comment: "Managed service.", missing_queries: 0 });
   });
 
-  it("caps at the 300 fastest targets by hot_total_s by default; fullOptions lifts it", () => {
+  it("caps at the 300 fastest subjects by hot_total_s by default; fullOptions lifts it", () => {
     const many = Array.from({ length: 305 }, (_, i) => ({
       system: `System ${i}`,
       machine: "m",
@@ -187,16 +187,16 @@ describe("clickbench adapter", () => {
     const big = archiveFor(many);
 
     const [capped] = adapt(big as never);
-    expect(capped.targets).toHaveLength(300);
-    expect(capped.targets[0].name).toBe("System 0 (m)");
-    expect(capped.targets[299].name).toBe("System 299 (m)");
-    expect(capped.targets.some((t: { name: string }) => t.name === "System 304 (m)")).toBe(false);
+    expect(capped.subjects).toHaveLength(300);
+    expect(capped.subjects[0].name).toBe("System 0 (m)");
+    expect(capped.subjects[299].name).toBe("System 299 (m)");
+    expect(capped.subjects.some((t: { name: string }) => t.name === "System 304 (m)")).toBe(false);
 
     const [full] = adapt(big as never, fullOptions);
-    expect(full.targets).toHaveLength(305);
+    expect(full.subjects).toHaveLength(305);
 
-    const [top2] = adapt(archive as never, { topTargets: 2 });
-    expect(top2.targets.map((t: { key: string }) => t.key)).toEqual(["fast-db-m1", "fast-db-m1-2"]);
+    const [top2] = adapt(archive as never, { topSubjects: 2 });
+    expect(top2.subjects.map((t: { key: string }) => t.key)).toEqual(["fast-db-m1", "fast-db-m1-2"]);
   });
 
   it("throws loudly when the payload shape is unrecognizable", () => {

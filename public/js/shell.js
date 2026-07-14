@@ -22,10 +22,43 @@
   const AUTO_COLLAPSE_WIDTH = 1024;
   const PAGE = window.SM_PAGE || { active: "", breadcrumbs: [] };
 
+  // ── Theme (light / dark / system) ──
+  // theme.js (loaded in <head>) applies the cached choice before first paint. Here we reconcile that
+  // cache with the server — the source of truth across devices — and expose helpers the profile page
+  // uses to preview and persist a change. "system" removes the override so the OS preference (via CSS
+  // media queries) is back in charge.
+  const THEME_KEY = "smplmark.theme";
+  const THEMES = ["system", "light", "dark"];
+  function normalizeTheme(v) {
+    return v === "light" || v === "dark" ? v : "system";
+  }
+  function applyThemeDom(theme) {
+    if (theme === "light" || theme === "dark") {
+      document.documentElement.setAttribute("data-theme", theme);
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+  }
+  function cacheTheme(theme) {
+    try { localStorage.setItem(THEME_KEY, normalizeTheme(theme)); } catch (_e) {}
+  }
+  async function syncTheme() {
+    try {
+      const s = await apiFetch("/api/v1/users/current/settings", { json: true });
+      const theme = normalizeTheme(s && s.theme);
+      cacheTheme(theme);
+      applyThemeDom(theme);
+    } catch (_e) {
+      /* offline / not a session credential — keep whatever theme.js applied from cache. */
+    }
+  }
+
   const ICONS = {
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     benchmarks: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
-    targets: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+    subjects: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+    layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     apikeys: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
     members: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     publishers: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
@@ -55,17 +88,20 @@
     { key: "dashboard", label: "Dashboard", href: "/", icon: "dashboard", exact: true },
     { divider: true },
     { key: "benchmarks", label: "Benchmarks", href: "/account/benchmarks", icon: "benchmarks" },
-    { key: "targets", label: "Targets", href: "/account/targets", icon: "targets" },
-    { key: "apikeys", label: "API Keys", href: "/account/api-keys", icon: "apikeys" },
+    { key: "metrics", label: "Metrics", href: "/account/metrics", icon: "activity" },
+    { key: "subjects", label: "Subjects", href: "/account/subjects", icon: "subjects" },
+    { key: "subject_types", label: "Subject types", href: "/account/subject-types", icon: "layers" },
   ];
   const ADMIN_NAV = [
     { divider: true },
-    { key: "publishers", label: "Publishers", href: "/account/publishers", icon: "publishers" },
-    { key: "members", label: "Members", href: "/account/users", icon: "members" },
+    { key: "members", label: "Users", href: "/account/users", icon: "members" },
     { key: "settings", label: "Settings", href: "/account/settings", icon: "settings" },
   ];
 
   // ── Avatar (Gravatar with initials fallback) ──
+  // Local-dev accounts use @localhost emails (never real users); give them a generated Gravatar
+  // instead of the initials fallback so the console looks populated in development.
+  function isDevEmail(email) { return typeof email === "string" && email.toLowerCase().endsWith("@localhost"); }
   async function sha256Hex(input) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -95,7 +131,10 @@
         img.alt = "";
         img.onload = () => { el.textContent = ""; el.appendChild(img); };
         img.onerror = () => {};
-        img.src = "https://www.gravatar.com/avatar/" + hex + "?s=" + size * 2 + "&d=404";
+        // Real users fall back to their initials when they have no Gravatar (d=404). Local-dev users
+        // have no real Gravatar, so give them a stable generated one (d=identicon, forced with f=y).
+        const fallback = isDevEmail(lookup) ? "&d=identicon&f=y" : "&d=404";
+        img.src = "https://www.gravatar.com/avatar/" + hex + "?s=" + size * 2 + fallback;
       }).catch(() => {});
     }
     return el;
@@ -155,8 +194,8 @@
     fillUser();
   }
 
-  function renderTopBar() {
-    const crumbs = (PAGE.breadcrumbs && PAGE.breadcrumbs.length) ? PAGE.breadcrumbs : [{ label: "Dashboard" }];
+  function breadcrumbNavHtml(crumbs) {
+    crumbs = (crumbs && crumbs.length) ? crumbs : [{ label: "Dashboard" }];
     let list = "";
     crumbs.forEach((c, i) => {
       const last = i === crumbs.length - 1;
@@ -166,14 +205,29 @@
           ? '<span' + (last ? ' class="breadcrumbCurrent"' : "") + ">" + esc(c.label) + "</span>"
           : '<a class="breadcrumbLink" href="' + c.href + '">' + esc(c.label) + "</a>") + "</li>";
     });
-    header.innerHTML =
-      '<nav class="breadcrumbs" aria-label="Breadcrumbs"><ol class="breadcrumbList">' + list + "</ol></nav>" +
-      '<div class="topBarActions" id="sm-topbar-actions"></div>';
+    return '<nav class="breadcrumbs" aria-label="Breadcrumbs"><ol class="breadcrumbList">' + list + "</ol></nav>";
+  }
+  function renderTopBar() {
+    header.innerHTML = breadcrumbNavHtml(PAGE.breadcrumbs) + '<div class="topBarActions" id="sm-topbar-actions"></div>';
+  }
+  // Update just the breadcrumb trail (e.g. a tabbed page switching tabs), preserving any top-bar actions.
+  function setBreadcrumbs(crumbs) {
+    PAGE.breadcrumbs = crumbs;
+    const nav = header.querySelector(".breadcrumbs");
+    if (nav) nav.outerHTML = breadcrumbNavHtml(crumbs);
+    else renderTopBar();
   }
 
   function setCollapsed(next, persist) {
     collapsed = next;
     if (persist) { try { localStorage.setItem(COLLAPSE_KEY, String(next)); } catch (_e) {} }
+    renderSidebar();
+  }
+
+  // Change which sidebar item is highlighted after boot (e.g. a detail page that belongs to a section
+  // it can only determine once its resource loads, like an API key resolving to its scope).
+  function setActiveNav(key) {
+    PAGE.active = key;
     renderSidebar();
   }
 
@@ -211,15 +265,32 @@
       });
     }
 
+    // Dev-only user switcher: when signed in as a local-dev (@localhost) user, offer to sign in as any
+    // of the seeded role users. Navigating to /dev-login?role=… re-runs the dev-login hand-off.
+    const devEmail = (IDENTITY && IDENTITY.user && IDENTITY.user.attributes && IDENTITY.user.attributes.email) || "";
+    let devSwitch = "";
+    if (isDevEmail(devEmail)) {
+      devSwitch = '<hr class="flyoutDivider" /><span class="flyoutLabel">Dev — switch user</span>';
+      [["OWNER", "Owner"], ["ADMIN", "Admin"], ["MEMBER", "Member"], ["VIEWER", "Viewer"]].forEach((pair) => {
+        const isCurrent = IDENTITY && IDENTITY.role === pair[0];
+        devSwitch += '<button class="flyoutItem sm-dev-user" data-role="' + pair[0] + '" type="button"' +
+          (isCurrent ? ' disabled style="opacity:.55"' : "") + ">" + pair[1] + (isCurrent ? " ✓" : "") + "</button>";
+      });
+    }
+
     fly.innerHTML =
       '<a class="flyoutItem" href="/account/profile">Profile</a>' +
       '<button class="flyoutItem" id="sm-contact" type="button">Contact Us</button>' +
       switcher +
+      devSwitch +
       '<hr class="flyoutDivider" />' +
       '<button class="flyoutItem flyoutItemDanger" id="sm-signout" type="button">Sign out</button>';
     document.body.appendChild(fly);
     document.getElementById("sm-signout").addEventListener("click", signOut);
     document.getElementById("sm-contact").addEventListener("click", () => { closeUserFlyout(); openContact(); });
+    fly.querySelectorAll(".sm-dev-user").forEach((el) =>
+      el.addEventListener("click", () => { location.href = "/api/v1/auth/dev-login?role=" + encodeURIComponent(el.dataset.role); }),
+    );
     fly.querySelectorAll(".sm-switch").forEach((el) =>
       el.addEventListener("click", () => switchAccount(el.dataset.account)),
     );
@@ -447,6 +518,38 @@
     });
   }
 
+  // ── Toast — a brief, centered (top) notification. Non-blocking; auto-dismisses; click to dismiss.
+  //    kind: "success" | "error" | "info". Use for confirmations and transient results. ──
+  function toast(message, opts) {
+    opts = opts || {};
+    const kind = opts.kind || "info";
+    let host = document.getElementById("sm-toast-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "sm-toast-host";
+      host.className = "toastHost";
+      document.body.appendChild(host);
+    }
+    const el = document.createElement("div");
+    el.className = "toast toast-" + kind;
+    el.setAttribute("role", "status");
+    const glyph = kind === "success" ? icon("check", 16) : kind === "error" ? icon("close", 16) : "";
+    el.innerHTML = glyph + "<span>" + esc(message) + "</span>";
+    host.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("isIn"));
+    let done = false;
+    function dismiss() {
+      if (done) return;
+      done = true;
+      el.classList.remove("isIn");
+      el.classList.add("isOut");
+      setTimeout(() => el.remove(), 220);
+    }
+    el.addEventListener("click", dismiss);
+    setTimeout(dismiss, opts.duration || 3800);
+    return el;
+  }
+
   // ── Detail-page header (title + status decorations + a user-facing secondary id + actions). ──
   function detailHeader(opts) {
     opts = opts || {};
@@ -473,19 +576,19 @@
     );
   }
 
-  function fieldOf(target) {
-    return target && target.classList && target.classList.contains("field") ? target : (target && target.closest ? target.closest(".field") : null);
+  function fieldOf(subject) {
+    return subject && subject.classList && subject.classList.contains("field") ? subject : (subject && subject.closest ? subject.closest(".field") : null);
   }
-  function setFieldError(target, msg) {
-    const f = fieldOf(target);
+  function setFieldError(subject, msg) {
+    const f = fieldOf(subject);
     if (!f) return;
     f.classList.add("fieldHasError");
     let p = f.querySelector(".fieldErrorMessage");
     if (!p) { p = document.createElement("p"); p.className = "fieldErrorMessage"; f.appendChild(p); }
     p.textContent = msg; p.hidden = false;
   }
-  function clearFieldError(target) {
-    const f = fieldOf(target);
+  function clearFieldError(subject) {
+    const f = fieldOf(subject);
     if (!f) return;
     f.classList.remove("fieldHasError");
     const p = f.querySelector(".fieldErrorMessage");
@@ -516,6 +619,139 @@
     return bar;
   }
 
+  // ── Date/time formatting (always rendered in the viewer's local time zone) ── fmtDateTime shows a
+  // short zone label (e.g. "PDT"); fmtDate is date-only (a zone label would be meaningless there).
+  function fmtDateTime(v) {
+    if (v == null || v === "") return "";
+    const d = new Date(typeof v === "number" ? v : String(v));
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+  }
+  function fmtDate(v) {
+    if (v == null || v === "") return "";
+    const d = new Date(typeof v === "number" ? v : String(v));
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  // ── Reusable sortable + client-paged table ── emits the shared dataTable markup: isSortable headers
+  // with a ▲/▼ caret on the active column, and a "Showing X–Y of Z" footer with Previous/Next. Renders
+  // into `container` and returns a controller { setRows, rerender, getSort }. Per-row action controls
+  // (buttons/links) are wired by the caller in onRender; a click on any button/link/field inside a row
+  // does NOT trigger onRowClick.
+  //   columns: [{ key, label, sortable?, sortValue(row)?, render(row)->html, thClass?, tdClass? }]
+  //   opts: { rows, sort:{key,dir}, pageSize=20, onRowClick(row), onRender(container), emptyText, rowClass(row) }
+  function pagedTable(container, opts) {
+    opts = opts || {};
+    const columns = opts.columns || [];
+    const pageSize = opts.pageSize || 20;
+    const firstSortable = columns.find((c) => c.sortable);
+    const state = {
+      rows: opts.rows || [],
+      sort: opts.sort ? { key: opts.sort.key, dir: opts.sort.dir || "asc" } : (firstSortable ? { key: firstSortable.key, dir: "asc" } : null),
+      page: 1,
+    };
+    const colOf = (k) => columns.find((c) => c.key === k);
+    function sortedRows() {
+      const rows = state.rows.slice();
+      const col = state.sort && colOf(state.sort.key);
+      if (!col || !col.sortable) return rows;
+      const dir = state.sort.dir === "desc" ? -1 : 1;
+      const val = (r) => (col.sortValue ? col.sortValue(r) : "");
+      rows.sort((a, z) => {
+        const av = val(a), zv = val(z);
+        const cmp = typeof av === "number" && typeof zv === "number"
+          ? av - zv
+          : String(av == null ? "" : av).localeCompare(String(zv == null ? "" : zv), undefined, { numeric: true, sensitivity: "base" });
+        return cmp * dir;
+      });
+      return rows;
+    }
+    function render() {
+      const all = sortedRows();
+      const total = all.length;
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      state.page = Math.min(Math.max(1, state.page), pages);
+      const start = (state.page - 1) * pageSize;
+      const pageRows = all.slice(start, start + pageSize);
+      const head = "<tr>" + columns.map((c) => {
+        const active = state.sort && state.sort.key === c.key;
+        if (c.sortable) {
+          const caret = active ? ' <span class="sortCaret">' + (state.sort.dir === "asc" ? "▲" : "▼") + "</span>" : "";
+          return '<th class="isSortable' + (c.thClass ? " " + c.thClass : "") + '" data-sort="' + esc(c.key) + '">' + esc(c.label) + caret + "</th>";
+        }
+        return "<th" + (c.thClass ? ' class="' + c.thClass + '"' : "") + ">" + esc(c.label) + "</th>";
+      }).join("") + "</tr>";
+      const body = total
+        ? pageRows.map((row, i) => {
+            const clickable = typeof opts.onRowClick === "function";
+            const rc = (opts.rowClass ? opts.rowClass(row) : "") || "";
+            return '<tr class="' + (clickable ? "dataTableRowClickable " : "") + rc + '" data-row-index="' + i + '">' +
+              columns.map((c) => "<td" + (c.tdClass ? ' class="' + c.tdClass + '"' : "") + ">" + (c.render ? c.render(row) : "") + "</td>").join("") + "</tr>";
+          }).join("")
+        : '<tr><td class="dataTableEmpty" colspan="' + columns.length + '">' + esc(opts.emptyText || "No results.") + "</td></tr>";
+      const from = total ? start + 1 : 0;
+      const to = Math.min(start + pageSize, total);
+      const footer =
+        '<div class="dataTableFooter"><span class="dataTableCount">Showing ' + from + "–" + to + " of " + total + "</span>" +
+        '<div class="dataTablePager">' +
+        '<button type="button" class="button buttonSecondary buttonSmall" data-page="prev"' + (state.page <= 1 ? " disabled" : "") + ">Previous</button>" +
+        '<button type="button" class="button buttonSecondary buttonSmall" data-page="next"' + (state.page >= pages ? " disabled" : "") + ">Next</button></div></div>";
+      container.innerHTML = '<div class="panel isFlush"><div class="tableWrap"><table class="dataTable"><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>" + footer + "</div>";
+      container.querySelectorAll("th.isSortable[data-sort]").forEach((th) => th.addEventListener("click", () => {
+        const key = th.getAttribute("data-sort");
+        if (state.sort && state.sort.key === key) state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+        else state.sort = { key: key, dir: "asc" };
+        state.page = 1;
+        render();
+      }));
+      if (typeof opts.onRowClick === "function") {
+        container.querySelectorAll("tbody tr[data-row-index]").forEach((tr) => tr.addEventListener("click", (ev) => {
+          if (ev.target.closest("button, a, input, select, label")) return;
+          const r = pageRows[Number(tr.dataset.rowIndex)];
+          if (r) opts.onRowClick(r);
+        }));
+      }
+      const prev = container.querySelector('[data-page="prev"]');
+      const next = container.querySelector('[data-page="next"]');
+      if (prev) prev.addEventListener("click", () => { if (state.page > 1) { state.page -= 1; render(); } });
+      if (next) next.addEventListener("click", () => { if (state.page < pages) { state.page += 1; render(); } });
+      if (typeof opts.onRender === "function") opts.onRender(container);
+    }
+    render();
+    return {
+      setRows: function (rows, toLast) {
+        state.rows = rows || [];
+        state.page = toLast ? Math.max(1, Math.ceil(state.rows.length / pageSize)) : 1;
+        render();
+      },
+      rerender: render,
+      getSort: function () { return state.sort; },
+    };
+  }
+
+  // ── Favicon resolution ── sites keep their icon at different conventional paths (many have no
+  // /favicon.ico at all — they declare an SVG/PNG via <link>). We can't read another origin's <link>
+  // tags (CORS), so we probe the common paths in order and use the first that loads as an image.
+  const FAVICON_PATHS = ["/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/favicon.png"];
+  function faviconCandidates(domain) {
+    const d = String(domain || "").trim();
+    return d ? FAVICON_PATHS.map((p) => "https://" + d + p) : [];
+  }
+  // Try each candidate until one loads; cb(url) with the winner, or cb(null) if none resolve.
+  function probeFavicon(domain, cb) {
+    const urls = faviconCandidates(domain);
+    let i = 0;
+    (function next() {
+      if (i >= urls.length) { cb(null); return; }
+      const url = urls[i++];
+      const im = new Image();
+      im.onload = () => (im.naturalWidth > 0 ? cb(url) : next());
+      im.onerror = next;
+      im.src = url;
+    })();
+  }
+
   window.SM = {
     ready: ready,
     icon: icon,
@@ -524,11 +760,17 @@
     openContact: openContact,
     modal: modal,
     confirm: confirmDialog,
+    toast: toast,
     detailHeader: detailHeader,
     detailField: detailField,
+    fmtDate: fmtDate,
+    fmtDateTime: fmtDateTime,
+    pagedTable: pagedTable,
     setFieldError: setFieldError,
     clearFieldError: clearFieldError,
     toolbar: toolbar,
+    setBreadcrumbs: setBreadcrumbs,
+    setActiveNav: setActiveNav,
     setTopBarAction: function (html) {
       const h = document.getElementById("sm-topbar-actions");
       if (h) h.innerHTML = html || "";
@@ -550,11 +792,91 @@
     statusPill: function (label, variant) {
       return '<span class="statusPill is-' + esc(String(variant).toLowerCase()) + '">' + esc(label) + "</span>";
     },
+    // ── Theme ── the profile page previews with applyThemeDom (DOM only) and, on Save, persists with
+    // cacheTheme + a PUT to /users/current/settings. THEMES is the option list; normalizeTheme coerces
+    // any stored/loaded value to one of them.
+    THEMES: THEMES,
+    normalizeTheme: normalizeTheme,
+    applyThemeDom: applyThemeDom,
+    cacheTheme: cacheTheme,
+    // ── Copy-to-clipboard icon button ── render HTML with copyButton(value), then call
+    // wireCopyButtons(container) once after inserting it. Shows a check + accent on success.
+    copyButton: function (value, opts) {
+      opts = opts || {};
+      return (
+        '<button type="button" class="copyIconBtn" data-copy="' + esc(String(value == null ? "" : value)) +
+        '" title="' + esc(opts.title || "Copy") + '" aria-label="' + esc(opts.title || "Copy") + '">' +
+        icon("copy", opts.size || 14) + "</button>"
+      );
+    },
+    // ── Publisher icon ── a domain-initial monogram, or the domain's favicon layered over it (which
+    // falls back to the monogram if it fails to load — wire with wirePublisherIcons after inserting).
+    publisherIcon: function (domain, iconKind, size) {
+      const sz = size || 28;
+      const d = String(domain || "");
+      const letter = (d.replace(/^www\./, "")[0] || "?").toUpperCase();
+      let img = "";
+      if (iconKind === "favicon" && d) {
+        const urls = faviconCandidates(d);
+        img = '<img class="pubIconImg" alt="" src="' + esc(urls[0]) + '" data-fallbacks="' + esc(urls.slice(1).join(" ")) + '" />';
+      }
+      return (
+        '<span class="pubIcon" style="width:' + sz + "px;height:" + sz + "px;font-size:" + Math.round(sz * 0.45) + 'px;">' +
+        '<span class="pubIconMono">' + esc(letter) + "</span>" + img + "</span>"
+      );
+    },
+    faviconCandidates: faviconCandidates,
+    probeFavicon: probeFavicon,
+    wirePublisherIcons: function (container) {
+      (container || document).querySelectorAll(".pubIconImg").forEach((img) => {
+        if (img.__wired) return;
+        img.__wired = true;
+        // On failure, advance to the next candidate path; when they're exhausted, drop the <img> so the
+        // monogram underneath shows through.
+        img.addEventListener("error", () => {
+          const rest = (img.getAttribute("data-fallbacks") || "").split(" ").filter(Boolean);
+          if (rest.length) {
+            img.setAttribute("data-fallbacks", rest.slice(1).join(" "));
+            img.src = rest[0];
+          } else {
+            img.remove();
+          }
+        });
+      });
+    },
+    wireCopyButtons: function (container) {
+      const root = container || document;
+      root.querySelectorAll(".copyIconBtn[data-copy]").forEach((btn) => {
+        if (btn.__copyWired) return;
+        btn.__copyWired = true;
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const val = btn.getAttribute("data-copy") || "";
+          const flash = () => {
+            const prev = btn.innerHTML;
+            btn.classList.add("isCopied");
+            btn.innerHTML = icon("check", 14);
+            setTimeout(() => { btn.innerHTML = prev; btn.classList.remove("isCopied"); }, 1400);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(val).then(flash, () => {});
+          } else {
+            try {
+              const ta = document.createElement("textarea");
+              ta.value = val; ta.style.position = "fixed"; ta.style.opacity = "0";
+              document.body.appendChild(ta); ta.select();
+              document.execCommand("copy"); document.body.removeChild(ta); flash();
+            } catch (_e) { /* ignore */ }
+          }
+        });
+      });
+    },
   };
 
   // ── Boot ──
   renderTopBar();
   renderSidebar();
+  syncTheme(); // reconcile the cached theme with the server (fire-and-forget)
   loadIdentity().then((id) => {
     renderSidebar(); // re-render with role-appropriate nav + user identity
     resolveReady(id);

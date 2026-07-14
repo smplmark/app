@@ -40,7 +40,7 @@ const files: Record<string, unknown> = {
     evaluations: {
       evaluation: [
         rec({ task_id: 6, data_name: "letter", run_id: 7, flow_id: 10, value: 0.97 }),
-        // No upload_time → run has no started_at; observation falls back to retrieved_at.
+        // No upload_time → run has no started_at; measurement falls back to retrieved_at.
         rec({
           task_id: 6,
           data_name: "letter",
@@ -81,7 +81,7 @@ const files: Record<string, unknown> = {
           data_name: "adult",
           value: 0.86,
         }),
-        // A run with no AUC counterpart — observation carries accuracy only.
+        // A run with no AUC counterpart — measurement carries accuracy only.
         rec({
           run_id: 103,
           flow_id: 15511,
@@ -151,7 +151,7 @@ describe("openml adapter", () => {
     expect(robotsPaths).toEqual(["/api/v1/"]);
   });
 
-  it("maps CC18 tasks to per-task benchmarks with best-run-per-flow targets", () => {
+  it("maps CC18 tasks to per-task benchmarks with best-run-per-flow subjects", () => {
     const benchmarks = adapt(archive as never);
     // Tasks ranked by distinct flows (3 > 2); the empty task-11 file yields no benchmark.
     expect(benchmarks.map((b) => b.key)).toEqual([
@@ -166,21 +166,21 @@ describe("openml adapter", () => {
     expect(krvskp.published_at).toBe(Date.UTC(2019, 1, 21, 18, 47, 13));
     expect(krvskp.category).toBe("ML_AI");
     expect(krvskp.tags).toEqual(["openml", "cc18", "classification"]);
-    expect(krvskp.observationSchema).toMatchObject({
+    expect(krvskp.measurementSchema).toMatchObject({
       chart: { x: null, y: "predictive_accuracy", x_kind: "CATEGORY" },
     });
 
-    // Targets ranked by accuracy; malformed rows (no value / no flow_name / junk) are gone.
-    expect(krvskp.targets.map((t: { key: string }) => t.key)).toEqual([
+    // Subjects ranked by accuracy; malformed rows (no value / no flow_name / junk) are gone.
+    expect(krvskp.subjects.map((t: { key: string }) => t.key)).toEqual([
       "mlr-classif-svm-6",
       "sklearn-pipeline-pipeline-adaboost-1",
       "weka-j48-2",
     ]);
 
-    const svm = krvskp.targets[0];
+    const svm = krvskp.subjects[0];
     expect(svm.name).toBe("mlr.classif.svm(6)");
     expect(svm.details).toEqual({ openml_flow_id: 10 });
-    // The task has one shared "best" run; targets carry no runs of their own now.
+    // The task has one shared "best" run; subjects carry no runs of their own now.
     expect(svm).not.toHaveProperty("runs");
     expect(krvskp.runs.map((r: { key: string }) => r.key)).toEqual(["best"]);
     // The "best" run started at the earliest flow upload; the svm flow's is the earliest here.
@@ -188,12 +188,12 @@ describe("openml adapter", () => {
     // Dedupe kept flow 10's max (run 1 at 0.998123), not the later 0.9953. One measurement per
     // flow, on the shared "best" run.
     const svmMeasurement = krvskp.measurements.find(
-      (m: { run_key: string; target_key: string }) =>
-        m.run_key === "best" && m.target_key === svm.key,
+      (m: { run_key: string; subject_key: string }) =>
+        m.run_key === "best" && m.subject_key === svm.key,
     );
     expect(svmMeasurement).toEqual({
       run_key: "best",
-      target_key: "mlr-classif-svm-6",
+      subject_key: "mlr-classif-svm-6",
       created_at: T_SVM_UPLOAD,
       metrics: { predictive_accuracy: 0.998123 },
       meta: {
@@ -205,11 +205,11 @@ describe("openml adapter", () => {
 
     // Missing upload_time: measurement falls back to retrieved_at.
     const letter = benchmarks[1];
-    const rf = letter.targets.find((t: { key: string }) => t.key === "weka-randomforest-1");
+    const rf = letter.subjects.find((t: { key: string }) => t.key === "weka-randomforest-1");
     expect(rf).toBeDefined();
     const rfMeasurement = letter.measurements.find(
-      (m: { run_key: string; target_key: string }) =>
-        m.run_key === "best" && m.target_key === "weka-randomforest-1",
+      (m: { run_key: string; subject_key: string }) =>
+        m.run_key === "best" && m.subject_key === "weka-randomforest-1",
     );
     expect(rfMeasurement).toBeDefined();
     expect(rfMeasurement!.created_at).toBe(T_RETRIEVED);
@@ -224,18 +224,18 @@ describe("openml adapter", () => {
     expect(amlb.published_at).toBe(Date.UTC(2017, 6, 16, 13, 36, 20));
     expect(amlb.category).toBe("ML_AI");
     expect(amlb.tags).toEqual(["openml", "automl"]);
-    expect(amlb.observationSchema).toMatchObject({
+    expect(amlb.measurementSchema).toMatchObject({
       chart: { x: null, y: "predictive_accuracy", x_kind: "CATEGORY" },
     });
 
     // Flow names cleaned to framework names.
-    expect(amlb.targets.map((t: { name: string }) => t.name).sort()).toEqual([
+    expect(amlb.subjects.map((t: { name: string }) => t.name).sort()).toEqual([
       "autosklearn",
       "h2oautoml",
       "tpot",
     ]);
 
-    const ask = amlb.targets.find((t: { key: string }) => t.key === "autosklearn")!;
+    const ask = amlb.subjects.find((t: { key: string }) => t.key === "autosklearn")!;
     expect(ask.details).toEqual({ openml_flow_id: 15509 });
     // Datasets are benchmark-wide shared runs, not per-framework: "adult" is one run shared by
     // autosklearn and tpot, keyed identically for both.
@@ -246,7 +246,7 @@ describe("openml adapter", () => {
     ]);
     // autosklearn measured on adult and credit-g, each naming the shared dataset run.
     const askRunKeys = amlb.measurements
-      .filter((m: { target_key: string }) => m.target_key === "autosklearn")
+      .filter((m: { subject_key: string }) => m.subject_key === "autosklearn")
       .map((m: { run_key: string }) => m.run_key)
       .sort();
     expect(askRunKeys).toEqual(["adult", "credit-g"]);
@@ -257,28 +257,28 @@ describe("openml adapter", () => {
     // 2017-07-16, which is earlier — so the shared run's started_at is that.
     expect(adultRun.started_at).toBe(T_SVM_UPLOAD);
     const askAdult = amlb.measurements.find(
-      (m: { run_key: string; target_key: string }) =>
-        m.run_key === "adult" && m.target_key === "autosklearn",
+      (m: { run_key: string; subject_key: string }) =>
+        m.run_key === "adult" && m.subject_key === "autosklearn",
     )!;
     expect(askAdult).toEqual({
       run_key: "adult",
-      target_key: "autosklearn",
+      subject_key: "autosklearn",
       created_at: T_AMLB_UPLOAD,
       metrics: { predictive_accuracy: 0.87, area_under_roc_curve: 0.8879 },
       meta: { openml_run_id: 100, data_name: "adult" },
     });
     // tpot's "adult" measurement names the SAME shared run key.
     const tpotAdult = amlb.measurements.find(
-      (m: { run_key: string; target_key: string }) =>
-        m.run_key === "adult" && m.target_key === "tpot",
+      (m: { run_key: string; subject_key: string }) =>
+        m.run_key === "adult" && m.subject_key === "tpot",
     )!;
     expect(tpotAdult).toBeDefined();
     expect(tpotAdult.run_key).toBe("adult");
 
     // Accuracy-only cell (no AUC counterpart) still lands, with just the one metric.
-    const h2o = amlb.targets.find((t: { key: string }) => t.key === "h2oautoml")!;
+    const h2o = amlb.subjects.find((t: { key: string }) => t.key === "h2oautoml")!;
     const h2oMeasurement = amlb.measurements.find(
-      (m: { target_key: string }) => m.target_key === h2o.key,
+      (m: { subject_key: string }) => m.subject_key === h2o.key,
     )!;
     expect(h2oMeasurement.metrics).toEqual({ predictive_accuracy: 0.5 });
   });
@@ -287,7 +287,7 @@ describe("openml adapter", () => {
     const capped = adapt(archive as never, { topTasks: 1, topFlows: 2 });
     // Only kr-vs-kp (3 distinct flows beats letter's 2) plus AMLB, which is never capped.
     expect(capped.map((b) => b.key)).toEqual(["openml-cc18-kr-vs-kp", "openml-amlb"]);
-    expect(capped[0].targets.map((t: { key: string }) => t.key)).toEqual([
+    expect(capped[0].subjects.map((t: { key: string }) => t.key)).toEqual([
       "mlr-classif-svm-6",
       "sklearn-pipeline-pipeline-adaboost-1",
     ]);
@@ -322,17 +322,17 @@ describe("openml adapter", () => {
 
     const capped = adapt(bigArchive as never);
     // 20 of 22 tasks (the two with the fewest distinct flows dropped); empty AMLB files → no
-    // AMLB benchmark. The 55-flow task ranks first and is capped to 50 targets.
+    // AMLB benchmark. The 55-flow task ranks first and is capped to 50 subjects.
     expect(capped).toHaveLength(20);
     expect(capped[0].key).toBe("openml-cc18-ds-1021");
-    expect(capped[0].targets).toHaveLength(50);
+    expect(capped[0].subjects).toHaveLength(50);
     const keys = capped.map((b) => b.key);
     expect(keys).not.toContain("openml-cc18-ds-1000");
     expect(keys).not.toContain("openml-cc18-ds-1001");
 
     const full = adapt(bigArchive as never, fullOptions);
     expect(full).toHaveLength(22);
-    expect(full[0].targets).toHaveLength(55);
+    expect(full[0].subjects).toHaveLength(55);
   });
 
   it("throws loudly on unrecognizable payloads", () => {

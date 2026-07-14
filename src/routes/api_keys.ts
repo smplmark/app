@@ -4,9 +4,11 @@ import { mintApiKey, revealApiKey } from "../auth/apikey";
 import { evictCachedScope } from "../auth/scope_cache";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
+  deleteApiKey,
   getApiKeyById,
   listApiKeys,
   revokeApiKey,
+  updateApiKeyName,
 } from "../data/api_keys";
 import { getRunById } from "../data/runs";
 import { ForbiddenError, NotFoundError } from "../errors";
@@ -99,12 +101,19 @@ apiKeys.get("/", requireAuth, async (c) => {
   requireAccountScope(auth);
   const pagination = readPagination(c);
   const sort = readSort(c, "-created_at", SORT_ALLOWED);
+  const scopeTypeFilter = c.req.query("filter[scope_type]");
+  const scopeRefFilter = c.req.query("filter[scope_ref]");
   const { rows, total } = await listApiKeys(c.env.DB, {
     account_id: auth.account_id,
     sort,
     limit: pagination.limit,
     offset: pagination.offset,
     includeTotal: pagination.includeTotal,
+    scope_type:
+      scopeTypeFilter !== undefined
+        ? requireEnum({ scope_type: scopeTypeFilter }, "scope_type", SCOPE_TYPES)
+        : undefined,
+    scope_ref: scopeRefFilter !== undefined ? scopeRefFilter : undefined,
   });
   return collectionResponse(
     rows.map((r) => serializeApiKey(r)),
@@ -119,6 +128,35 @@ apiKeys.get("/:id", requireAuth, async (c) => {
   if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
   const plaintext = await revealApiKey(c.env, row);
   return resourceResponse(serializeApiKey(row, plaintext));
+});
+
+apiKeys.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  requireAccountScope(auth);
+  requireAdmin(auth);
+  const row = await getApiKeyById(c.env.DB, c.req.param("id"));
+  if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
+  // Only the name is mutable; scope and expiry are fixed at creation, so any other fields sent back
+  // by a get-mutate-put are ignored.
+  const attrs = await readAttributes(c);
+  const name = requireString(attrs, "name");
+  await updateApiKeyName(c.env.DB, row.id, name);
+  const updated = await getApiKeyById(c.env.DB, row.id);
+  if (!updated) throw new NotFoundError();
+  return resourceResponse(serializeApiKey(updated));
+});
+
+apiKeys.post("/:id/actions/revoke", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  requireAccountScope(auth);
+  requireAdmin(auth);
+  const row = await getApiKeyById(c.env.DB, c.req.param("id"));
+  if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
+  await revokeApiKey(c.env.DB, row.id, Date.now());
+  evictCachedScope(row.key_hash);
+  const updated = await getApiKeyById(c.env.DB, row.id);
+  if (!updated) throw new NotFoundError();
+  return resourceResponse(serializeApiKey(updated));
 });
 
 apiKeys.post("/:id/actions/rotate", requireAuth, async (c) => {
@@ -148,7 +186,7 @@ apiKeys.delete("/:id", requireAuth, async (c) => {
   requireAdmin(auth);
   const row = await getApiKeyById(c.env.DB, c.req.param("id"));
   if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
-  await revokeApiKey(c.env.DB, row.id, Date.now());
+  await deleteApiKey(c.env.DB, row.id);
   evictCachedScope(row.key_hash);
   return noContentResponse();
 });

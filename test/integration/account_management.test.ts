@@ -9,7 +9,7 @@ import {
   authPost,
   bearer,
   makeBenchmark,
-  makeTarget,
+  makeSubject,
   mintKey,
   register,
   resetDb,
@@ -149,7 +149,7 @@ describe("invitations", () => {
 
   it("rejects acceptance by a mismatched email", async () => {
     const owner = await register("owner6@example.com");
-    const inv = await invite(owner.token, "target@example.com", "MEMBER");
+    const inv = await invite(owner.token, "subject@example.com", "MEMBER");
     const other = await register("someoneelse@example.com");
     const acc = await apiPost(
       "/api/v1/invitations/accept",
@@ -426,10 +426,10 @@ describe("edge cases", () => {
     expect((await apiGet("/api/v1/account_users", bearer(benchKey))).status).toBe(403);
   });
 
-  it("hides private runs and observations from the public", async () => {
+  it("hides private runs and measurements from the public", async () => {
     const owner = await register("edge8@example.com");
     const bench = await makeBenchmark(owner.token, { key: "b8", name: "B8" });
-    const target = await makeTarget(owner.token, bench.id, "t8");
+    const subject = await makeSubject(owner.token, bench.id, "t8");
     const runRes = await apiPost(
       "/api/v1/runs",
       { data: { type: "run", attributes: { benchmark: bench.id, key: "r8" } } },
@@ -439,13 +439,13 @@ describe("edge cases", () => {
     // Anonymous reads of a private run → 404 (no existence leak), for detail and list views.
     expect((await apiGet(`/api/v1/runs/${run.id}`)).status).toBe(404);
     expect((await apiGet(`/api/v1/runs?filter[benchmark]=${bench.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/targets?filter[benchmark]=${bench.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/subjects?filter[benchmark]=${bench.id}`)).status).toBe(404);
     expect((await apiGet(`/api/v1/measurements?filter[run]=${run.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/measurements?filter[target]=${target.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/measurements?filter[subject]=${subject.id}`)).status).toBe(404);
     expect((await apiGet(`/api/v1/measurements?filter[benchmark]=${bench.id}`)).status).toBe(404);
   });
 
-  it("keeps viewers from writing runs and observations", async () => {
+  it("keeps viewers from writing runs and measurements", async () => {
     const owner = await register("edge6@example.com");
     const bench = await makeBenchmark(owner.token, { key: "b6", name: "B6" });
     const invV = await invite(owner.token, "ro@example.com", "VIEWER");

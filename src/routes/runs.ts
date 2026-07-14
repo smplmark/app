@@ -9,8 +9,10 @@ import {
   getRunById,
   invalidateRun,
   listRuns,
+  runKeyExists,
   updateRun,
 } from "../data/runs";
+import { runHasMeasurements } from "../data/measurements";
 import { LIMITS } from "../limits";
 import { ConflictError, NotFoundError } from "../errors";
 import {
@@ -62,6 +64,29 @@ function optionalStartedAt(attrs: Record<string, unknown>): number | null {
   return parseEpochMs(attrs.started_at, "started_at");
 }
 
+/** started_at for CREATE: an explicit null means "no start time"; omitting it defaults to now. */
+function createStartedAt(attrs: Record<string, unknown>): number | null {
+  if (!("started_at" in attrs)) return Date.now();
+  if (attrs.started_at === null) return null;
+  return parseEpochMs(attrs.started_at, "started_at");
+}
+
+/** Resolve the run key: use the supplied one, or auto-generate a unique `run-<hex>` when omitted. */
+async function resolveRunKey(
+  db: D1Database,
+  benchmarkId: string,
+  attrs: Record<string, unknown>,
+): Promise<string> {
+  if (typeof attrs.key === "string" && attrs.key.trim().length > 0) {
+    return requireString(attrs, "key", LIMITS.keyLength);
+  }
+  for (let i = 0; i < 20; i++) {
+    const candidate = `run-${crypto.randomUUID().slice(0, 8)}`;
+    if (!(await runKeyExists(db, benchmarkId, candidate))) return candidate;
+  }
+  return `run-${crypto.randomUUID()}`;
+}
+
 runs.post("/", requireAuth, async (c) => {
   const auth = getAuth(c);
   requireWrite(auth);
@@ -78,10 +103,10 @@ runs.post("/", requireAuth, async (c) => {
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new runs can be added.");
   }
-  const key = requireString(attrs, "key", LIMITS.keyLength);
+  const key = await resolveRunKey(c.env.DB, benchmark.id, attrs);
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
-  const started_at = optionalStartedAt(attrs);
+  const started_at = createStartedAt(attrs);
   if ((await countRunsForBenchmark(c.env.DB, benchmark.id)) >= LIMITS.runsPerBenchmark) {
     throw new ConflictError(
       `This benchmark has reached the limit of ${LIMITS.runsPerBenchmark} runs.`,
@@ -156,8 +181,10 @@ runs.put("/:id", requireAuth, async (c) => {
   const attrs = await readAttributes(c);
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
-  const started_at = optionalStartedAt(attrs);
-  // started_at feeds relative-time derived metrics, so it is factual and frozen once published.
+  // started_at is factual: omitting it keeps the current value (so a prose-only edit never disturbs it);
+  // send an explicit value or null to change it. It feeds relative-time derived metrics, so it is frozen
+  // once published.
+  const started_at = "started_at" in attrs ? optionalStartedAt(attrs) : run.started_at;
   if (benchmark.status !== "PRIVATE" && started_at !== run.started_at) {
     throw new ConflictError(
       "A run's started_at is frozen once its benchmark is published.",
@@ -170,9 +197,12 @@ runs.put("/:id", requireAuth, async (c) => {
 runs.delete("/:id", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
+  // A draft benchmark's runs are freely deletable. On a published benchmark, data is append-only — but
+  // an empty run (no measurements) holds no published data, so deleting it destroys nothing; a run that
+  // carries measurements must be invalidated instead (kept for the record).
+  if (benchmark.status !== "PRIVATE" && (await runHasMeasurements(c.env.DB, run.id))) {
     throw new ConflictError(
-      "Published benchmark data is append-only; a run cannot be deleted. Invalidate it instead.",
+      "This run has measurements on a published benchmark and cannot be deleted. Invalidate it instead.",
     );
   }
   await deleteRunCascade(c.env.DB, run.id);

@@ -38,7 +38,6 @@ export async function provisionAccountForUser(
     key,
     name: `${displayName}'s workspace`,
     description: null,
-    url: null,
   });
   await createMembership(db, {
     account_id: account.id,

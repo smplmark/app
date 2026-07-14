@@ -9,7 +9,7 @@ import {
   bearer,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   publish,
   register,
   resetDb,
@@ -17,16 +17,16 @@ import {
 
 beforeEach(resetDb);
 
-describe("run + target read visibility", () => {
+describe("run + subject read visibility", () => {
   it("covers anonymous, cross-account, and published reads", async () => {
     const a = await register("a@example.com");
     const b = await makeBenchmark(a.token);
-    const t = await makeTarget(a.token, b.id);
+    const t = await makeSubject(a.token, b.id);
     const r = await makeRun(a.token, b.id, { name: "named-run" });
 
     // Private: anonymous and cross-account both 404.
     expect((await apiGet(`/api/v1/runs/${r.id}`)).status).toBe(404);
-    expect((await apiGet(`/api/v1/targets/${t.id}`)).status).toBe(404);
+    expect((await apiGet(`/api/v1/subjects/${t.id}`)).status).toBe(404);
     const other = await register("b@example.com");
     expect((await apiGet(`/api/v1/runs/${r.id}`, bearer(other.token))).status).toBe(404);
     expect(
@@ -36,7 +36,7 @@ describe("run + target read visibility", () => {
     // Publish → public reads succeed, including a PUT that only touches prose.
     await publish(a.token, a.user_id, b.id);
     expect((await apiGet(`/api/v1/runs/${r.id}`)).status).toBe(200);
-    expect((await apiGet(`/api/v1/targets/${t.id}`)).status).toBe(200);
+    expect((await apiGet(`/api/v1/subjects/${t.id}`)).status).toBe(200);
     const put = await apiPut(
       `/api/v1/runs/${r.id}`,
       { data: { type: "run", attributes: { name: "renamed", details: { note: "x" } } } },
@@ -50,10 +50,10 @@ describe("measurements created_at range", () => {
   it("filters measurements by a date range", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     const r = await makeRun(me.token, b.id);
     const meas = (createdAt: number) => ({
-      data: { type: "measurement", attributes: { run: r.id, target: t.id, created_at: createdAt } },
+      data: { type: "measurement", attributes: { run: r.id, subject: t.id, created_at: createdAt } },
     });
     await apiPost("/api/v1/measurements", meas(Date.UTC(2026, 6, 1)), bearer(me.token));
     await apiPost("/api/v1/measurements", meas(Date.UTC(2026, 6, 10)), bearer(me.token));
@@ -82,16 +82,16 @@ describe("malformed inputs + unknown credential", () => {
   it("returns 404 when a create references a non-existent parent", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
-    // Linking a target into a non-existent benchmark is an indistinguishable 404 (no leak).
+    const t = await makeSubject(me.token, b.id);
+    // Linking a subject into a non-existent benchmark is an indistinguishable 404 (no leak).
     expect(
-      (await apiPost("/api/v1/benchmark_targets", { data: { type: "benchmark_target", attributes: { benchmark: "ghost", target: t.id } } }, bearer(me.token))).status,
+      (await apiPost("/api/v1/benchmark_subjects", { data: { type: "benchmark_subject", attributes: { benchmark: "ghost", subject: t.id } } }, bearer(me.token))).status,
     ).toBe(404);
     expect(
       (await apiPost("/api/v1/runs", { data: { type: "run", attributes: { benchmark: "ghost", key: "k" } } }, bearer(me.token))).status,
     ).toBe(404);
     expect(
-      (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: "ghost", target: t.id } } }, bearer(me.token))).status,
+      (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: "ghost", subject: t.id } } }, bearer(me.token))).status,
     ).toBe(404);
   });
 

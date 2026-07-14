@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { requireAdmin } from "../authz";
-import { getAccountById, getPublicAccountById, updateAccount } from "../data/accounts";
+import { getAccountById, getPublicAccountById, softDeleteAccount, updateAccount } from "../data/accounts";
 import { listMembershipsForUserWithAccount } from "../data/account_users";
 import { ForbiddenError, NotFoundError } from "../errors";
 import { optionalBoolean, optionalStringOrNull, requireString } from "../http/body";
-import { collectionResponse, resourceResponse } from "../http/jsonapi";
+import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
 import {
   getAuth,
   getOptionalAuth,
@@ -46,19 +46,28 @@ accounts.put("/current", requireAuth, async (c) => {
   const attrs = await readAttributes(c);
   const name = requireString(attrs, "name");
   const description = optionalStringOrNull(attrs, "description") ?? null;
-  const url = optionalStringOrNull(attrs, "url") ?? null;
   // Full-replace, but an omitted flag keeps its current value (a settings PUT shouldn't silently
   // toggle the personal-publish gate off).
   const allowPersonal = optionalBoolean(attrs, "allow_personal_publish");
   const row = await updateAccount(c.env.DB, auth.account_id, {
     name,
     description,
-    url,
     allow_personal_publish:
       allowPersonal === undefined ? existing.allow_personal_publish : allowPersonal ? 1 : 0,
   });
   if (!row) throw new NotFoundError();
   return resourceResponse(serializeAccount(row));
+});
+
+/** Soft-delete the caller's account. Owner-only and session-only: a deliberate human action, never an
+ *  API key. The account is stamped deleted_at; all its tokens then stop resolving (see middleware). */
+accounts.delete("/current", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  if (auth.source !== "SESSION" || auth.role !== "OWNER") {
+    throw new ForbiddenError("Only the account owner can delete the account.");
+  }
+  await softDeleteAccount(c.env.DB, auth.account_id);
+  return noContentResponse();
 });
 
 /** Public publisher lookup (only accounts with a world-visible benchmark), or the caller's own. */

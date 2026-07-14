@@ -76,10 +76,10 @@ export async function pull(ctx) {
   }
 }
 
-// Leaderboard column → observation metric. Header cells carry the scenario in
+// Leaderboard column → measurement metric. Header cells carry the scenario in
 // metadata.run_group ("GPQA", "Omni-MATH", …); the "Mean score" column has no run_group, so the
 // display value is the fallback. Unknown columns are skipped — every emitted metric key must be
-// declared in the observation schema.
+// declared in the measurement schema.
 const METRIC_BY_GROUP = new Map([
   ["mean-score", "mean_score"],
   ["mmlu-pro", "mmlu_pro"],
@@ -138,10 +138,10 @@ const ABOUT =
   "Aggregated scores from the HELM Capabilities leaderboard, published by Stanford's Center for Research on Foundation Models (crfm.stanford.edu/helm). Each model row carries the release's mean score and per-scenario scores for MMLU-Pro, GPQA, IFEval, WildBench, and Omni-MATH on a 0-1 scale (higher is better), exactly as published. HELM entered maintenance mode in June 2026, so these results are final.";
 
 /**
- * Stage B: one benchmark from the release's core-scenarios accuracy table. Targets are models
+ * Stage B: one benchmark from the release's core-scenarios accuracy table. Subjects are models
  * (keyed by the schema.json model id, e.g. "amazon/nova-premier-v1:0" → "amazon-nova-premier-v1-0");
  * one release-keyed run spans them all, and each model's row of scores is a measurement naming that
- * run + its target. Null or missing cells are omitted rather than recorded as zeros. No caps (68 models).
+ * run + its subject. Null or missing cells are omitted rather than recorded as zeros. No caps (68 models).
  * @param {import("../model.mjs").Archive & { readText: (name: string) => string }} archive
  * @param {object} [options] no options — the default is already the full dataset
  * @returns {import("../model.mjs").IngestBenchmark[]}
@@ -160,15 +160,15 @@ export function adapt(archive, options = {}) {
   }
 
   const modelsByDisplayName = indexModels(archive.readJson("schema.json"));
-  // The release date doubles as the benchmark's publication moment and the observations' stamp.
+  // The release date doubles as the benchmark's publication moment and the measurements' stamp.
   const publishedAt = releaseDate(archive);
   const createdAt = publishedAt ?? archive.manifest.retrieved_at;
   const runKey = slugify(release);
 
-  // One release = one comparative run over every model; each model is a target, each score a
-  // measurement naming that single run + its target.
-  /** @type {import("../model.mjs").IngestTarget[]} */
-  const targets = [];
+  // One release = one comparative run over every model; each model is a subject, each score a
+  // measurement naming that single run + its subject.
+  /** @type {import("../model.mjs").IngestSubject[]} */
+  const subjects = [];
   /** @type {import("../model.mjs").IngestMeasurement[]} */
   const measurements = [];
   const seen = new Map();
@@ -186,13 +186,13 @@ export function adapt(archive, options = {}) {
     if (Object.keys(metrics).length === 0) continue; // no scores at all — nothing to ingest
 
     const model = modelsByDisplayName.get(displayName);
-    const targetKey = uniqueSlug(model ? model.name : displayName, seen);
-    targets.push({
-      key: targetKey,
+    const subjectKey = uniqueSlug(model ? model.name : displayName, seen);
+    subjects.push({
+      key: subjectKey,
       name: displayName,
       details: model ? modelDetails(model) : undefined,
     });
-    measurements.push({ run_key: runKey, target_key: targetKey, created_at: createdAt, metrics });
+    measurements.push({ run_key: runKey, subject_key: subjectKey, created_at: createdAt, metrics });
   }
 
   return [
@@ -205,8 +205,8 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "ML_AI",
       tags: ["llm", "evaluation", "helm", "language-models"],
-      observationSchema: SCHEMA,
-      targets,
+      measurementSchema: SCHEMA,
+      subjects,
       runs: [{ key: runKey, name: `HELM Capabilities ${release}`, details: { release } }],
       measurements,
     },
@@ -254,7 +254,7 @@ function indexModels(schema) {
 }
 
 /**
- * Target details from a schema.json model record — only the fields that are present.
+ * Subject details from a schema.json model record — only the fields that are present.
  * @param {{ creator_organization?: unknown, access?: unknown, release_date?: unknown }} model
  * @returns {Record<string, unknown>}
  */
@@ -269,7 +269,7 @@ function modelDetails(model) {
 
 /**
  * The release's publication date from summary.json (epoch-ms), or null if unavailable — the
- * observation timestamp falls back to the archive's retrieved_at.
+ * measurement timestamp falls back to the archive's retrieved_at.
  * @param {import("../model.mjs").Archive} archive
  * @returns {number | null}
  */

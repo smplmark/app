@@ -16,7 +16,7 @@
     const acct = (id.account && id.account.attributes) || {};
     const displayName = attrs.display_name || (attrs.email ? attrs.email.split("@")[0] : "there");
     $("dash-greeting").textContent = "Welcome, " + displayName;
-    if (acct.name) $("dash-sub").textContent = acct.name + (acct.key ? "  ·  @" + acct.key : "");
+    if (acct.name) $("dash-sub").textContent = acct.name + (acct.key ? "  ·  " + acct.key : "");
 
     if (attrs.verified === false) {
       $("verify-banner").style.display = "flex";
@@ -84,7 +84,7 @@
         '<tr class="dataTableRowClickable" data-id="' + SM.esc(b.id) + '">' +
         '<td><code>' + SM.esc(a.key || "") + "</code></td>" +
         "<td>" + SM.esc(a.name || "") + "</td>" +
-        "<td>" + SM.statusPill(status, status) + "</td>" +
+        "<td>" + (status === "PRIVATE" ? SM.statusPill("draft", "draft") : SM.statusPill(status, status)) + "</td>" +
         "</tr>"
       );
     }).join("");

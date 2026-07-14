@@ -12,7 +12,7 @@ type C = Context<AppBindings>;
 
 /**
  * The draft/ready edit-lock (§2). While a benchmark is PRIVATE and marked ready (draft=0) its whole
- * subtree is frozen: reject mutations on it and its targets, runs, and measurements. The only ways out
+ * subtree is frozen: reject mutations on it and its subjects, runs, and measurements. The only ways out
  * of this state are publish and return_to_draft. After publish, normal append-only semantics resume.
  */
 export function assertBenchmarkEditable(benchmark: BenchmarkRow): void {

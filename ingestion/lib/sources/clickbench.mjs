@@ -28,9 +28,9 @@ export const robotsPaths = [
   "/ClickHouse/ClickBench/main/LICENSE",
 ];
 
-/** `--full`: lift the default curation cap (default: the 300 fastest targets by hot_total_s). */
-export const fullOptions = /** @type {{ topTargets: number }} */ ({
-  topTargets: Number.POSITIVE_INFINITY,
+/** `--full`: lift the default curation cap (default: the 300 fastest subjects by hot_total_s). */
+export const fullOptions = /** @type {{ topSubjects: number }} */ ({
+  topSubjects: Number.POSITIVE_INFINITY,
 });
 
 /**
@@ -85,7 +85,7 @@ const SCHEMA = {
       type: "number",
       unit: "s",
       description:
-        "Total cold runtime: each query's first run (caches unprimed), summed, in seconds. Lower is better. Failed queries are left out of the sum and counted as missing_queries in the observation metadata.",
+        "Total cold runtime: each query's first run (caches unprimed), summed, in seconds. Lower is better. Failed queries are left out of the sum and counted as missing_queries in the measurement metadata.",
     },
     {
       name: "load_time_s",
@@ -133,11 +133,11 @@ const ABOUT =
 
 /**
  * @param {import("../model.mjs").Archive} archive
- * @param {{ topTargets?: number }} [options]
+ * @param {{ topSubjects?: number }} [options]
  * @returns {import("../model.mjs").IngestBenchmark[]}
  */
 export function adapt(archive, options = {}) {
-  const topTargets = options.topTargets ?? 300;
+  const topSubjects = options.topSubjects ?? 300;
   const entries = archive.readJson("data.json");
   if (!Array.isArray(entries)) throw new Error("clickbench: data.json is not an array");
   const retrievedAt = archive.manifest.retrieved_at;
@@ -151,11 +151,11 @@ export function adapt(archive, options = {}) {
   if (parsed.length === 0) throw new Error("clickbench: no usable entries in data.json");
 
   // Default curation: keep the fastest end of the leaderboard (most-lookedat systems); the full
-  // 778-entry table stays in the archive. Targets with no hot runs at all sort last.
+  // 778-entry table stays in the archive. Subjects with no hot runs at all sort last.
   parsed.sort(
     (a, z) => (a.hotTotal ?? Number.POSITIVE_INFINITY) - (z.hotTotal ?? Number.POSITIVE_INFINITY),
   );
-  const kept = parsed.slice(0, topTargets);
+  const kept = parsed.slice(0, topSubjects);
 
   // A living leaderboard has no single publication moment; the earliest dated entry (mid-2022,
   // ClickBench's launch) is the closest source-native equivalent. Min over ALL parsed entries,
@@ -166,23 +166,23 @@ export function adapt(archive, options = {}) {
   }
 
   // A comparative sweep, not per-entry runs: the whole leaderboard is one fixed 43-query workload,
-  // so every target's measurement references the SAME benchmark-level run. Each entry keeps its own
+  // so every subject's measurement references the SAME benchmark-level run. Each entry keeps its own
   // per-entry created_at (the entry date) and meta on its measurement. started_at/ended_at are left
   // null — a living leaderboard has no bounded run window.
   const seen = new Map();
-  const targets = [];
+  const subjects = [];
   const measurements = [];
   for (const t of kept) {
-    const targetKey = uniqueSlug(`${t.system}-${t.machine}`, seen);
-    targets.push({
-      key: targetKey,
+    const subjectKey = uniqueSlug(`${t.system}-${t.machine}`, seen);
+    subjects.push({
+      key: subjectKey,
       // System names may carry emoji (e.g. "ClickHouse ☁️") — keep them in the display name.
       name: `${t.system} (${t.machine})`,
       details: t.details,
     });
     measurements.push({
       run_key: "leaderboard",
-      target_key: targetKey,
+      subject_key: subjectKey,
       created_at: t.createdAt,
       metrics: t.metrics,
       meta: t.meta,
@@ -200,8 +200,8 @@ export function adapt(archive, options = {}) {
       methodology: null,
       category: "DATABASE",
       tags: ["olap", "sql", "analytics", "databases"],
-      observationSchema: SCHEMA,
-      targets,
+      measurementSchema: SCHEMA,
+      subjects,
       runs: [{ key: "leaderboard", name: "ClickBench leaderboard" }],
       measurements,
     },
@@ -209,7 +209,7 @@ export function adapt(archive, options = {}) {
 }
 
 /**
- * One data.generated.js record → target ingredients, or null when the row is malformed
+ * One data.generated.js record → subject ingredients, or null when the row is malformed
  * (missing system/machine/date, or a missing/malformed result matrix).
  * @param {unknown} entry
  * @param {number} retrievedAt

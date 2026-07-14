@@ -11,10 +11,10 @@ import {
   apiPut,
   authPost,
   bearer,
-  makeAccountTarget,
+  makeAccountSubject,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   markReady,
   markVerified,
   mintKey,
@@ -43,83 +43,69 @@ function stubTxt(records: string[]): void {
   );
 }
 
-const publishBody = (identity?: string) => ({
-  data: { type: "benchmark", attributes: identity ? { publisher_identity: identity } : {} },
+const publishBody = (publisher?: string) => ({
+  data: { type: "benchmark", attributes: publisher ? { publisher } : {} },
 });
 
-async function createIdentity(token: string, key = "acme"): Promise<Resource> {
+async function createPublisher(token: string, domain = "acme.com"): Promise<Resource> {
   const res = await apiPost(
-    "/api/v1/publisher_identities",
-    { data: { type: "publisher_identity", attributes: { key, name: "Acme Corp" } } },
+    "/api/v1/publishers",
+    { data: { type: "publisher", attributes: { domain } } },
     bearer(token),
   );
   expect(res.status).toBe(201);
   return ((await res.json()) as { data: Resource }).data;
 }
 
-async function addDomain(token: string, identityId: string, domain: string): Promise<Resource> {
-  const res = await apiPost(
-    "/api/v1/publisher_domains",
-    { data: { type: "publisher_domain", attributes: { publisher_identity: identityId, domain } } },
-    bearer(token),
-  );
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { data: Resource }).data;
-}
-
-/** Create + verify a domain under a fresh identity; returns the identity + verified domain. */
-async function verifiedIdentity(
-  token: string,
-  domain = "acme.com",
-): Promise<{ identity: Resource; domain: Resource }> {
-  const identity = await createIdentity(token);
-  const dom = await addDomain(token, identity.id, domain);
-  stubTxt([dom.attributes.verification_token as string]);
-  const res = await apiPost(`/api/v1/publisher_domains/${dom.id}/actions/verify`, undefined, bearer(token));
+/** Create + verify a publisher (domain); returns the verified publisher. */
+async function verifiedPublisher(token: string, domain = "acme.com"): Promise<Resource> {
+  const pub = await createPublisher(token, domain);
+  stubTxt([pub.attributes.verification_token as string]);
+  const res = await apiPost(`/api/v1/publishers/${pub.id}/actions/verify`, undefined, bearer(token));
   expect(res.status).toBe(200);
   const verified = ((await res.json()) as { data: Resource }).data;
   expect(verified.attributes.status).toBe("VERIFIED");
   expect(verified.attributes.verified).toBe(true);
   vi.unstubAllGlobals();
-  return { identity, domain: verified };
+  return verified;
 }
 
 // ── §2 draft edit-lock ────────────────────────────────────────────────────────
 
 describe("draft edit-lock", () => {
-  async function readyChainWithData(): Promise<{ me: Registered; benchmark: Resource; target: Resource; run: Resource }> {
+  async function readyChainWithData(): Promise<{ me: Registered; benchmark: Resource; subject: Resource; run: Resource }> {
     const me = await register();
     const benchmark = await makeBenchmark(me.token);
-    const target = await makeTarget(me.token, benchmark.id, "t");
+    const subject = await makeSubject(me.token, benchmark.id, "t");
     const run = await makeRun(me.token, benchmark.id);
     // ingest one measurement while still cooking (draft=1) — allowed
     const ing = await apiPost(
       "/api/v1/measurements",
-      { data: { type: "measurement", attributes: { run: run.id, target: target.id, metrics: { skew_ms: 1 } } } },
+      { data: { type: "measurement", attributes: { run: run.id, subject: subject.id, metrics: { skew_ms: 1 } } } },
       bearer(me.token),
     );
     expect(ing.status).toBe(201);
     await markReady(me.token, benchmark.id);
-    return { me, benchmark, target, run };
+    return { me, benchmark, subject, run };
   }
 
   it("freezes the whole subtree while marked ready (PRIVATE && draft=0)", async () => {
-    const { me, benchmark, target, run } = await readyChainWithData();
+    const { me, benchmark, subject, run } = await readyChainWithData();
     const tok = bearer(me.token);
 
     // benchmark edits
     expect(
-      (await apiPut(`/api/v1/benchmarks/${benchmark.id}`, { data: { type: "benchmark", attributes: { name: "x", observation_schema: SKEW_SCHEMA } } }, tok)).status,
+      (await apiPut(`/api/v1/benchmarks/${benchmark.id}`, { data: { type: "benchmark", attributes: { name: "x", measurement_schema: SKEW_SCHEMA } } }, tok)).status,
     ).toBe(409);
-    // membership: linking a new target into the frozen benchmark is blocked (the account-level target
-    // create itself is fine — a shared target is not part of the frozen subtree).
-    const t2 = await makeAccountTarget(me.token, "t2");
+    // membership: linking a new subject into the frozen benchmark is blocked (the account-level subject
+    // create itself is fine — a shared subject is not part of the frozen subtree).
+    const t2 = await makeAccountSubject(me.token, "t2");
     expect(
-      (await apiPost("/api/v1/benchmark_targets", { data: { type: "benchmark_target", attributes: { benchmark: benchmark.id, target: t2.id } } }, tok)).status,
+      (await apiPost("/api/v1/benchmark_subjects", { data: { type: "benchmark_subject", attributes: { benchmark: benchmark.id, subject: t2.id } } }, tok)).status,
     ).toBe(409);
-    // a target linked to the frozen benchmark can't be edited either (the freeze reaches shared targets)
+    // a subject linked to the frozen benchmark can't be edited either (the freeze reaches shared subjects)
     expect(
-      (await apiPut(`/api/v1/targets/${target.id}`, { data: { type: "target", attributes: { name: "x" } } }, tok)).status,
+      (await apiPut(`/api/v1/subjects/${subject.id}`, { data: { type: "subject", attributes: { name: "x" } } }, tok)).status,
     ).toBe(409);
     // create/edit run
     expect(
@@ -133,17 +119,17 @@ describe("draft edit-lock", () => {
     expect((await apiPost(`/api/v1/runs/${run.id}/actions/invalidate`, undefined, tok)).status).toBe(409);
     // ingest
     expect(
-      (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: run.id, target: target.id, metrics: { skew_ms: 2 } } } }, tok)).status,
+      (await apiPost("/api/v1/measurements", { data: { type: "measurement", attributes: { run: run.id, subject: subject.id, metrics: { skew_ms: 2 } } } }, tok)).status,
     ).toBe(409);
-    // delete benchmark / target / run are all blocked (deleting the target would cascade into the
+    // delete benchmark / subject / run are all blocked (deleting the subject would cascade into the
     // frozen subtree's measurements).
     expect((await apiDelete(`/api/v1/benchmarks/${benchmark.id}`, tok)).status).toBe(409);
-    expect((await apiDelete(`/api/v1/targets/${target.id}`, tok)).status).toBe(409);
+    expect((await apiDelete(`/api/v1/subjects/${subject.id}`, tok)).status).toBe(409);
     expect((await apiDelete(`/api/v1/runs/${run.id}`, tok)).status).toBe(409);
   });
 
   it("unlocks again after return_to_draft (and echoes the reason)", async () => {
-    const { me, benchmark, target } = await readyChainWithData();
+    const { me, benchmark, subject } = await readyChainWithData();
     const back = await apiPost(
       `/api/v1/benchmarks/${benchmark.id}/actions/return_to_draft`,
       { data: { type: "benchmark", attributes: { reason: "needs another pass" } } },
@@ -156,7 +142,7 @@ describe("draft edit-lock", () => {
 
     // edits work again
     expect(
-      (await apiPut(`/api/v1/targets/${target.id}`, { data: { type: "target", attributes: { name: "renamed" } } }, bearer(me.token))).status,
+      (await apiPut(`/api/v1/subjects/${subject.id}`, { data: { type: "subject", attributes: { name: "renamed" } } }, bearer(me.token))).status,
     ).toBe(200);
   });
 });
@@ -245,7 +231,7 @@ describe("personal publish", () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id, "t");
+    const t = await makeSubject(me.token, b.id, "t");
     const run = await makeRun(me.token, b.id); // live (no ended_at)
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
@@ -253,7 +239,7 @@ describe("personal publish", () => {
     // published + append-only resumed → ingest to the live run works again
     const ing = await apiPost(
       "/api/v1/measurements",
-      { data: { type: "measurement", attributes: { run: run.id, target: t.id, metrics: { skew_ms: 5 } } } },
+      { data: { type: "measurement", attributes: { run: run.id, subject: t.id, metrics: { skew_ms: 5 } } } },
       bearer(me.token),
     );
     expect(ing.status).toBe(201);
@@ -289,55 +275,53 @@ describe("personal publish", () => {
 });
 
 describe("organization publish", () => {
-  it("requires an admin, a verified domain, and freezes the snapshot", async () => {
+  it("requires an admin, a verified publisher, and freezes the snapshot", async () => {
     const me = await register();
     await markVerified(me.user_id);
-    const { identity, domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
     const b = await makeBenchmark(me.token);
     await markReady(me.token, b.id);
 
-    const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(identity.id), bearer(me.token));
+    const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
     expect(ok.status).toBe(200);
     const pub = ((await ok.json()) as { data: Resource }).data;
-    const badge = pub.attributes.published_as as { kind: string; identity: string; name: string; verified_domains: string[] };
+    const badge = pub.attributes.published_as as { kind: string; domain: string; icon: string };
     expect(badge.kind).toBe("ORGANIZATION");
-    expect(badge.identity).toBe(identity.id);
-    expect(badge.name).toBe("Acme Corp");
-    expect(badge.verified_domains).toEqual([domain.attributes.domain]);
+    expect(badge.domain).toBe(publisher.attributes.domain);
+    expect(badge.icon).toBe("monogram");
   });
 
-  it("blocks org publish when the identity has no verified domain (409)", async () => {
+  it("blocks org publish when the publisher's domain is not verified (409)", async () => {
     const me = await register();
     await markVerified(me.user_id);
-    const identity = await createIdentity(me.token);
-    await addDomain(me.token, identity.id, "unverified.com"); // PENDING, never verified
+    const publisher = await createPublisher(me.token, "unverified.com"); // PENDING, never verified
     const b = await makeBenchmark(me.token);
     await markReady(me.token, b.id);
-    const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(identity.id), bearer(me.token));
+    const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
     expect(res.status).toBe(409);
   });
 
-  it("404s org publish against an unknown / cross-tenant identity", async () => {
+  it("404s org publish against an unknown / cross-tenant publisher", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
     await markReady(me.token, b.id);
-    // unknown identity id
+    // unknown publisher id
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody("ghost"), bearer(me.token))).status).toBe(404);
-    // another account's identity
+    // another account's publisher
     const other = await register("other-org@example.com");
-    const foreign = await createIdentity(other.token);
+    const foreign = await createPublisher(other.token);
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(foreign.id), bearer(me.token))).status).toBe(404);
   });
 
   it("a non-admin member cannot org-publish (403)", async () => {
     const owner = await register("orgowner@example.com");
     await markVerified(owner.user_id);
-    const { identity } = await verifiedIdentity(owner.token);
+    const publisher = await verifiedPublisher(owner.token);
     const { memberToken: member } = await addMember(owner.token, owner.account_id, "m@example.com", "MEMBER");
     const bench = await makeBenchmark(member, { key: "memberbench" });
     await markReady(member, bench.id);
-    const res = await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(identity.id), bearer(member));
+    const res = await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(publisher.id), bearer(member));
     expect(res.status).toBe(403);
   });
 });
@@ -350,12 +334,12 @@ describe("withdraw authority mirrors publish", () => {
   it("an org-published benchmark requires an admin to withdraw", async () => {
     const owner = await register("wowner@example.com");
     await markVerified(owner.user_id);
-    const { identity } = await verifiedIdentity(owner.token);
+    const publisher = await verifiedPublisher(owner.token);
     const { memberToken: member } = await addMember(owner.token, owner.account_id, "wm@example.com", "MEMBER");
     const bench = await makeBenchmark(member, { key: "orgbench" });
     await markReady(member, bench.id);
     // owner (admin) publishes it under the org
-    expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(identity.id), bearer(owner.token))).status).toBe(200);
+    expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(publisher.id), bearer(owner.token))).status).toBe(200);
     // the member (author, not admin) cannot withdraw an org-attributed benchmark
     expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/withdraw`, withdrawBody, bearer(member))).status).toBe(403);
     // the admin can
@@ -398,69 +382,68 @@ describe("withdraw authority mirrors publish", () => {
 // ── §3/§4 the never-retroactively-strip guarantee ─────────────────────────────
 
 describe("the public record is frozen", () => {
-  it("a domain lapse never rewrites a published badge, but blocks new publishes under the identity", async () => {
+  it("a domain lapse never rewrites a published badge, but blocks new publishes under the publisher", async () => {
     const me = await register();
     await markVerified(me.user_id);
-    const { identity, domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
 
     const b1 = await makeBenchmark(me.token, { key: "first" });
     await markReady(me.token, b1.id);
-    expect((await apiPost(`/api/v1/benchmarks/${b1.id}/actions/publish`, publishBody(identity.id), bearer(me.token))).status).toBe(200);
+    expect((await apiPost(`/api/v1/benchmarks/${b1.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(200);
 
-    // The cron sweep sees the TXT record gone and lapses the domain.
+    // The cron sweep sees the TXT record gone and lapses the publisher.
     stubTxt([]); // no records
     const swept = await sweepVerifiedDomains(env.DB);
     expect(swept.lapsed).toBe(1);
     vi.unstubAllGlobals();
 
-    // The domain is now LAPSED…
-    const domRow = await env.DB.prepare("SELECT status FROM publisher_domain WHERE id = ?").bind(domain.id).first<{ status: string }>();
+    // The publisher is now LAPSED…
+    const domRow = await env.DB.prepare("SELECT status FROM publisher WHERE id = ?").bind(publisher.id).first<{ status: string }>();
     expect(domRow?.status).toBe("LAPSED");
 
     // …but the published benchmark's frozen badge is unchanged.
     const read = await apiGet(`/api/v1/benchmarks/${b1.id}`);
-    const badge = ((await read.json()) as { data: Resource }).data.attributes.published_as as { verified_domains: string[] };
-    expect(badge.verified_domains).toEqual([domain.attributes.domain]);
+    const badge = ((await read.json()) as { data: Resource }).data.attributes.published_as as { domain: string };
+    expect(badge.domain).toBe(publisher.attributes.domain);
 
-    // And a NEW publish under the same identity is now blocked.
+    // And a NEW publish under the same publisher is now blocked.
     const b2 = await makeBenchmark(me.token, { key: "second" });
     await markReady(me.token, b2.id);
-    expect((await apiPost(`/api/v1/benchmarks/${b2.id}/actions/publish`, publishBody(identity.id), bearer(me.token))).status).toBe(409);
+    expect((await apiPost(`/api/v1/benchmarks/${b2.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(409);
   });
 
-  it("an identity can be deleted while a published benchmark references it; the frozen badge survives", async () => {
+  it("a publisher can be deleted while a published benchmark references it; the frozen badge survives", async () => {
     const me = await register();
     await markVerified(me.user_id);
-    const { identity, domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
     const b = await makeBenchmark(me.token);
     await markReady(me.token, b.id);
-    expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(identity.id), bearer(me.token))).status).toBe(200);
+    expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(200);
 
-    // deleting the identity is allowed even though a published benchmark points at it
-    expect((await apiDelete(`/api/v1/publisher_identities/${identity.id}`, bearer(me.token))).status).toBe(204);
-    expect((await apiGet(`/api/v1/publisher_identities/${identity.id}`, bearer(me.token))).status).toBe(404);
+    // deleting the publisher is allowed even though a published benchmark points at it
+    expect((await apiDelete(`/api/v1/publishers/${publisher.id}`, bearer(me.token))).status).toBe(204);
+    expect((await apiGet(`/api/v1/publishers/${publisher.id}`, bearer(me.token))).status).toBe(404);
 
-    // the published benchmark is unchanged: still public, badge intact (soft identity ref preserved)
+    // the published benchmark is unchanged: still public, badge intact (frozen domain preserved)
     const read = await apiGet(`/api/v1/benchmarks/${b.id}`);
     const attrs = ((await read.json()) as { data: Resource }).data.attributes;
     expect(attrs.status).toBe("PUBLISHED");
-    const badge = attrs.published_as as { kind: string; identity: string; name: string; verified_domains: string[] };
+    const badge = attrs.published_as as { kind: string; domain: string; icon: string };
     expect(badge.kind).toBe("ORGANIZATION");
-    expect(badge.identity).toBe(identity.id); // dangling but preserved from the snapshot era
-    expect(badge.name).toBe("Acme Corp");
-    expect(badge.verified_domains).toEqual([domain.attributes.domain]);
+    expect(badge.domain).toBe(publisher.attributes.domain);
+    expect(badge.icon).toBe("monogram");
   });
 
-  it("a lapsed domain can be re-verified", async () => {
+  it("a lapsed publisher can be re-verified", async () => {
     const me = await register();
-    const { domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
     // lapse via sweep
     stubTxt([]);
     await sweepVerifiedDomains(env.DB);
     vi.unstubAllGlobals();
     // re-verify via the verify action
-    stubTxt([domain.attributes.verification_token as string]);
-    const res = await apiPost(`/api/v1/publisher_domains/${domain.id}/actions/verify`, undefined, bearer(me.token));
+    stubTxt([publisher.attributes.verification_token as string]);
+    const res = await apiPost(`/api/v1/publishers/${publisher.id}/actions/verify`, undefined, bearer(me.token));
     expect(res.status).toBe(200);
     expect(((await res.json()) as { data: Resource }).data.attributes.status).toBe("VERIFIED");
   });
@@ -471,17 +454,17 @@ describe("the public record is frozen", () => {
 describe("cron sweep", () => {
   it("re-affirms a still-present record (stays VERIFIED, lapses nothing)", async () => {
     const me = await register();
-    const { domain } = await verifiedIdentity(me.token);
-    stubTxt([domain.attributes.verification_token as string]);
+    const publisher = await verifiedPublisher(me.token);
+    stubTxt([publisher.attributes.verification_token as string]);
     const result = await sweepVerifiedDomains(env.DB);
     expect(result).toEqual({ checked: 1, lapsed: 0, truncated: false });
-    const row = await env.DB.prepare("SELECT status FROM publisher_domain WHERE id = ?").bind(domain.id).first<{ status: string }>();
+    const row = await env.DB.prepare("SELECT status FROM publisher WHERE id = ?").bind(publisher.id).first<{ status: string }>();
     expect(row?.status).toBe("VERIFIED");
   });
 
   it("never lapses on a resolver failure (ambiguity ≠ gone)", async () => {
     const me = await register();
-    const { domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -491,30 +474,22 @@ describe("cron sweep", () => {
     const result = await sweepVerifiedDomains(env.DB);
     expect(result.lapsed).toBe(0);
     expect(result.checked).toBe(0); // the check itself failed, so nothing was counted as checked
-    const row = await env.DB.prepare("SELECT status FROM publisher_domain WHERE id = ?").bind(domain.id).first<{ status: string }>();
+    const row = await env.DB.prepare("SELECT status FROM publisher WHERE id = ?").bind(publisher.id).first<{ status: string }>();
     expect(row?.status).toBe("VERIFIED");
   });
 
-  it("is a no-op when there are no verified domains", async () => {
+  it("is a no-op when there are no verified publishers", async () => {
     expect(await sweepVerifiedDomains(env.DB)).toEqual({ checked: 0, lapsed: 0, truncated: false });
   });
 
   it("paginates across pages and honors the max-pages safety bound", async () => {
     const me = await register();
-    const identity = await createIdentity(me.token);
-    const tokens: string[] = [];
     for (const d of ["a.com", "b.com", "c.com"]) {
-      const dom = await addDomain(me.token, identity.id, d);
-      tokens.push(dom.attributes.verification_token as string);
+      await verifiedPublisher(me.token, d); // each is created + verified
     }
-    // verify all three (all tokens present)
-    stubTxt(tokens);
-    const listed = (await (
-      await apiGet(`/api/v1/publisher_domains?filter[publisher_identity]=${identity.id}`, bearer(me.token))
-    ).json()) as { data: Resource[] };
-    for (const d of listed.data) {
-      await apiPost(`/api/v1/publisher_domains/${d.id}/actions/verify`, undefined, bearer(me.token));
-    }
+    // Keep every publisher's TXT record present across both sweeps (afterEach unstubs).
+    const listed = (await (await apiGet("/api/v1/publishers", bearer(me.token))).json()) as { data: Resource[] };
+    stubTxt(listed.data.map((p) => p.attributes.verification_token as string));
 
     // multi-page (pageSize 1 → three pages of one, then an empty page)
     const full = await sweepVerifiedDomains(env.DB, { pageSize: 1 });
@@ -530,35 +505,34 @@ describe("cron sweep", () => {
 // ── §3 DNS verify outcomes ────────────────────────────────────────────────────
 
 describe("domain verify", () => {
-  it("stays PENDING on a miss and lapses a previously-verified domain", async () => {
+  it("stays PENDING on a miss and lapses a previously-verified publisher", async () => {
     const me = await register();
-    const identity = await createIdentity(me.token);
-    const dom = await addDomain(me.token, identity.id, "acme.com");
+    const pub = await createPublisher(me.token, "acme.com");
 
     // miss → still PENDING
     stubTxt(["some-other-record"]);
-    const miss = await apiPost(`/api/v1/publisher_domains/${dom.id}/actions/verify`, undefined, bearer(me.token));
+    const miss = await apiPost(`/api/v1/publishers/${pub.id}/actions/verify`, undefined, bearer(me.token));
     expect(((await miss.json()) as { data: Resource }).data.attributes.status).toBe("PENDING");
 
     // hit → VERIFIED
-    stubTxt([dom.attributes.verification_token as string]);
-    const hit = await apiPost(`/api/v1/publisher_domains/${dom.id}/actions/verify`, undefined, bearer(me.token));
+    stubTxt([pub.attributes.verification_token as string]);
+    const hit = await apiPost(`/api/v1/publishers/${pub.id}/actions/verify`, undefined, bearer(me.token));
     expect(((await hit.json()) as { data: Resource }).data.attributes.status).toBe("VERIFIED");
 
     // record gone → LAPSED
     stubTxt([]);
-    const lapse = await apiPost(`/api/v1/publisher_domains/${dom.id}/actions/verify`, undefined, bearer(me.token));
+    const lapse = await apiPost(`/api/v1/publishers/${pub.id}/actions/verify`, undefined, bearer(me.token));
     expect(((await lapse.json()) as { data: Resource }).data.attributes.status).toBe("LAPSED");
   });
 
   it("leaves status untouched when the DNS check itself fails", async () => {
     const me = await register();
-    const { domain } = await verifiedIdentity(me.token);
+    const publisher = await verifiedPublisher(me.token);
     // resolver error
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
-    const res = await apiPost(`/api/v1/publisher_domains/${domain.id}/actions/verify`, undefined, bearer(me.token));
+    const res = await apiPost(`/api/v1/publishers/${publisher.id}/actions/verify`, undefined, bearer(me.token));
     expect(res.status).toBe(200);
-    // still VERIFIED — a transient failure must never lapse a domain
+    // still VERIFIED — a transient failure must never lapse a publisher
     expect(((await res.json()) as { data: Resource }).data.attributes.status).toBe("VERIFIED");
   });
 });

@@ -4,32 +4,34 @@ import { AppError } from "../../src/errors";
 import { createAccount, updateAccount } from "../../src/data/accounts";
 import { getPrimaryMembershipForUser } from "../../src/data/account_users";
 import { createBenchmark, updateBenchmark } from "../../src/data/benchmarks";
-import { createTarget, updateTarget } from "../../src/data/targets";
+import { createSubject, updateSubject } from "../../src/data/subjects";
+import { createSubjectType } from "../../src/data/subject_types";
 import { createRun, endRun, invalidateRun, updateRun } from "../../src/data/runs";
 import { insertMeasurement, listMeasurements } from "../../src/data/measurements";
 import { createApiKey, listApiKeys } from "../../src/data/api_keys";
 import { createUser } from "../../src/data/users";
 import { parseDateRange } from "../../src/query/daterange";
 import { consumeVerification, createVerification } from "../../src/data/verifications";
-import type { AccountRow, BenchmarkRow, RunRow, ObservationSchema, TargetRow } from "../../src/types";
+import type { AccountRow, BenchmarkRow, RunRow, MeasurementSchema, SubjectRow } from "../../src/types";
 
 // D1 (miniflare) enforces foreign keys, so every child needs a real parent row.
-const TABLES = ["measurement", "run", "target", "benchmark", "publisher_domain", "publisher_identity", "api_key", "email_verification", "account_user", "account", "user"];
+const TABLES = ["measurement", "run", "subject", "benchmark", "subject_type", "publisher", "api_key", "email_verification", "account_user", "account", "user"];
 beforeEach(async () => {
   for (const t of TABLES) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
 
-const schema: ObservationSchema = { metrics: [], derived: [] };
+const schema: MeasurementSchema = { metrics: [], derived: [] };
 const sort = { field: "created_at", desc: false };
 
-async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; target: TargetRow; run: RunRow }> {
+async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; subject: SubjectRow; run: RunRow }> {
   const account = await createAccount(env.DB, { key: `host-${crypto.randomUUID()}`, name: "Host" });
   const benchmark = await createBenchmark(env.DB, {
-    account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null,
+    account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null,
   });
-  const target = await createTarget(env.DB, { account_id: account.id, key: "t", name: "T", details: null });
+  const subjectType = await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] });
+  const subject = await createSubject(env.DB, { account_id: account.id, subject_type_id: subjectType.id, key: "t", name: "T", details: null });
   const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null });
-  return { account, benchmark, target, run };
+  return { account, benchmark, subject, run };
 }
 
 async function expectConflict(fn: () => Promise<unknown>) {
@@ -43,13 +45,13 @@ async function expectConflict(fn: () => Promise<unknown>) {
 }
 
 describe("unique-violation → 409 on create", () => {
-  it("accounts, benchmarks, targets, runs all reject duplicate keys", async () => {
-    const { account, benchmark, target } = await chain();
+  it("accounts, benchmarks, subjects, runs all reject duplicate keys", async () => {
+    const { account, benchmark, subject } = await chain();
     await expectConflict(() => createAccount(env.DB, { key: account.key, name: "B" }));
     await expectConflict(() =>
-      createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null }),
+      createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
     );
-    await expectConflict(() => createTarget(env.DB, { account_id: account.id, key: "t", name: "T2", details: null }));
+    await expectConflict(() => createSubject(env.DB, { account_id: account.id, subject_type_id: subject.subject_type_id as string, key: "t", name: "T2", details: null }));
     await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null }));
   });
 });
@@ -57,10 +59,10 @@ describe("unique-violation → 409 on create", () => {
 describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
   it("rethrows a foreign-key violation on create", async () => {
     await expect(
-      createBenchmark(env.DB, { account_id: "ghost-account", key: "x", name: "X", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER", created_by_user_id: null }),
+      createBenchmark(env.DB, { account_id: "ghost-account", key: "x", name: "X", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
-      createTarget(env.DB, { account_id: "ghost-account", key: "x", name: "X", details: null }),
+      createSubject(env.DB, { account_id: "ghost-account", subject_type_id: "ghost-type", key: "x", name: "X", details: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
       createRun(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: null, details: null, started_at: null }),
@@ -75,9 +77,9 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
 
 describe("listMeasurements with a date range", () => {
   it("applies the created_at predicate", async () => {
-    const { run, target } = await chain();
-    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
-    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
+    const { run, subject } = await chain();
+    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
     const res = await listMeasurements(env.DB, {
       scope: { run: run.id },
       range: { start: 2000, startInclusive: true, end: null, endInclusive: false },
@@ -96,9 +98,9 @@ describe("listMeasurements with a date range", () => {
 
 describe("update / lookup not-found paths return null", () => {
   it("updates of missing rows and missing membership return null", async () => {
-    expect(await updateAccount(env.DB, "nope", { name: "x", description: null, url: null, allow_personal_publish: 0 })).toBeNull();
-    expect(await updateBenchmark(env.DB, "nope", { name: "x", description: null, about: null, methodology: null, observation_schema: schema, category: "OTHER" })).toBeNull();
-    expect(await updateTarget(env.DB, "nope", { name: "x", details: null })).toBeNull();
+    expect(await updateAccount(env.DB, "nope", { name: "x", description: null, allow_personal_publish: 0 })).toBeNull();
+    expect(await updateBenchmark(env.DB, "nope", { name: "x", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER" })).toBeNull();
+    expect(await updateSubject(env.DB, "nope", { name: "x", details: null })).toBeNull();
     expect(await updateRun(env.DB, "nope", { name: "x", details: null, started_at: null })).toBeNull();
     expect(await getPrimaryMembershipForUser(env.DB, "no-user")).toBeNull();
   });
@@ -142,15 +144,15 @@ describe("listApiKeys with total", () => {
 });
 
 describe("listMeasurements scopes + total", () => {
-  it("lists by target and by benchmark with a total count", async () => {
-    const { benchmark, target, run } = await chain();
-    await insertMeasurement(env.DB, { run_id: run.id, target_id: target.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+  it("lists by subject and by benchmark with a total count", async () => {
+    const { benchmark, subject, run } = await chain();
+    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
 
-    const byTarget = await listMeasurements(env.DB, {
-      scope: { target: target.id }, sort, limit: 100, offset: 0, includeTotal: true,
+    const bySubject = await listMeasurements(env.DB, {
+      scope: { subject: subject.id }, sort, limit: 100, offset: 0, includeTotal: true,
     });
-    expect(byTarget.rows.length).toBe(1);
-    expect(byTarget.total).toBe(1);
+    expect(bySubject.rows.length).toBe(1);
+    expect(bySubject.total).toBe(1);
 
     const byBenchmark = await listMeasurements(env.DB, {
       scope: { benchmark: benchmark.id }, sort, limit: 100, offset: 0, includeTotal: false,

@@ -20,7 +20,7 @@ import {
   requireAuthSecret,
 } from "../config";
 import { getAccountById } from "../data/accounts";
-import { getMembership, getPrimaryMembershipForUser } from "../data/account_users";
+import { createMembership, getMembership, getPrimaryMembershipForUser } from "../data/account_users";
 import {
   createIdentity,
   getIdentityByProviderSubject,
@@ -40,6 +40,7 @@ import { getAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { rateLimit } from "../http/ratelimit";
 import { provisionAccountForUser } from "../services/provision";
 import { startSession, type IssuedSession } from "../services/session";
+import { ROLES } from "../types";
 import type { AccountRow, Provider, Role, UserRow } from "../types";
 import { readJsonObject } from "./shared";
 
@@ -240,43 +241,66 @@ auth.post("/switch", requireAuth, async (c) => {
 // Gated on DEV_LOGIN (a .dev.vars-only flag); the route 404s in production. Mirrors the app repo's
 // local bypass: skip the IdP round-trip and lazily bootstrap a canonical dev tenant.
 
-const DEV_EMAIL = "dev@localhost";
-const DEV_DISPLAY_NAME = "Local Dev";
+// One seeded user per role, all in the same local dev account, so a developer can test-drive the
+// console as each role via the user switcher. The OWNER is the account creator; the rest are members.
+const DEV_USERS: { email: string; display_name: string; role: Role }[] = [
+  { email: "dev@localhost", display_name: "Local Dev", role: "OWNER" },
+  { email: "admin@localhost", display_name: "Ada Admin", role: "ADMIN" },
+  { email: "member@localhost", display_name: "Marcus Member", role: "MEMBER" },
+  { email: "viewer@localhost", display_name: "Vera Viewer", role: "VIEWER" },
+];
+const DEV_OWNER = DEV_USERS[0];
+
+/** Parse the optional ?role= param on /dev-login into a seeded role (defaults to OWNER). */
+function parseDevRole(raw: string | undefined): Role {
+  const up = (raw || "OWNER").toUpperCase();
+  return (ROLES as readonly string[]).includes(up) ? (up as Role) : "OWNER";
+}
 
 /**
- * Get-or-create the local dev user + account and start a session for it. Idempotent — repeated
- * dev-logins reuse the same user/account. Personal publishing is turned on so a developer can create
- * AND publish benchmarks locally without domain verification.
+ * Get-or-create the local dev tenant — the OWNER + account and one member per other role — and start a
+ * session for the requested role's user. Idempotent: repeated dev-logins reuse the same users/account.
+ * Personal publishing is on so a developer can create AND publish locally without domain verification.
  */
-async function startDevSession(env: Env, db: D1Database, origin: string): Promise<IssuedSession> {
-  let user = await getUserByEmail(db, DEV_EMAIL);
+async function startDevSession(env: Env, db: D1Database, origin: string, role: Role): Promise<IssuedSession> {
+  // The OWNER owns the account; create both on first run.
+  let owner = await getUserByEmail(db, DEV_OWNER.email);
   let account: AccountRow | null;
-  let role: Role;
-  if (!user) {
-    user = await createUser(db, {
-      email: DEV_EMAIL,
-      display_name: DEV_DISPLAY_NAME,
-      email_verified: true,
-    });
-    account = await provisionAccountForUser(db, user);
-    role = "OWNER";
+  if (!owner) {
+    owner = await createUser(db, { email: DEV_OWNER.email, display_name: DEV_OWNER.display_name, email_verified: true });
+    account = await provisionAccountForUser(db, owner);
   } else {
-    const membership = await getPrimaryMembershipForUser(db, user.id);
+    const membership = await getPrimaryMembershipForUser(db, owner.id);
     account = membership ? await getAccountById(db, membership.account_id) : null;
-    role = membership ? membership.role : "OWNER";
-    if (!account) throw new Error("The local dev user has no account.");
+    // If the dev account was deleted (or never provisioned), start a fresh tenant so first-run flows
+    // (like the welcome wizard) can be re-experienced after a Delete-account.
+    if (!account) account = await provisionAccountForUser(db, owner);
+  }
+  // Idempotently seed the other roles as members of the dev account.
+  for (const spec of DEV_USERS) {
+    if (spec.role === "OWNER") continue;
+    let u = await getUserByEmail(db, spec.email);
+    if (!u) u = await createUser(db, { email: spec.email, display_name: spec.display_name, email_verified: true });
+    if (!(await getMembership(db, account.id, u.id))) {
+      await createMembership(db, { account_id: account.id, user_id: u.id, role: spec.role });
+    }
   }
   // Idempotently enable personal publishing so create-then-publish works with no domain to verify.
   await db.prepare("UPDATE account SET allow_personal_publish = 1 WHERE id = ?").bind(account.id).run();
-  return startSession(env, db, origin, user, account, role, Date.now());
+
+  const spec = DEV_USERS.find((d) => d.role === role) ?? DEV_OWNER;
+  const sessionUser = await getUserByEmail(db, spec.email);
+  if (!sessionUser) throw new Error("The local dev user is missing.");
+  return startSession(env, db, origin, sessionUser, account, spec.role, Date.now());
 }
 
 // GET (not POST): the developer navigates here in a browser and lands in the console, hand-off via
-// the same /auth/callback#token fragment the OIDC flow uses.
+// the same /auth/callback#token fragment the OIDC flow uses. `?role=` picks which seeded dev user to
+// sign in as (the user switcher uses it); default is OWNER.
 auth.get("/dev-login", async (c) => {
   if (!devLoginEnabled(c.env)) throw new NotFoundError();
   const origin = appUrl(c.env, c.req.url);
-  const session = await startDevSession(c.env, c.env.DB, origin);
+  const session = await startDevSession(c.env, c.env.DB, origin, parseDevRole(c.req.query("role")));
   return c.redirect(
     `${origin}/auth/callback#token=${encodeURIComponent(session.token)}&expires_in=${session.expires_in}`,
     302,

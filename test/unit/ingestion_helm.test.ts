@@ -13,7 +13,7 @@ const HEADER = [
   { value: "IFEval - IFEval Strict Acc", metadata: { metric: "IFEval Strict Acc", run_group: "IFEval" } },
   { value: "WildBench - Score", metadata: { metric: "Score", run_group: "WildBench" } },
   { value: "Omni-MATH - COT correct", metadata: { metric: "COT correct", run_group: "Omni-MATH" } },
-  // An unrecognized scenario column the adapter must skip (its key isn't in the observation schema).
+  // An unrecognized scenario column the adapter must skip (its key isn't in the measurement schema).
   { value: "FutureBench - Score", metadata: { metric: "Score", run_group: "FutureBench" } },
 ];
 
@@ -116,19 +116,19 @@ describe("helm adapter", () => {
     expect(bench.published_at).toBe(T_RELEASE);
     expect(bench.category).toBe("ML_AI");
     expect(bench.tags).toEqual(["llm", "evaluation", "helm", "language-models"]);
-    expect(bench.observationSchema).toMatchObject({
+    expect(bench.measurementSchema).toMatchObject({
       chart: { x: null, y: "mean_score", x_kind: "CATEGORY" },
     });
 
     // All four real rows survive, in leaderboard order; malformed rows are dropped.
-    expect(bench.targets.map((t: { key: string }) => t.key)).toEqual([
+    expect(bench.subjects.map((t: { key: string }) => t.key)).toEqual([
       "amazon-nova-premier-v1-0",
       "openai-gpt-4o-2024-11-20",
       "mystery-model-9000",
       "mystery-model-9000-2",
     ]);
 
-    const nova = bench.targets[0];
+    const nova = bench.subjects[0];
     expect(nova.name).toBe("Amazon Nova Premier");
     expect(nova.details).toEqual({
       creator_organization: "Amazon",
@@ -139,13 +139,13 @@ describe("helm adapter", () => {
     expect(bench.runs).toEqual([
       { key: "v1-15-0", name: "HELM Capabilities v1.15.0", details: { release: "v1.15.0" } },
     ]);
-    // Each model's score is a measurement naming that run + its target. The unknown FutureBench
+    // Each model's score is a measurement naming that run + its subject. The unknown FutureBench
     // column must NOT leak in, and created_at is the release's publication date from summary.json.
-    const measFor = (targetKey: string) =>
-      bench.measurements.find((m: { target_key: string }) => m.target_key === targetKey);
+    const measFor = (subjectKey: string) =>
+      bench.measurements.find((m: { subject_key: string }) => m.subject_key === subjectKey);
     expect(measFor("amazon-nova-premier-v1-0")).toEqual({
       run_key: "v1-15-0",
-      target_key: "amazon-nova-premier-v1-0",
+      subject_key: "amazon-nova-premier-v1-0",
       created_at: T_RELEASE,
       metrics: {
         mean_score: 0.665,
@@ -161,7 +161,7 @@ describe("helm adapter", () => {
   it("omits null or absent score cells instead of inventing zeros", () => {
     const [bench] = adapt(archive as never);
     const gpt4o = bench.measurements.find(
-      (m: { target_key: string }) => m.target_key === "openai-gpt-4o-2024-11-20",
+      (m: { subject_key: string }) => m.subject_key === "openai-gpt-4o-2024-11-20",
     );
     expect(gpt4o!.metrics).toEqual({
       mean_score: 0.61,
@@ -173,7 +173,7 @@ describe("helm adapter", () => {
 
   it("falls back to display-name slugs (collision-safe) when a model is missing from schema.json", () => {
     const [bench] = adapt(archive as never);
-    const mystery = bench.targets.filter((t: { key: string }) => t.key.startsWith("mystery-model-9000"));
+    const mystery = bench.subjects.filter((t: { key: string }) => t.key.startsWith("mystery-model-9000"));
     expect(mystery.map((t: { key: string }) => t.key)).toEqual([
       "mystery-model-9000",
       "mystery-model-9000-2",
@@ -181,10 +181,10 @@ describe("helm adapter", () => {
     expect(mystery[0].details).toBeUndefined();
   });
 
-  it("only emits metric keys declared in the observation schema", () => {
+  it("only emits metric keys declared in the measurement schema", () => {
     const [bench] = adapt(archive as never);
     const declared = new Set(
-      (bench.observationSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name),
+      (bench.measurementSchema as { metrics: { name: string }[] }).metrics.map((m) => m.name),
     );
     for (const m of bench.measurements) {
       for (const key of Object.keys(m.metrics)) expect(declared.has(key)).toBe(true);

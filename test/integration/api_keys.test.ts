@@ -3,10 +3,11 @@ import {
   apiDelete,
   apiGet,
   apiPost,
+  apiPut,
   bearer,
   makeBenchmark,
   makeRun,
-  makeTarget,
+  makeSubject,
   mintKey,
   register,
   resetDb,
@@ -15,8 +16,8 @@ import {
 
 beforeEach(resetDb);
 
-const measurement = (runId: string, targetId: string) => ({
-  data: { type: "measurement", attributes: { run: runId, target: targetId } },
+const measurement = (runId: string, subjectId: string) => ({
+  data: { type: "measurement", attributes: { run: runId, subject: subjectId } },
 });
 
 describe("minting + authority ceiling", () => {
@@ -48,7 +49,7 @@ describe("scope enforcement", () => {
   it("a RUN key can append to its run but not another run, and cannot create benchmarks", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const t = await makeTarget(me.token, b.id);
+    const t = await makeSubject(me.token, b.id);
     const r1 = await makeRun(me.token, b.id);
     const r2 = await apiPost(
       "/api/v1/runs",
@@ -58,7 +59,7 @@ describe("scope enforcement", () => {
     const run2 = ((await r2.json()) as { data: Resource }).data;
     const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r1.id });
 
-    // Its own run, naming a valid same-benchmark target → 201; another run → 404 (out of scope).
+    // Its own run, naming a valid same-benchmark subject → 201; another run → 404 (out of scope).
     expect((await apiPost("/api/v1/measurements", measurement(r1.id, t.id), bearer(runKey))).status).toBe(201);
     expect((await apiPost("/api/v1/measurements", measurement(run2.id, t.id), bearer(runKey))).status).toBe(404);
     // Cannot create a benchmark (scope < ACCOUNT).
@@ -72,24 +73,24 @@ describe("scope enforcement", () => {
     expect((await apiGet("/api/v1/api_keys", bearer(runKey))).status).toBe(403);
   });
 
-  it("a BENCHMARK key writes measurements for many targets under one run, but not another benchmark's run", async () => {
+  it("a BENCHMARK key writes measurements for many subjects under one run, but not another benchmark's run", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
-    const targetA = await makeTarget(me.token, b.id, "sched-a");
-    const targetB = await makeTarget(me.token, b.id, "sched-b");
+    const subjectA = await makeSubject(me.token, b.id, "sched-a");
+    const subjectB = await makeSubject(me.token, b.id, "sched-b");
     const r = await makeRun(me.token, b.id);
     const { key: benchKey } = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
 
-    // One run, multiple targets in the same benchmark — all covered by the benchmark scope.
-    expect((await apiPost("/api/v1/measurements", measurement(r.id, targetA.id), bearer(benchKey))).status).toBe(201);
-    expect((await apiPost("/api/v1/measurements", measurement(r.id, targetB.id), bearer(benchKey))).status).toBe(201);
+    // One run, multiple subjects in the same benchmark — all covered by the benchmark scope.
+    expect((await apiPost("/api/v1/measurements", measurement(r.id, subjectA.id), bearer(benchKey))).status).toBe(201);
+    expect((await apiPost("/api/v1/measurements", measurement(r.id, subjectB.id), bearer(benchKey))).status).toBe(201);
 
     // A run in a different benchmark is out of the key's scope → 404.
     const other = await makeBenchmark(me.token, { key: "other-benchmark", name: "Other" });
-    const otherTarget = await makeTarget(me.token, other.id, "other-a");
+    const otherSubject = await makeSubject(me.token, other.id, "other-a");
     const otherRun = await makeRun(me.token, other.id);
     expect(
-      (await apiPost("/api/v1/measurements", measurement(otherRun.id, otherTarget.id), bearer(benchKey))).status,
+      (await apiPost("/api/v1/measurements", measurement(otherRun.id, otherSubject.id), bearer(benchKey))).status,
     ).toBe(404);
   });
 });
@@ -115,10 +116,64 @@ describe("reveal / rotate / revoke", () => {
     expect((await apiGet("/api/v1/accounts/current", bearer(newKey))).status).toBe(200);
   });
 
-  it("revokes a key (subsequent use → 401)", async () => {
+  it("renames a key (only the name is mutable)", async () => {
+    const me = await register();
+    const { resource } = await mintKey(me.token, { scope_type: "ACCOUNT" });
+    const put = await apiPut(
+      `/api/v1/api_keys/${resource.id}`,
+      { data: { type: "api_key", attributes: { name: "Renamed" } } },
+      bearer(me.token),
+    );
+    expect(put.status).toBe(200);
+    expect(((await put.json()) as { data: Resource }).data.attributes.name).toBe("Renamed");
+  });
+
+  it("revoke disables a key but keeps it listed as revoked", async () => {
+    const me = await register();
+    const { key, resource } = await mintKey(me.token, { scope_type: "ACCOUNT" });
+    const rev = await apiPost(`/api/v1/api_keys/${resource.id}/actions/revoke`, undefined, bearer(me.token));
+    expect(rev.status).toBe(200);
+    expect(((await rev.json()) as { data: Resource }).data.attributes.revoked).toBe(true);
+    // Stops authenticating…
+    expect((await apiGet("/api/v1/accounts/current", bearer(key))).status).toBe(401);
+    // …but the row remains, still fetchable and marked revoked.
+    const got = await apiGet(`/api/v1/api_keys/${resource.id}`, bearer(me.token));
+    expect(got.status).toBe(200);
+    expect(((await got.json()) as { data: Resource }).data.attributes.revoked).toBe(true);
+  });
+
+  it("delete removes a key entirely (subsequent use → 401, and it's gone)", async () => {
     const me = await register();
     const { key, resource } = await mintKey(me.token, { scope_type: "ACCOUNT" });
     expect((await apiDelete(`/api/v1/api_keys/${resource.id}`, bearer(me.token))).status).toBe(204);
     expect((await apiGet("/api/v1/accounts/current", bearer(key))).status).toBe(401);
+    expect((await apiGet(`/api/v1/api_keys/${resource.id}`, bearer(me.token))).status).toBe(404);
+  });
+});
+
+describe("list scope filter", () => {
+  it("filters by scope_type + scope_ref so each tab sees only its own keys", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const r = await makeRun(me.token, b.id);
+    const acct = await mintKey(me.token, { scope_type: "ACCOUNT" });
+    const bench = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
+    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+
+    const ids = async (qs: string) => {
+      const res = await apiGet("/api/v1/api_keys" + qs, bearer(me.token));
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: Resource[] }).data.map((k) => k.id).sort();
+    };
+
+    expect(await ids("")).toEqual([acct.resource.id, bench.resource.id, run.resource.id].sort());
+    expect(await ids("?filter[scope_type]=ACCOUNT")).toEqual([acct.resource.id]);
+    expect(await ids(`?filter[scope_type]=BENCHMARK&filter[scope_ref]=${b.id}`)).toEqual([bench.resource.id]);
+    expect(await ids(`?filter[scope_type]=RUN&filter[scope_ref]=${r.id}`)).toEqual([run.resource.id]);
+
+    // A different benchmark's filter returns nothing; an invalid scope_type is a 400.
+    const b2 = await makeBenchmark(me.token, { key: "second", name: "Second" });
+    expect(await ids(`?filter[scope_type]=BENCHMARK&filter[scope_ref]=${b2.id}`)).toEqual([]);
+    expect((await apiGet("/api/v1/api_keys?filter[scope_type]=BOGUS", bearer(me.token))).status).toBe(400);
   });
 });

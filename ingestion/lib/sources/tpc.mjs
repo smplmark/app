@@ -33,7 +33,7 @@ const DL = "https://www.tpc.org/downloaded_result_files";
 /**
  * @typedef {Object} MetricSpec
  * @property {string} col header column name to read
- * @property {string} name observation_schema metric name
+ * @property {string} name measurement_schema metric name
  * @property {string} [unit]
  * @property {string} description
  *
@@ -269,7 +269,7 @@ function classifySection(label) {
 }
 
 /**
- * Stage B: one benchmark per TPC family. Each audited result is independent — it becomes one target
+ * Stage B: one benchmark per TPC family. Each audited result is independent — it becomes one subject
  * (a published result's system, deduped by company+system with numeric suffixes), one completed run,
  * and one measurement (1:1:1) carrying the family's throughput + price/performance (+ scale factor
  * for DS/H) and the per-result citation URL.
@@ -296,7 +296,7 @@ export function adapt(archive, options = {}) {
      * @type {{
      *   perf: number,
      *   earliest: number | null,
-     *   target: import("../model.mjs").IngestTarget,
+     *   subject: import("../model.mjs").IngestSubject,
      *   run: import("../model.mjs").IngestRun,
      *   measurement: import("../model.mjs").IngestMeasurement,
      * }[]}
@@ -347,7 +347,7 @@ export function adapt(archive, options = {}) {
       if (currency !== "") details.currency = currency;
 
       const runKey = shortId !== "" ? `r-${shortId}` : `r-${parsed.length}`;
-      const targetKey =
+      const subjectKey =
         shortId !== "" ? `${slugSafe(company, system)}-${shortId}` : slugSafe(company, system);
 
       /** @type {import("../model.mjs").IngestRun} */
@@ -363,7 +363,7 @@ export function adapt(archive, options = {}) {
       /** @type {import("../model.mjs").IngestMeasurement} */
       const measurement = {
         run_key: runKey,
-        target_key: targetKey,
+        subject_key: subjectKey,
         created_at: availability ?? retrievedAt,
         metrics,
         meta: obsMeta,
@@ -372,11 +372,11 @@ export function adapt(archive, options = {}) {
       parsed.push({
         perf,
         earliest: availability,
-        target: {
-          key: targetKey,
+        subject: {
+          key: subjectKey,
           name: company !== "" ? `${system} (${company})` : system,
           // The audited system (company + system) is stable across TPC families — the same machine
-          // benchmarked under TPC-C and TPC-H dedups into one account-owned target linked into both.
+          // benchmarked under TPC-C and TPC-H dedups into one account-owned subject linked into both.
           source_external_id: slugSafe(company, system),
           details,
         },
@@ -388,7 +388,7 @@ export function adapt(archive, options = {}) {
 
     // Default curation: keep the highest-throughput slice (the results people look at first); the
     // whole corpus stays in the archive and rides along under --full. Deterministic tie-break.
-    parsed.sort((a, z) => z.perf - a.perf || a.target.key.localeCompare(z.target.key));
+    parsed.sort((a, z) => z.perf - a.perf || a.subject.key.localeCompare(z.subject.key));
     const kept = parsed.slice(0, topResults);
 
     let publishedAt = null;
@@ -399,21 +399,21 @@ export function adapt(archive, options = {}) {
     }
 
     // Keys are already unique per result (company+system+shortId), but re-run through uniqueSlug so
-    // a rare shortId-less collision still can't merge two targets. Each result is independent, so its
-    // run and measurement reference the same (possibly de-collided) target key 1:1:1.
+    // a rare shortId-less collision still can't merge two subjects. Each result is independent, so its
+    // run and measurement reference the same (possibly de-collided) subject key 1:1:1.
     /** @type {Map<string, number>} */
     const seen = new Map();
-    /** @type {import("../model.mjs").IngestTarget[]} */
-    const targets = [];
+    /** @type {import("../model.mjs").IngestSubject[]} */
+    const subjects = [];
     /** @type {import("../model.mjs").IngestRun[]} */
     const runs = [];
     /** @type {import("../model.mjs").IngestMeasurement[]} */
     const measurements = [];
     for (const p of kept) {
-      const targetKey = uniqueSlug(p.target.key, seen);
-      targets.push({ ...p.target, key: targetKey });
+      const subjectKey = uniqueSlug(p.subject.key, seen);
+      subjects.push({ ...p.subject, key: subjectKey });
       runs.push(p.run);
-      measurements.push({ ...p.measurement, target_key: targetKey });
+      measurements.push({ ...p.measurement, subject_key: subjectKey });
     }
 
     benchmarks.push({
@@ -425,8 +425,8 @@ export function adapt(archive, options = {}) {
       published_at: publishedAt ?? undefined,
       category: "DATABASE",
       tags: fam.tags,
-      observationSchema: buildSchema(fam),
-      targets,
+      measurementSchema: buildSchema(fam),
+      subjects,
       runs,
       measurements,
     });
@@ -462,7 +462,7 @@ function buildSchema(fam) {
 }
 
 /**
- * A short, collision-resistant base for a target key from company + system.
+ * A short, collision-resistant base for a subject key from company + system.
  * @param {string} company
  * @param {string} system
  */

@@ -30,7 +30,7 @@ const ROOT = "https://www.spec.org";
 /**
  * @typedef {Object} SpecMetric
  * @property {string} cls the result cell's CSS class (e.g. "basemean")
- * @property {string} name observation_schema metric name
+ * @property {string} name measurement_schema metric name
  * @property {string} [unit]
  * @property {string} description
  *
@@ -239,12 +239,12 @@ const setTimeoutFn = /** @type {(cb: (...a: unknown[]) => void, ms: number) => u
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => void setTimeoutFn(r, ms));
 
-// Platform cap is 20,000 targets/benchmark (src/limits.ts) — comfortably above CPU2017's ~11.8k
+// Platform cap is 20,000 subjects/benchmark (src/limits.ts) — comfortably above CPU2017's ~11.8k
 // results per metric, so --full now keeps the whole page; the default keeps a browsable 500.
-const PLATFORM_TARGET_CAP = 20_000;
+const PLATFORM_SUBJECT_CAP = 20_000;
 
 /** `--full`: raise the per-benchmark cap to the platform maximum. */
-export const fullOptions = /** @type {{ topResults: number }} */ ({ topResults: PLATFORM_TARGET_CAP });
+export const fullOptions = /** @type {{ topResults: number }} */ ({ topResults: PLATFORM_SUBJECT_CAP });
 
 /**
  * Stage A. Aggregate-page suites (CPU2017, jbb2015, hpc2021) fetch one HTML page each; crawl suites
@@ -377,15 +377,15 @@ export function discoverQuarters(html) {
 
 /**
  * Stage B: one benchmark per SPEC result page. Each result is an independent, audited submission,
- * so it yields one target (a tested system, keyed by sponsor + system + result id), one completed
- * run (`r-<resultBase>`), and one measurement naming that run + target; the measurement's metrics
- * are the suite's headline score(s). runs.length === targets.length === measurements.length.
+ * so it yields one subject (a tested system, keyed by sponsor + system + result id), one completed
+ * run (`r-<resultBase>`), and one measurement naming that run + subject; the measurement's metrics
+ * are the suite's headline score(s). runs.length === subjects.length === measurements.length.
  * @param {import("../model.mjs").Archive} archive
  * @param {{ topResults?: number }} [options]
  * @returns {import("../model.mjs").IngestBenchmark[]}
  */
 export function adapt(archive, options = {}) {
-  const topResults = Math.min(options.topResults ?? 500, PLATFORM_TARGET_CAP);
+  const topResults = Math.min(options.topResults ?? 500, PLATFORM_SUBJECT_CAP);
   const retrievedAt = archive.manifest.retrieved_at;
   /** @type {import("../model.mjs").IngestBenchmark[]} */
   const benchmarks = [];
@@ -411,7 +411,7 @@ export function adapt(archive, options = {}) {
     const primary = suite.metrics[0];
 
     const allRows = sources.flatMap((s) => parseSuite(s.html, suite, s.quarter));
-    /** @type {{ score: number, earliest: number | null, target: import("../model.mjs").IngestTarget, run: import("../model.mjs").IngestRun, measurement: import("../model.mjs").IngestMeasurement }[]} */
+    /** @type {{ score: number, earliest: number | null, subject: import("../model.mjs").IngestSubject, run: import("../model.mjs").IngestRun, measurement: import("../model.mjs").IngestMeasurement }[]} */
     const parsed = [];
     for (const row of allRows) {
       const score = numOf(row.cells(primary.cls));
@@ -437,8 +437,8 @@ export function adapt(archive, options = {}) {
       const vendor = vendorFromText(row.system);
       if (vendor !== null) details.vendor = vendor;
 
-      // Each SPEC result is an independent, audited submission: one target, one run, one measurement.
-      const targetKey = `${row.sponsor} ${row.system} ${row.resultBase}`;
+      // Each SPEC result is an independent, audited submission: one subject, one run, one measurement.
+      const subjectKey = `${row.sponsor} ${row.system} ${row.resultBase}`;
       const runKey = `r-${row.resultBase}`;
 
       /** @type {import("../model.mjs").IngestRun} */
@@ -451,7 +451,7 @@ export function adapt(archive, options = {}) {
       /** @type {import("../model.mjs").IngestMeasurement} */
       const measurement = {
         run_key: runKey,
-        target_key: targetKey,
+        subject_key: subjectKey,
         created_at: started ?? retrievedAt,
         metrics,
         meta: { source_url: sourceUrl },
@@ -460,12 +460,12 @@ export function adapt(archive, options = {}) {
       parsed.push({
         score,
         earliest: started,
-        target: {
-          key: targetKey,
+        subject: {
+          key: subjectKey,
           name: row.sponsor !== "" ? `${row.system} (${row.sponsor})` : row.system,
           // The audited system (sponsor + system) is SPEC's stable identity — the same machine appears
-          // across suites, so it dedups into one account-owned target linked into each (its several
-          // results become several measurements on that one target).
+          // across suites, so it dedups into one account-owned subject linked into each (its several
+          // results become several measurements on that one subject).
           source_external_id: `${row.sponsor} ${row.system}`.trim(),
           details,
         },
@@ -475,9 +475,9 @@ export function adapt(archive, options = {}) {
     }
     if (parsed.length === 0) continue;
 
-    // Default curation: the highest-scoring slice (also what keeps us under the target cap); the
-    // whole page stays in the archive. Deterministic tie-break on the (unique) target key.
-    parsed.sort((a, z) => z.score - a.score || a.target.key.localeCompare(z.target.key));
+    // Default curation: the highest-scoring slice (also what keeps us under the subject cap); the
+    // whole page stays in the archive. Deterministic tie-break on the (unique) subject key.
+    parsed.sort((a, z) => z.score - a.score || a.subject.key.localeCompare(z.subject.key));
     const kept = parsed.slice(0, topResults);
 
     let publishedAt = null;
@@ -487,21 +487,21 @@ export function adapt(archive, options = {}) {
       }
     }
 
-    // Slug the target key once and thread the final key through the target and its measurement so the
-    // measurement keeps naming its target after collision suffixes are applied.
+    // Slug the subject key once and thread the final key through the subject and its measurement so the
+    // measurement keeps naming its subject after collision suffixes are applied.
     /** @type {Map<string, number>} */
     const seen = new Map();
-    /** @type {import("../model.mjs").IngestTarget[]} */
-    const targets = [];
+    /** @type {import("../model.mjs").IngestSubject[]} */
+    const subjects = [];
     /** @type {import("../model.mjs").IngestRun[]} */
     const runs = [];
     /** @type {import("../model.mjs").IngestMeasurement[]} */
     const measurements = [];
     for (const p of kept) {
-      const targetKey = uniqueSlug(p.target.key, seen);
-      targets.push({ ...p.target, key: targetKey });
+      const subjectKey = uniqueSlug(p.subject.key, seen);
+      subjects.push({ ...p.subject, key: subjectKey });
       runs.push(p.run);
-      measurements.push({ ...p.measurement, target_key: targetKey });
+      measurements.push({ ...p.measurement, subject_key: subjectKey });
     }
 
     benchmarks.push({
@@ -513,12 +513,12 @@ export function adapt(archive, options = {}) {
       published_at: publishedAt ?? undefined,
       category: suite.category ?? "HARDWARE",
       tags: suite.tags,
-      observationSchema: {
+      measurementSchema: {
         metrics: suite.metrics.map((m) => ({ name: m.name, type: "number", unit: m.unit, description: m.description })),
         derived: [],
         chart: { x: null, y: primary.name, x_kind: "CATEGORY" },
       },
-      targets,
+      subjects,
       runs,
       measurements,
     });

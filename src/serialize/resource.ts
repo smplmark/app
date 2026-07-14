@@ -4,25 +4,29 @@
 // columns (password_hash, key_hash/key_encrypted, client_ip) never emitted.
 import type { ResourceObject } from "../http/jsonapi";
 import { computeMetrics, type DerivedContext } from "../logic/derived";
-import { parseObservationSchema } from "../schema/observation_schema";
+import { parseMeasurementSchema } from "../schema/measurement_schema";
+import { metricExprToJsonLogic, parseStoredFormula } from "../schema/metric";
+import { parseStoredFieldDefs } from "../schema/subject_type";
 import type {
   AccountRow,
   AccountUserRow,
   ApiKeyRow,
+  BenchmarkMetricRow,
   BenchmarkRow,
-  BenchmarkTargetRow,
+  BenchmarkSubjectRow,
   ExternalSourceRow,
   IngestedAttributionSnapshot,
   InvitationRow,
   MeasurementRow,
+  MetricRow,
   OrgAttributionSnapshot,
   PersonalAttributionSnapshot,
-  PublisherDomainRow,
-  PublisherIdentityRow,
+  PublisherRow,
   Role,
   RunRow,
-  ObservationSchema,
-  TargetRow,
+  MeasurementSchema,
+  SubjectRow,
+  SubjectTypeRow,
   UserRow,
 } from "../types";
 
@@ -57,7 +61,6 @@ export function serializeAccount(row: AccountRow): ResourceObject {
       key: row.key,
       name: row.name,
       description: row.description,
-      url: row.url,
       allow_personal_publish: row.allow_personal_publish === 1,
       created_at: iso(row.created_at),
     },
@@ -161,10 +164,8 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
     const snap = JSON.parse(row.attribution_snapshot) as OrgAttributionSnapshot;
     return {
       kind: "ORGANIZATION",
-      identity: row.published_identity_id,
-      name: snap.name,
-      logo_url: snap.logo_url,
-      verified_domains: snap.verified_domains,
+      domain: snap.domain,
+      icon: snap.icon,
     };
   }
   if (row.published_as_kind === "INGESTED") {
@@ -208,7 +209,7 @@ export function serializeBenchmark(
     published_at: isoOrNull(row.published_at),
     withdrawn_at: isoOrNull(row.withdrawn_at),
     withdrawal_reason: row.withdrawal_reason,
-    observation_schema: parseObservationSchema(row.observation_schema),
+    measurement_schema: parseMeasurementSchema(row.measurement_schema),
     category: row.category,
     tags: [...tags],
     views: row.views_total,
@@ -225,45 +226,31 @@ export function serializeBenchmark(
   return { type: "benchmark", id: row.id, attributes };
 }
 
-export function serializePublisherIdentity(row: PublisherIdentityRow): ResourceObject {
+export function serializePublisher(row: PublisherRow): ResourceObject {
   return {
-    type: "publisher_identity",
+    type: "publisher",
     id: row.id,
     attributes: {
       account: row.account_id,
-      key: row.key,
-      name: row.name,
-      logo_url: row.logo_url,
-      created_at: iso(row.created_at),
-      updated_at: iso(row.updated_at),
-    },
-  };
-}
-
-export function serializePublisherDomain(row: PublisherDomainRow): ResourceObject {
-  return {
-    type: "publisher_domain",
-    id: row.id,
-    attributes: {
-      account: row.account_id,
-      publisher_identity: row.publisher_identity_id,
       domain: row.domain,
       status: row.status,
       verification_token: row.verification_token,
       verified: row.status === "VERIFIED",
       verified_at: isoOrNull(row.verified_at),
       last_checked_at: isoOrNull(row.last_checked_at),
+      icon: row.icon,
       created_at: iso(row.created_at),
     },
   };
 }
 
-export function serializeTarget(row: TargetRow): ResourceObject {
+export function serializeSubject(row: SubjectRow): ResourceObject {
   return {
-    type: "target",
+    type: "subject",
     id: row.id,
     attributes: {
       account: row.account_id,
+      subject_type: row.subject_type_id,
       key: row.key,
       name: row.name,
       details: parseJsonOrNull(row.details),
@@ -273,14 +260,64 @@ export function serializeTarget(row: TargetRow): ResourceObject {
   };
 }
 
-/** One membership of a target in a benchmark (the M:N link). */
-export function serializeBenchmarkTarget(row: BenchmarkTargetRow): ResourceObject {
+export function serializeSubjectType(row: SubjectTypeRow): ResourceObject {
   return {
-    type: "benchmark_target",
+    type: "subject_type",
+    id: row.id,
+    attributes: {
+      account: row.account_id,
+      key: row.key,
+      name: row.name,
+      fields: parseStoredFieldDefs(row.fields),
+      created_at: iso(row.created_at),
+      updated_at: iso(row.updated_at),
+    },
+  };
+}
+
+export function serializeMetric(row: MetricRow): ResourceObject {
+  const formula = parseStoredFormula(row.formula);
+  return {
+    type: "metric",
+    id: row.id,
+    attributes: {
+      account: row.account_id,
+      name: row.name,
+      label: row.label,
+      description: row.description,
+      type: row.type,
+      kind: row.kind,
+      // The structured OOTB formula (DERIVED metrics only), plus the JSON Logic it compiles to — the
+      // expression the compute-on-read engine evaluates once the metric is attached to a benchmark.
+      formula: formula,
+      expr: formula ? metricExprToJsonLogic(formula) : null,
+      created_at: iso(row.created_at),
+      updated_at: iso(row.updated_at),
+    },
+  };
+}
+
+/** One membership of a subject in a benchmark (the M:N link). */
+export function serializeBenchmarkSubject(row: BenchmarkSubjectRow): ResourceObject {
+  return {
+    type: "benchmark_subject",
     id: row.id,
     attributes: {
       benchmark: row.benchmark_id,
-      target: row.target_id,
+      subject: row.subject_id,
+      created_at: iso(row.created_at),
+    },
+  };
+}
+
+/** One membership of a library metric in a benchmark (the M:N link). */
+export function serializeBenchmarkMetric(row: BenchmarkMetricRow): ResourceObject {
+  return {
+    type: "benchmark_metric",
+    id: row.id,
+    attributes: {
+      benchmark: row.benchmark_id,
+      metric: row.metric_id,
       created_at: iso(row.created_at),
     },
   };
@@ -309,16 +346,16 @@ export function serializeRun(row: RunRow): ResourceObject {
 }
 
 export function serializeMeasurement(
-  row: Pick<MeasurementRow, "id" | "run_id" | "target_id" | "created_at" | "metrics" | "meta">,
-  schema: ObservationSchema,
+  row: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta">,
+  schema: MeasurementSchema,
   ctx: DerivedContext,
 ): ResourceObject {
   // client_ip is never surfaced. id (rowid INTEGER) is stringified on the wire. A measurement names
-  // both its run (the occasion) and its target (the thing measured).
+  // both its run (the occasion) and its subject (the thing measured).
   const attributes: Record<string, unknown> = {
     created_at: iso(row.created_at),
     run: row.run_id,
-    target: row.target_id,
+    subject: row.subject_id,
   };
   const metrics = computeMetrics(row.metrics, schema, ctx);
   if (metrics !== null) attributes.metrics = metrics;

@@ -1,7 +1,7 @@
 // @ts-check
 // OpenML (www.openml.org) — CC-BY 4.0. Evaluation results from OpenML's REST API: the
-// OpenML-CC18 curated classification suite (study 99 — one leaderboard per task, targets are the
-// submitted flows) and the AutoML Benchmark study 226 (targets are AutoML frameworks). Only the
+// OpenML-CC18 curated classification suite (study 99 — one leaderboard per task, subjects are the
+// submitted flows) and the AutoML Benchmark study 226 (subjects are AutoML frameworks). Only the
 // robots-ALLOWED /api/v1/ JSON API is fetched; the robots-disallowed /data/ tree (raw dataset
 // files) is never touched. See ingestion/SOURCES.md.
 import { epochMsOrNull, uniqueSlug } from "../model.mjs";
@@ -248,7 +248,7 @@ export function adapt(archive, options = {}) {
 }
 
 /**
- * One CC18 task → one benchmark: targets are flows (best run each), ranked by accuracy.
+ * One CC18 task → one benchmark: subjects are flows (best run each), ranked by accuracy.
  * @param {{ taskId: number, dataName: string, flows: EvalRow[] }} task
  * @param {number} topFlows
  * @param {number} retrievedAt
@@ -262,8 +262,8 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
     .slice(0, topFlows);
   /** @type {Map<string, number>} */
   const seen = new Map();
-  /** @type {import("../model.mjs").IngestTarget[]} */
-  const targets = [];
+  /** @type {import("../model.mjs").IngestSubject[]} */
+  const subjects = [];
   /** @type {import("../model.mjs").IngestMeasurement[]} */
   const measurements = [];
   // Every flow's best result is one measurement on the task's shared "best" run; the run started
@@ -271,11 +271,11 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
   /** @type {number | null} */
   let runStartedAt = null;
   for (const row of flows) {
-    const targetKey = uniqueSlug(row.flowName, seen);
+    const subjectKey = uniqueSlug(row.flowName, seen);
     // A flow (openml_flow_id) is OpenML's stable id for the same ML pipeline; the same flow competes
-    // on many CC18 tasks (benchmarks), so it dedups into one account-owned target linked into each.
-    targets.push({
-      key: targetKey,
+    // on many CC18 tasks (benchmarks), so it dedups into one account-owned subject linked into each.
+    subjects.push({
+      key: subjectKey,
       name: row.flowName,
       source_external_id: `flow-${row.flowId}`,
       details: { openml_flow_id: row.flowId },
@@ -286,7 +286,7 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
     }
     measurements.push({
       run_key: "best",
-      target_key: targetKey,
+      subject_key: subjectKey,
       created_at: started ?? retrievedAt,
       metrics: { predictive_accuracy: row.value },
       meta: {
@@ -304,13 +304,13 @@ function cc18Benchmark(task, topFlows, retrievedAt, publishedAt, benchmarkSeen) 
     name: `OpenML-CC18: ${task.dataName}`,
     description: `Best predictive accuracy per machine-learning flow on the ${task.dataName} classification task from the OpenML-CC18 suite.`,
     about:
-      `Community results for the ${task.dataName} classification task from OpenML-CC18, OpenML's curated suite of 72 classification tasks (www.openml.org/t/${task.taskId}). Each target is a flow — a specific algorithm or pipeline — shown with the best predictive accuracy recorded for it on this task in OpenML's public evaluation listing, under the task's fixed estimation procedure.`,
+      `Community results for the ${task.dataName} classification task from OpenML-CC18, OpenML's curated suite of 72 classification tasks (www.openml.org/t/${task.taskId}). Each subject is a flow — a specific algorithm or pipeline — shown with the best predictive accuracy recorded for it on this task in OpenML's public evaluation listing, under the task's fixed estimation procedure.`,
     methodology: null,
     published_at: publishedAt ?? undefined,
     category: "ML_AI",
     tags: ["openml", "cc18", "classification"],
-    observationSchema: CC18_SCHEMA,
-    targets,
+    measurementSchema: CC18_SCHEMA,
+    subjects,
     runs: [bestRun],
     measurements,
   };
@@ -339,7 +339,7 @@ function frameworkName(flowName) {
  */
 
 /**
- * Study 226 → one benchmark: targets are the AutoML frameworks, runs are the shared datasets (one
+ * Study 226 → one benchmark: subjects are the AutoML frameworks, runs are the shared datasets (one
  * run per dataset, deduped benchmark-wide so every framework's cell on a dataset names the same
  * run), and each (framework, dataset) cell is one measurement merging predictive_accuracy and
  * area_under_roc_curve for that OpenML run.
@@ -401,14 +401,14 @@ function amlbBenchmark(archive, retrievedAt) {
   /** @type {import("../model.mjs").IngestMeasurement[]} */
   const measurements = [];
   /** @type {Map<string, number>} */
-  const targetSeen = new Map();
-  /** @type {import("../model.mjs").IngestTarget[]} */
-  const targets = [];
+  const subjectSeen = new Map();
+  /** @type {import("../model.mjs").IngestSubject[]} */
+  const subjects = [];
 
   for (const [framework, entries] of frameworks.entries()) {
-    const targetKey = uniqueSlug(framework, targetSeen);
-    targets.push({
-      key: targetKey,
+    const subjectKey = uniqueSlug(framework, subjectSeen);
+    subjects.push({
+      key: subjectKey,
       name: framework,
       details: { openml_flow_id: entries[0].flowId },
     });
@@ -428,7 +428,7 @@ function amlbBenchmark(archive, retrievedAt) {
       }
       measurements.push({
         run_key: runKey,
-        target_key: targetKey,
+        subject_key: subjectKey,
         created_at: started ?? retrievedAt,
         metrics: entry.metrics,
         meta: { openml_run_id: entry.runId, data_name: entry.dataName },
@@ -442,13 +442,13 @@ function amlbBenchmark(archive, retrievedAt) {
     description:
       "AutoML frameworks compared on classification accuracy and ROC AUC across a shared set of OpenML tasks.",
     about:
-      "Results of the AutoML Benchmark (AMLB), which ran automated machine-learning frameworks on a shared set of classification tasks and published the evaluations on OpenML as study 226 (www.openml.org/s/226, 2019). Each target is one framework; each run is one dataset, with the predictive accuracy and ROC AUC recorded there (0-1, higher is better).",
+      "Results of the AutoML Benchmark (AMLB), which ran automated machine-learning frameworks on a shared set of classification tasks and published the evaluations on OpenML as study 226 (www.openml.org/s/226, 2019). Each subject is one framework; each run is one dataset, with the predictive accuracy and ROC AUC recorded there (0-1, higher is better).",
     methodology: null,
     published_at: publishedAt ?? undefined,
     category: "ML_AI",
     tags: ["openml", "automl"],
-    observationSchema: AMLB_SCHEMA,
-    targets,
+    measurementSchema: AMLB_SCHEMA,
+    subjects,
     runs: [...runsByKey.values()],
     measurements,
   };

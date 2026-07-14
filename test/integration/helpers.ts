@@ -1,11 +1,11 @@
 import { SELF, env } from "cloudflare:test";
 import { expect } from "vitest";
 import { clearScopeCache } from "../../src/auth/scope_cache";
-import type { ObservationSchema } from "../../src/types";
+import type { MeasurementSchema } from "../../src/types";
 
 export const JSONAPI = "application/vnd.api+json";
 
-export const SKEW_SCHEMA: ObservationSchema = {
+export const SKEW_SCHEMA: MeasurementSchema = {
   metrics: [],
   derived: [
     { name: "skew_ms", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } },
@@ -17,15 +17,17 @@ export const SKEW_SCHEMA: ObservationSchema = {
 const TABLES = [
   "external_source",
   "measurement",
-  "benchmark_target",
+  "benchmark_metric",
+  "benchmark_subject",
   "run",
-  "target",
+  "subject",
   "benchmark_tag",
   "tag",
   "benchmark_view_day",
   "benchmark",
-  "publisher_domain",
-  "publisher_identity",
+  "subject_type",
+  "metric",
+  "publisher",
   "api_key",
   "email_verification",
   "session",
@@ -167,7 +169,7 @@ export async function makeBenchmark(
         attributes: {
           key: "scheduler-latency",
           name: "Scheduler Latency",
-          observation_schema: SKEW_SCHEMA,
+          measurement_schema: SKEW_SCHEMA,
           ...attrs,
         },
       },
@@ -178,30 +180,83 @@ export async function makeBenchmark(
   return ((await res.json()) as { data: Resource }).data;
 }
 
-/** Create an account-owned target (not linked to any benchmark). */
-export async function makeAccountTarget(
+/** Create a metric in the account library (defaults to a STORED NUMBER); returns its resource. */
+export async function makeMetric(
   token: string,
-  key = "sched-a",
   attrs: Record<string, unknown> = {},
 ): Promise<Resource> {
   const res = await apiPost(
-    "/api/v1/targets",
-    { data: { type: "target", attributes: { key, name: key, ...attrs } } },
+    "/api/v1/metrics",
+    { data: { type: "metric", attributes: { label: "Throughput", type: "NUMBER", ...attrs } } },
     bearer(token),
   );
   expect(res.status).toBe(201);
   return ((await res.json()) as { data: Resource }).data;
 }
 
-/** Link an existing target into a benchmark (M:N). Returns the benchmark_target link resource. */
-export async function linkTarget(
+/** Link a library metric into a benchmark (M:N, snapshots into measurement_schema). Returns the link. */
+export async function linkMetric(
   token: string,
   benchmarkId: string,
-  targetId: string,
+  metricId: string,
 ): Promise<Resource> {
   const res = await apiPost(
-    "/api/v1/benchmark_targets",
-    { data: { type: "benchmark_target", attributes: { benchmark: benchmarkId, target: targetId } } },
+    "/api/v1/benchmark_metrics",
+    { data: { type: "benchmark_metric", attributes: { benchmark: benchmarkId, metric: metricId } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/** Create a subject type (defaults to a no-field "Default" type); returns its resource. */
+export async function makeSubjectType(
+  token: string,
+  attrs: Record<string, unknown> = {},
+): Promise<Resource> {
+  const res = await apiPost(
+    "/api/v1/subject_types",
+    { data: { type: "subject_type", attributes: { name: "Default", ...attrs } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/** The account's first subject type, creating a no-field default on demand — so subject helpers can
+ *  satisfy the required `subject_type` without every caller wiring one up. */
+async function defaultSubjectTypeId(token: string): Promise<string> {
+  const list = (await (await apiGet("/api/v1/subject_types", bearer(token))).json()) as { data: Resource[] };
+  if (list.data.length > 0) return list.data[0].id;
+  return (await makeSubjectType(token)).id;
+}
+
+/** Create an account-owned subject (not linked to any benchmark). Uses the account's default type
+ *  unless a `subject_type` is supplied in attrs. */
+export async function makeAccountSubject(
+  token: string,
+  key = "sched-a",
+  attrs: Record<string, unknown> = {},
+): Promise<Resource> {
+  const subject_type = (attrs.subject_type as string | undefined) ?? (await defaultSubjectTypeId(token));
+  const res = await apiPost(
+    "/api/v1/subjects",
+    { data: { type: "subject", attributes: { key, name: key, subject_type, ...attrs } } },
+    bearer(token),
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { data: Resource }).data;
+}
+
+/** Link an existing subject into a benchmark (M:N). Returns the benchmark_subject link resource. */
+export async function linkSubject(
+  token: string,
+  benchmarkId: string,
+  subjectId: string,
+): Promise<Resource> {
+  const res = await apiPost(
+    "/api/v1/benchmark_subjects",
+    { data: { type: "benchmark_subject", attributes: { benchmark: benchmarkId, subject: subjectId } } },
     bearer(token),
   );
   expect(res.status).toBe(201);
@@ -209,17 +264,17 @@ export async function linkTarget(
 }
 
 /**
- * Create an account target and link it into a benchmark in one step (the common "add a target to my
- * benchmark" path), returning the target resource — the M:N shape of the old benchmark-scoped helper.
+ * Create an account subject and link it into a benchmark in one step (the common "add a subject to my
+ * benchmark" path), returning the subject resource — the M:N shape of the old benchmark-scoped helper.
  */
-export async function makeTarget(
+export async function makeSubject(
   token: string,
   benchmarkId: string,
   key = "sched-a",
 ): Promise<Resource> {
-  const target = await makeAccountTarget(token, key);
-  await linkTarget(token, benchmarkId, target.id);
-  return target;
+  const subject = await makeAccountSubject(token, key);
+  await linkSubject(token, benchmarkId, subject.id);
+  return subject;
 }
 
 export async function makeRun(
@@ -236,16 +291,16 @@ export async function makeRun(
   return ((await res.json()) as { data: Resource }).data;
 }
 
-/** Record a measurement naming a run + a target (both must share a benchmark). */
+/** Record a measurement naming a run + a subject (both must share a benchmark). */
 export async function makeMeasurement(
   token: string,
   runId: string,
-  targetId: string,
+  subjectId: string,
   attrs: Record<string, unknown> = {},
 ): Promise<Resource> {
   const res = await apiPost(
     "/api/v1/measurements",
-    { data: { type: "measurement", attributes: { run: runId, target: targetId, ...attrs } } },
+    { data: { type: "measurement", attributes: { run: runId, subject: subjectId, ...attrs } } },
     bearer(token),
   );
   expect(res.status).toBe(201);
