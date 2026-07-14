@@ -56,9 +56,9 @@ export async function provisionAccountForUser(
 export async function ensureActiveAccount(
   db: D1Database,
   user: UserRow,
-): Promise<{ account: AccountRow; role: Role }> {
+): Promise<{ account: AccountRow; role: Role; created: boolean }> {
   const membership = await getPrimaryMembershipForUser(db, user.id);
   const account = membership ? await getAccountById(db, membership.account_id) : null;
-  if (account && membership) return { account, role: membership.role };
-  return { account: await provisionAccountForUser(db, user), role: "OWNER" };
+  if (account && membership) return { account, role: membership.role, created: false };
+  return { account: await provisionAccountForUser(db, user), role: "OWNER", created: true };
 }

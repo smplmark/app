@@ -123,9 +123,9 @@ describe("OIDC callback — success", () => {
     expect(identities?.n).toBe(2); // PASSWORD + GOOGLE
   });
 
-  it("re-provisions a fresh account when the returning user's only account was deleted", async () => {
+  it("re-provisions a fresh account + notifies support when the returning user's account was deleted", async () => {
     await resetDb();
-    // First sign-in creates the user + GOOGLE identity + account.
+    // First sign-in creates the user + GOOGLE identity + account (email unconfigured → no-op).
     stubProvider(await signIdToken({ sub: "goog-del", email: "deleted@example.com", nonce: "d1" }));
     expect((await callback("code=abc&state=sd1", await stateCookie("sd1", "d1"))).status).toBe(302);
 
@@ -136,20 +136,46 @@ describe("OIDC callback — success", () => {
       .bind(Date.now(), "deleted@example.com")
       .run();
 
-    // Signing in again resolves the same user via the identity and must re-provision, not dead-end.
-    stubProvider(await signIdToken({ sub: "goog-del", email: "deleted@example.com", nonce: "d2" }));
-    const res = await callback("code=abc&state=sd2", await stateCookie("sd2", "d2"));
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toContain("/auth/callback#token=");
+    // Sign in again with email configured: the same user resolves via the identity and must
+    // re-provision (not dead-end), and a freshly provisioned account notifies support.
+    const idToken = await signIdToken({ sub: "goog-del", email: "deleted@example.com", nonce: "d2" });
+    const sends: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/.well-known/openid-configuration")) return json(DISCOVERY);
+        if (url === DISCOVERY.jwks_uri) return json({ keys: [jwk] });
+        if (url === DISCOVERY.token_endpoint) return json({ access_token: "at", id_token: idToken });
+        if (url === "https://api.resend.com/emails") {
+          sends.push(String(init?.body ?? ""));
+          return new Response("{}", { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+    env.RESEND_API_KEY = "re_test";
+    try {
+      const res = await callback("code=abc&state=sd2", await stateCookie("sd2", "d2"));
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toContain("/auth/callback#token=");
 
-    // Exactly one active (non-deleted) account now backs this user.
-    const active = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM account_user au JOIN account a ON a.id = au.account_id " +
-        "JOIN user u ON u.id = au.user_id WHERE u.email = ? AND a.deleted_at IS NULL",
-    )
-      .bind("deleted@example.com")
-      .first<{ n: number }>();
-    expect(active?.n).toBe(1);
+      // Exactly one active (non-deleted) account now backs this user.
+      const active = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM account_user au JOIN account a ON a.id = au.account_id " +
+          "JOIN user u ON u.id = au.user_id WHERE u.email = ? AND a.deleted_at IS NULL",
+      )
+        .bind("deleted@example.com")
+        .first<{ n: number }>();
+      expect(active?.n).toBe(1);
+
+      // Support was notified about the re-created account.
+      expect(sends.length).toBe(1);
+      expect(sends[0]).toContain("New account");
+    } finally {
+      env.RESEND_API_KEY = undefined;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("re-logs an existing (provider, subject) identity", async () => {

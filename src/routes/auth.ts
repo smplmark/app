@@ -159,8 +159,17 @@ auth.post("/login", rateLimit((e) => e.RL_AUTH), async (c) => {
     throw new UnauthorizedError(LOGIN_FAILED);
   }
   // A user should always land in a workspace; if their only account was deleted, hand them a fresh
-  // one rather than locking them out (see ensureActiveAccount).
-  const { account, role } = await ensureActiveAccount(c.env.DB, user);
+  // one rather than locking them out. A freshly provisioned account notifies support like signup.
+  const { account, role, created } = await ensureActiveAccount(c.env.DB, user);
+  if (created) {
+    await sendNewAccountNotification(c.env, {
+      userEmail: user.email,
+      userName: user.display_name,
+      accountName: account.name,
+      accountKey: account.key,
+      signupMethod: "Email + password",
+    });
+  }
   const session = await startSession(
     c.env,
     c.env.DB,
@@ -423,14 +432,6 @@ auth.get("/callback/:provider", async (c) => {
         provider_subject: profile.subject,
         password_hash: null,
       });
-      const newAccount = await provisionAccountForUser(c.env.DB, created);
-      await sendNewAccountNotification(c.env, {
-        userEmail: created.email,
-        userName: created.display_name,
-        accountName: newAccount.name,
-        accountKey: newAccount.key,
-        signupMethod: provider === "GOOGLE" ? "Google" : "Microsoft",
-      });
       user = created;
     }
   }
@@ -439,9 +440,19 @@ auth.get("/callback/:provider", async (c) => {
     return fail("Sign-in failed. Please try again.");
   }
 
-  // A returning user whose only account was deleted still resolves here; ensureActiveAccount hands
-  // them a fresh workspace instead of dead-ending at the membership check.
-  const { account, role } = await ensureActiveAccount(c.env.DB, user);
+  // ensureActiveAccount resolves the user's active workspace, or provisions a fresh one when they
+  // have none (first OIDC login, or a returning user whose only account was deleted). A freshly
+  // provisioned account is a new-account event → notify support, mirroring password signup.
+  const { account, role, created } = await ensureActiveAccount(c.env.DB, user);
+  if (created) {
+    await sendNewAccountNotification(c.env, {
+      userEmail: user.email,
+      userName: user.display_name,
+      accountName: account.name,
+      accountKey: account.key,
+      signupMethod: provider === "GOOGLE" ? "Google" : "Microsoft",
+    });
+  }
   const session = await startSession(c.env, c.env.DB, origin, user, account, role, Date.now());
   // Frontend reads the token from the URL fragment (never sent to the server / logged).
   return c.redirect(
