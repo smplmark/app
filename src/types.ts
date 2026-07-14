@@ -340,14 +340,34 @@ export type MetricType = "NUMBER" | "DURATION_MS" | "PERCENT" | "COUNT" | "BYTES
 export const METRIC_TYPES: readonly MetricType[] = ["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"];
 export type MetricKind = "STORED" | "DERIVED";
 export const METRIC_KINDS: readonly MetricKind[] = ["STORED", "DERIVED"];
-/** The small, closed set of OOTB derived-metric formulas. SKEW_MS takes no operands (it's the offset of
- *  `created_at` from the previous minute); the rest are binary over two other metrics (`a`, `b`). */
-export type MetricFormulaOp = "SKEW_MS" | "SUM" | "DIFFERENCE" | "RATIO" | "PERCENT";
-export const METRIC_FORMULA_OPS: readonly MetricFormulaOp[] = ["SKEW_MS", "SUM", "DIFFERENCE", "RATIO", "PERCENT"];
+/** The binary operators a formula step can apply: add, subtract, multiply, divide, modulo. */
+export type MetricStepOp = "ADD" | "SUB" | "MUL" | "DIV" | "MOD";
+export const METRIC_STEP_OPS: readonly MetricStepOp[] = ["ADD", "SUB", "MUL", "DIV", "MOD"];
+/** The unary functions a formula step can apply. `created_at mod 60000` expresses a minute-skew, so no
+ *  dedicated skew function is needed — floor/round/ceil/abs plus MOD cover it from primitives. */
+export type MetricStepFn = "FLOOR" | "ROUND" | "CEIL" | "ABS";
+export const METRIC_STEP_FNS: readonly MetricStepFn[] = ["FLOOR", "ROUND", "CEIL", "ABS"];
+
+/** One operand in a step: another metric's value, a literal number, the measurement's `created_at`
+ *  (epoch ms), or the value of an earlier step. */
+export type MetricToken =
+  | { kind: "METRIC"; name: string }
+  | { kind: "NUMBER"; value: number }
+  | { kind: "CREATED_AT" }
+  | { kind: "STEP"; step: string };
+
+/** One lettered step (A, B, C…) in a derived-metric formula: either a binary operation `a <op> b` or a
+ *  unary function `fn(a)`. A step's operands may reference earlier steps, so any arithmetic tree is
+ *  expressible with pickers alone (no free-text expression to parse). */
+export type MetricStep =
+  | { id: string; kind: "OP"; op: MetricStepOp; a: MetricToken; b: MetricToken }
+  | { id: string; kind: "FN"; fn: MetricStepFn; a: MetricToken };
+
+/** A derived-metric formula: an ordered list of steps plus the id of the step that is the metric's
+ *  value. Compiled to JSON Logic by `metricExprToJsonLogic` for the compute-on-read engine. */
 export interface MetricFormula {
-  op: MetricFormulaOp;
-  a?: string;
-  b?: string;
+  steps: MetricStep[];
+  result: string;
 }
 
 /** A metric definition: `name` is the snake_case identifier (the key it occupies in a measurement's

@@ -532,13 +532,32 @@ const subjectType = registerEntity(
 
 const metricType = z.enum(["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"]);
 const metricKind = z.enum(["STORED", "DERIVED"]);
+const MetricToken = z
+  .object({
+    kind: z.enum(["METRIC", "NUMBER", "CREATED_AT", "STEP"]).openapi({ description: "The operand type: `METRIC` — another metric's value; `NUMBER` — a literal number; `CREATED_AT` — the measurement's creation time in epoch milliseconds; `STEP` — the value of an earlier step." }),
+    name: z.string().optional().openapi({ description: "The referenced metric's name. Required when `kind` is `METRIC`." }),
+    value: z.number().optional().openapi({ description: "The literal number. Required when `kind` is `NUMBER`." }),
+    step: z.string().optional().openapi({ description: "The id of an earlier step. Required when `kind` is `STEP`." }),
+  })
+  .openapi("MetricToken", { description: "One operand in a derived-metric formula step." });
+
+const MetricStep = z
+  .object({
+    id: z.string().openapi({ description: "The step's identifier (A, B, C…). Later steps reference earlier ones by this id." }),
+    kind: z.enum(["OP", "FN"]).openapi({ description: "`OP` — a binary operation `a <op> b`; `FN` — a unary function `fn(a)`." }),
+    op: z.enum(["ADD", "SUB", "MUL", "DIV", "MOD"]).optional().openapi({ description: "The binary operator: add, subtract, multiply, divide, or modulo. Required (and only valid) when `kind` is `OP`." }),
+    fn: z.enum(["FLOOR", "ROUND", "CEIL", "ABS"]).optional().openapi({ description: "The unary function. Required (and only valid) when `kind` is `FN`." }),
+    a: MetricToken.openapi({ description: "The first operand (and the only operand for a function step)." }),
+    b: MetricToken.optional().openapi({ description: "The second operand. Required (and only valid) when `kind` is `OP`." }),
+  })
+  .openapi("MetricStep", { description: "One step in a derived-metric formula — a binary operation or a unary function over operands." });
+
 const MetricFormula = z
   .object({
-    op: z.enum(["SKEW_MS", "SUM", "DIFFERENCE", "RATIO", "PERCENT"]).openapi({ description: "The built-in operation. SKEW_MS takes no operands (it's the offset of `created_at` from the previous minute); the rest are binary over the metrics `a` and `b`." }),
-    a: z.string().optional().openapi({ description: "The first operand metric name (binary formulas)." }),
-    b: z.string().optional().openapi({ description: "The second operand metric name (binary formulas)." }),
+    steps: z.array(MetricStep).openapi({ description: "The ordered steps (A, B, C…). Each computes a value from metrics, literal numbers, the measurement's creation time, or the values of earlier steps." }),
+    result: z.string().openapi({ description: "The id of the step whose value is the metric. Defaults to the last step when omitted." }),
   })
-  .openapi("MetricFormula", { description: "A structured, built-in derived-metric formula (the OOTB set — kept small and closed)." });
+  .openapi("MetricFormula", { description: "A derived-metric formula: an ordered list of lettered steps combined into a result. Compiled to a JSON Logic expression the compute-on-read engine evaluates. For example, a percentage `100 × (a ÷ b)` is step A `a ÷ b` then step B `100 × A`, with result B." });
 
 const metric = registerEntity(
   "Metric",

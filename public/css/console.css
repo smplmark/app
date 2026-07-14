@@ -520,11 +520,50 @@
 .fieldCheckRow input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .subjectFormFields { display: grid; gap: 0.75rem; margin-top: 0.25rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
 
-/* Metric editor — the formula op <select> lives in a .fieldModalBlock (outside .field), and a
-   derived-kind pill gets an accent so STORED vs DERIVED reads at a glance in tables + the header. */
-.mfSelect { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 0.62rem 0.8rem; background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.92rem; font-weight: 500; min-height: 42px; }
-.mfSelect:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Metric editor — a DERIVED-kind pill gets an accent so STORED vs DERIVED reads at a glance. */
 .typePill.kindDerived { background: color-mix(in srgb, var(--accent) 16%, var(--surface-alt)); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent-strong); }
+
+/* Metric form — a two-tab shell (Details / Formula) with a lettered-steps formula builder. */
+.mfTabBar { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); }
+.mfTab { appearance: none; border: 0; background: transparent; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-muted); padding: 0.55rem 0.9rem; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.mfTab:hover { color: var(--text); }
+.mfTab.isActive { color: var(--accent-strong); border-bottom-color: var(--accent); }
+.mfTab[hidden] { display: none; }
+.mfPanel { display: grid; gap: 1rem; align-content: start; margin-top: 1rem; }
+.mfPanel[hidden] { display: none; }
+
+.mfBuilder { display: grid; gap: 0.85rem; }
+.mfSectionLabel { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.mfStepsLabel { margin-bottom: -0.35rem; }
+.mfSteps { display: grid; gap: 0.6rem; }
+.mfStepRow { display: flex; align-items: flex-start; gap: 0.6rem; }
+.mfLetter { flex: none; width: 1.7rem; height: 1.7rem; margin-top: 0.15rem; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; font-size: 0.82rem; display: inline-flex; align-items: center; justify-content: center; }
+.mfStepBody { flex: 1; min-width: 0; display: grid; gap: 0.5rem; }
+.mfStepKind { display: inline-flex; width: fit-content; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.mfKindBtn { appearance: none; border: 0; background: var(--surface); color: var(--text-muted); font: inherit; font-size: 0.8rem; font-weight: 600; padding: 0.3rem 0.7rem; cursor: pointer; }
+.mfKindBtn + .mfKindBtn { border-left: 1px solid var(--border); }
+.mfKindBtn:hover:not(.isActive) { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.mfKindBtn.isActive { background: var(--accent); color: #fff; }
+.mfStepExpr { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.mfSlot { display: inline-flex; align-items: center; gap: 0.3rem; }
+.mfSlotPick, .mfOp, .mfFn, .mfResult, .mfSlotNum { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.65rem; background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.9rem; min-height: 40px; }
+.mfSlotPick { min-width: 8.5rem; font-family: var(--font-mono, ui-monospace, monospace); }
+.mfSlotNum { width: 6rem; font-family: var(--font-mono, ui-monospace, monospace); }
+.mfOp, .mfFn { font-weight: 600; min-width: 4rem; }
+.mfSlotPick:focus-visible, .mfOp:focus-visible, .mfFn:focus-visible, .mfResult:focus-visible, .mfSlotNum:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mfParen { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 1.1rem; }
+.mfStepDel { flex: none; margin-top: 0.35rem; appearance: none; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0.25rem; border-radius: 6px; display: inline-flex; }
+.mfStepDel:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.mfAddRow { display: flex; gap: 1rem; }
+.mfAddRow .buttonLink { display: inline-flex; align-items: center; gap: 0.2rem; }
+.mfResultRow { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding-top: 0.85rem; border-top: 1px solid var(--border); }
+.mfResult { min-width: 4.5rem; font-weight: 700; }
+.mfResultHint { font-size: 0.82rem; color: var(--text-muted); }
+.mfPreview { display: grid; gap: 0.45rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
+.mfPreviewHead { display: flex; align-items: center; justify-content: space-between; }
+.mfPreviewText { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.95rem; color: var(--text); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.75rem; overflow-x: auto; }
+.mfJson { margin: 0; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 0.85rem; overflow: auto; max-height: 55vh; }
+.mfJson code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.85rem; color: var(--text); white-space: pre; }
 
 /* Runs tab — a master-detail inside the benchmark's tab panel: a narrow run picker on the left, the
    selected run's measurements on the right. (Distinct from the page-level .typesPane, which is sticky

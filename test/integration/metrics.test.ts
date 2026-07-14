@@ -34,20 +34,32 @@ describe("metric CRUD + name derivation", () => {
 
   it("stores DERIVED metrics and compiles their formulas to JSON Logic", async () => {
     const me = await register();
-    const skew = await create(me.token, { label: "Skew", type: "DURATION_MS", kind: "DERIVED", formula: { op: "SKEW_MS" } });
+    // Minute-skew is expressible from primitives — `created_at mod 60000` — so no built-in skew op.
+    const skewFormula = {
+      steps: [{ id: "A", kind: "OP", op: "MOD", a: { kind: "CREATED_AT" }, b: { kind: "NUMBER", value: 60000 } }],
+      result: "A",
+    };
+    const skew = await create(me.token, { label: "Skew", type: "DURATION_MS", kind: "DERIVED", formula: skewFormula });
     expect(skew.attributes.kind).toBe("DERIVED");
-    expect(skew.attributes.formula).toEqual({ op: "SKEW_MS" });
-    expect(skew.attributes.expr).toEqual({ minute_offset_ms: [{ var: "created_at" }] });
+    expect(skew.attributes.formula).toEqual(skewFormula);
+    expect(skew.attributes.expr).toEqual({ "%": [{ var: "created_at" }, 60000] });
 
+    // A percentage `100 × (throughput ÷ cores)`: step A divides, step B scales A by 100, result B. A
+    // STEP operand is inlined when compiled, and metric operand names are slugified ("Throughput" → …).
     const pct = await create(me.token, {
       name: "efficiency",
       label: "Efficiency",
       type: "PERCENT",
       kind: "DERIVED",
-      formula: { op: "PERCENT", a: "Throughput", b: "cores" },
+      formula: {
+        steps: [
+          { id: "A", kind: "OP", op: "DIV", a: { kind: "METRIC", name: "Throughput" }, b: { kind: "METRIC", name: "cores" } },
+          { id: "B", kind: "OP", op: "MUL", a: { kind: "NUMBER", value: 100 }, b: { kind: "STEP", step: "A" } },
+        ],
+        result: "B",
+      },
     });
     expect(pct.attributes.name).toBe("efficiency");
-    // Operand metric names are slugified too ("Throughput" → "throughput").
     expect(pct.attributes.expr).toEqual({ "*": [100, { "/": [{ var: "metrics.throughput" }, { var: "metrics.cores" }] }] });
   });
 
@@ -58,11 +70,13 @@ describe("metric CRUD + name derivation", () => {
     expect(a.attributes.name).toBe("latency");
     expect(b.attributes.name).toBe("latency_2");
 
-    // Unknown type → 400; missing label → 400; DERIVED without a formula → 400; binary op missing operands → 400.
+    // Unknown type → 400; missing label → 400; DERIVED without a formula → 400; an OP step missing an
+    // operand → 400; a STEP operand that references a later/undefined step → 400.
     expect((await apiPost("/api/v1/metrics", body({ label: "X", type: "TIMESTAMP" }), bearer(me.token))).status).toBe(400);
     expect((await apiPost("/api/v1/metrics", body({ type: "NUMBER" }), bearer(me.token))).status).toBe(400);
     expect((await apiPost("/api/v1/metrics", body({ label: "D", type: "NUMBER", kind: "DERIVED" }), bearer(me.token))).status).toBe(400);
-    expect((await apiPost("/api/v1/metrics", body({ label: "D", type: "NUMBER", kind: "DERIVED", formula: { op: "RATIO", a: "x" } }), bearer(me.token))).status).toBe(400);
+    expect((await apiPost("/api/v1/metrics", body({ label: "D", type: "NUMBER", kind: "DERIVED", formula: { steps: [{ id: "A", kind: "OP", op: "DIV", a: { kind: "METRIC", name: "x" } }] } }), bearer(me.token))).status).toBe(400);
+    expect((await apiPost("/api/v1/metrics", body({ label: "D", type: "NUMBER", kind: "DERIVED", formula: { steps: [{ id: "A", kind: "OP", op: "ADD", a: { kind: "STEP", step: "B" }, b: { kind: "NUMBER", value: 1 } }] } }), bearer(me.token))).status).toBe(400);
   });
 
   it("lists, gets, updates (name immutable), and deletes", async () => {

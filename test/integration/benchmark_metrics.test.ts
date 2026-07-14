@@ -48,13 +48,17 @@ describe("benchmark_metric — snapshot on link", () => {
       label: "Skew",
       type: "DURATION_MS",
       kind: "DERIVED",
-      formula: { op: "SKEW_MS" },
+      // Minute-skew from primitives: created_at mod 60000.
+      formula: {
+        steps: [{ id: "A", kind: "OP", op: "MOD", a: { kind: "CREATED_AT" }, b: { kind: "NUMBER", value: 60000 } }],
+        result: "A",
+      },
     });
 
     await linkMetric(me.token, bm.id, metric.id);
     const schema = await schemaOf(me.token, bm.id);
     expect(schema.metrics).toEqual([]);
-    expect(schema.derived).toEqual([{ name: "skew", expr: { minute_offset_ms: [{ var: "created_at" }] } }]);
+    expect(schema.derived).toEqual([{ name: "skew", expr: { "%": [{ var: "created_at" }, 60000] } }]);
   });
 
   it("rejects a double-link and a foreign-account metric", async () => {

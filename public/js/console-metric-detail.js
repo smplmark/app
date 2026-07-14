@@ -109,7 +109,7 @@
     document.title = title + " — smplmark";
 
     const form = $("metric-edit-form");
-    SMMetricForm.wire(form, { isNew: isNewPage, selfName: isNewPage ? null : a.name });
+    SMMetricForm.wire(form, { isNew: isNewPage, selfName: isNewPage ? null : a.name, initFormula: a.formula });
     $("m-cancel").addEventListener("click", () => {
       if (isNewPage) location.href = "/account/metrics";
       else { editing = false; render(); }

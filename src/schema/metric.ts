@@ -1,20 +1,25 @@
 // Validate a client-supplied metric (create/update only — never a hot path). A metric has a snake_case
 // `name` (unique per account, the key it occupies in a measurement's metrics bag — normalized from the
 // label when omitted), a display `label`, an optional `description`, a semantic `type`, and a `kind`:
-// STORED (a value clients POST) or DERIVED (computed on read). DERIVED metrics carry a structured
-// `formula` from a small, closed OOTB set; `metricExprToJsonLogic` turns it into the JSON Logic
-// expression the compute-on-read engine (src/logic) evaluates. New formulas are added here, not by
-// clients (ADR-022: keep the built-in set small and closed).
+// STORED (a value clients POST) or DERIVED (computed on read). A DERIVED metric carries a structured
+// `formula` — an ordered list of lettered steps (A, B, C…), each a binary operation (`a <op> b`) or a
+// unary function (`fn(a)`) over operands that are metrics, literal numbers, `created_at`, or earlier
+// steps — plus the `result` step that is the metric's value. `metricExprToJsonLogic` compiles it into
+// the JSON Logic expression the compute-on-read engine (src/logic) evaluates (ADR-022).
 import { BadRequestError } from "../errors";
 import {
-  METRIC_FORMULA_OPS,
   METRIC_KINDS,
+  METRIC_STEP_FNS,
+  METRIC_STEP_OPS,
   METRIC_TYPES,
   type DerivedDecl,
   type MetricDecl,
   type MetricFormula,
-  type MetricFormulaOp,
   type MetricKind,
+  type MetricStep,
+  type MetricStepFn,
+  type MetricStepOp,
+  type MetricToken,
   type MetricRow,
   type MetricType,
 } from "../types";
@@ -33,7 +38,8 @@ function nonEmptyString(v: unknown, field: string): string {
 }
 function isMetricType(v: unknown): v is MetricType { return typeof v === "string" && (METRIC_TYPES as readonly string[]).includes(v); }
 function isMetricKind(v: unknown): v is MetricKind { return typeof v === "string" && (METRIC_KINDS as readonly string[]).includes(v); }
-function isFormulaOp(v: unknown): v is MetricFormulaOp { return typeof v === "string" && (METRIC_FORMULA_OPS as readonly string[]).includes(v); }
+function isStepOp(v: unknown): v is MetricStepOp { return typeof v === "string" && (METRIC_STEP_OPS as readonly string[]).includes(v); }
+function isStepFn(v: unknown): v is MetricStepFn { return typeof v === "string" && (METRIC_STEP_FNS as readonly string[]).includes(v); }
 
 export interface ParsedMetric {
   name: string;
@@ -65,30 +71,111 @@ export function parseMetric(attrs: Record<string, unknown>): ParsedMetric {
   return { name, label, description, type: attrs.type, kind, formula };
 }
 
+/** Validate one step operand. A STEP operand may only reference an id in `priorIds` — a step defined
+ *  earlier in the list — which forbids forward/self references and therefore any cycle. */
+function parseToken(input: unknown, field: string, priorIds: Set<string>): MetricToken {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new BadRequestError(`${field} must be an operand object.`);
+  }
+  const t = input as Record<string, unknown>;
+  switch (t.kind) {
+    case "METRIC": {
+      const name = metricNameSlug(nonEmptyString(t.name, `${field}.name`));
+      if (!name) throw new BadRequestError(`${field}.name must reference a metric.`);
+      return { kind: "METRIC", name };
+    }
+    case "NUMBER": {
+      const value = typeof t.value === "number" ? t.value : Number(t.value);
+      if (!Number.isFinite(value)) throw new BadRequestError(`${field}.value must be a finite number.`);
+      return { kind: "NUMBER", value };
+    }
+    case "CREATED_AT":
+      return { kind: "CREATED_AT" };
+    case "STEP": {
+      const step = typeof t.step === "string" ? t.step : "";
+      if (!priorIds.has(step)) throw new BadRequestError(`${field}.step must reference an earlier step.`);
+      return { kind: "STEP", step };
+    }
+    default:
+      throw new BadRequestError(`${field}.kind must be METRIC, NUMBER, CREATED_AT, or STEP.`);
+  }
+}
+
 function parseFormula(input: unknown): MetricFormula {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new BadRequestError("formula must be an object for a DERIVED metric.");
   }
   const f = input as Record<string, unknown>;
-  if (!isFormulaOp(f.op)) throw new BadRequestError(`formula.op must be one of: ${METRIC_FORMULA_OPS.join(", ")}.`);
-  if (f.op === "SKEW_MS") return { op: "SKEW_MS" };
-  const a = metricNameSlug(nonEmptyString(f.a, "formula.a"));
-  const b = metricNameSlug(nonEmptyString(f.b, "formula.b"));
-  if (!a || !b) throw new BadRequestError("formula.a and formula.b must reference metric names.");
-  return { op: f.op, a, b };
+  if (!Array.isArray(f.steps) || f.steps.length === 0) {
+    throw new BadRequestError("formula.steps must be a non-empty array for a DERIVED metric.");
+  }
+  const steps: MetricStep[] = [];
+  const priorIds = new Set<string>();
+  f.steps.forEach((raw, i) => {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new BadRequestError(`formula.steps[${i}] must be a step object.`);
+    }
+    const s = raw as Record<string, unknown>;
+    const id = typeof s.id === "string" && s.id.trim() ? s.id.trim() : String.fromCharCode(65 + i);
+    if (priorIds.has(id)) throw new BadRequestError(`formula.steps[${i}].id "${id}" is duplicated.`);
+    if (s.kind === "FN") {
+      if (!isStepFn(s.fn)) throw new BadRequestError(`formula.steps[${i}].fn must be one of: ${METRIC_STEP_FNS.join(", ")}.`);
+      steps.push({ id, kind: "FN", fn: s.fn, a: parseToken(s.a, `formula.steps[${i}].a`, priorIds) });
+    } else if (s.kind === "OP") {
+      if (!isStepOp(s.op)) throw new BadRequestError(`formula.steps[${i}].op must be one of: ${METRIC_STEP_OPS.join(", ")}.`);
+      const a = parseToken(s.a, `formula.steps[${i}].a`, priorIds);
+      const b = parseToken(s.b, `formula.steps[${i}].b`, priorIds);
+      steps.push({ id, kind: "OP", op: s.op, a, b });
+    } else {
+      throw new BadRequestError(`formula.steps[${i}].kind must be OP or FN.`);
+    }
+    priorIds.add(id);
+  });
+  let result: string;
+  if (f.result === undefined || f.result === null) {
+    result = steps[steps.length - 1].id;
+  } else if (typeof f.result === "string" && priorIds.has(f.result)) {
+    result = f.result;
+  } else {
+    throw new BadRequestError("formula.result must name one of the steps.");
+  }
+  return { steps, result };
 }
 
-/** Turn a structured formula into the JSON Logic expression the compute-on-read engine evaluates.
- *  Operands reference other metrics as `{ "var": "metrics.<name>" }`; SKEW_MS uses `created_at`. */
+const OP_JSON: Record<MetricStepOp, string> = { ADD: "+", SUB: "-", MUL: "*", DIV: "/", MOD: "%" };
+const FN_JSON: Record<MetricStepFn, string> = { FLOOR: "floor", ROUND: "round", CEIL: "ceil", ABS: "abs" };
+
+/** Compile a structured formula into the JSON Logic expression the compute-on-read engine evaluates.
+ *  A METRIC operand becomes `{ "var": "metrics.<name>" }`, CREATED_AT becomes `{ "var": "created_at" }`,
+ *  a NUMBER is a bare literal, and a STEP is inlined by compiling the step it references. Returns null
+ *  for a malformed formula (e.g. legacy stored shape) so serialization never throws. */
 export function metricExprToJsonLogic(formula: MetricFormula): unknown {
-  const m = (n: string | undefined) => ({ var: "metrics." + (n ?? "") });
-  switch (formula.op) {
-    case "SKEW_MS": return { minute_offset_ms: [{ var: "created_at" }] };
-    case "SUM": return { "+": [m(formula.a), m(formula.b)] };
-    case "DIFFERENCE": return { "-": [m(formula.a), m(formula.b)] };
-    case "RATIO": return { "/": [m(formula.a), m(formula.b)] };
-    case "PERCENT": return { "*": [100, { "/": [m(formula.a), m(formula.b)] }] };
-  }
+  if (!formula || !Array.isArray(formula.steps) || formula.steps.length === 0) return null;
+  const byId = new Map<string, MetricStep>();
+  for (const s of formula.steps) byId.set(s.id, s);
+  const active = new Set<string>(); // recursion guard against a hand-edited cyclic reference
+  const compileToken = (tok: MetricToken): unknown => {
+    switch (tok.kind) {
+      case "METRIC": return { var: "metrics." + tok.name };
+      case "NUMBER": return tok.value;
+      case "CREATED_AT": return { var: "created_at" };
+      case "STEP": {
+        const s = byId.get(tok.step);
+        return s ? compileStep(s) : null;
+      }
+    }
+  };
+  const compileStep = (step: MetricStep): unknown => {
+    if (active.has(step.id)) return null;
+    active.add(step.id);
+    const out = step.kind === "FN"
+      ? { [FN_JSON[step.fn]]: [compileToken(step.a)] }
+      : { [OP_JSON[step.op]]: [compileToken(step.a), compileToken(step.b)] };
+    active.delete(step.id);
+    return out;
+  };
+  const resultStep = byId.get(formula.result) ?? formula.steps[formula.steps.length - 1];
+  return compileStep(resultStep);
 }
 
 /** Parse a stored `formula` JSON string back into MetricFormula (tolerant of NULL/garbage → null). */
