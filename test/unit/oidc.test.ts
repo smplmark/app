@@ -72,10 +72,10 @@ describe("exchangeCode", () => {
     expect(tokens.id_token).toBe("idt");
   });
 
-  it("throws on a failed exchange", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 400)));
+  it("throws with the provider status + body on a failed exchange", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "invalid_client" }, 400)));
     await expect(
       exchangeCode(discovery, client, { code: "x", redirectUri: "https://app.test/cb" }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/token exchange failed \(400\).*invalid_client/);
   });
 });

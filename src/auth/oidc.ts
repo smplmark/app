@@ -66,7 +66,13 @@ export async function exchangeCode(
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
-  if (!res.ok) throw new Error("OIDC token exchange failed");
+  if (!res.ok) {
+    // Surface the provider's error body (e.g. {"error":"invalid_client"} / "invalid_grant") so a
+    // failed exchange is diagnosable in logs. A failure response carries no tokens, so including the
+    // body leaks nothing; the request (which holds the client_secret) is never echoed back.
+    const detail = await res.text().catch(() => "");
+    throw new Error(`OIDC token exchange failed (${res.status}): ${detail}`);
+  }
   return (await res.json()) as TokenResponse;
 }
 

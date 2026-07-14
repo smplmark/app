@@ -382,9 +382,16 @@ auth.get("/callback/:provider", async (c) => {
       code,
       redirectUri: callbackUri(origin, provider),
     });
-    if (!tokens.id_token) return fail("Sign-in failed. Please try again.");
+    if (!tokens.id_token) {
+      console.error(`OIDC ${provider} callback: token response had no id_token`);
+      return fail("Sign-in failed. Please try again.");
+    }
     profile = await verifyIdToken(discovery, client, provider, tokens.id_token, flow.nonce);
-  } catch {
+  } catch (err) {
+    // Token exchange or id_token verification failed. Log the reason — an exchange-failure body
+    // carries no tokens, a verify failure carries only the jose message — so the otherwise-opaque
+    // "Sign-in failed" is diagnosable in `wrangler tail`.
+    console.error(`OIDC ${provider} callback: token exchange / id_token verification failed:`, err);
     return fail("Sign-in failed. Please try again.");
   }
 
@@ -430,11 +437,17 @@ auth.get("/callback/:provider", async (c) => {
       user = created;
     }
   }
-  if (!user) return fail("Sign-in failed. Please try again.");
+  if (!user) {
+    console.error(`OIDC ${provider} callback: no user resolved after identity upsert`);
+    return fail("Sign-in failed. Please try again.");
+  }
 
   const membership = await getPrimaryMembershipForUser(c.env.DB, user.id);
   const account = membership ? await getAccountById(c.env.DB, membership.account_id) : null;
-  if (!account || !membership) return fail("Sign-in failed. Please try again.");
+  if (!account || !membership) {
+    console.error(`OIDC ${provider} callback: user ${user.id} has no active account/membership`);
+    return fail("Sign-in failed. Please try again.");
+  }
 
   const session = await startSession(c.env, c.env.DB, origin, user, account, membership.role, Date.now());
   // Frontend reads the token from the URL fragment (never sent to the server / logged).
