@@ -46,6 +46,27 @@ describe("POST /auth/login", () => {
     expect(typeof ((await res.json()) as { token: string }).token).toBe("string");
   });
 
+  it("re-provisions a fresh workspace when the user's only account was deleted", async () => {
+    const reg = await register("deleted-acct@example.com");
+    // Soft-delete their sole account, mirroring the account-delete flow.
+    await env.DB.prepare("UPDATE account SET deleted_at = ? WHERE id = ?")
+      .bind(Date.now(), reg.account_id)
+      .run();
+
+    const res = await authPost("/api/v1/auth/login", {
+      email: "deleted-acct@example.com",
+      password: "correct horse battery",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { account_id: string };
+    // A brand-new, active account — not the deleted one.
+    expect(body.account_id).not.toBe(reg.account_id);
+    const fresh = await env.DB.prepare("SELECT deleted_at FROM account WHERE id = ?")
+      .bind(body.account_id)
+      .first<{ deleted_at: number | null }>();
+    expect(fresh?.deleted_at).toBeNull();
+  });
+
   it("returns a uniform 401 for a wrong password and an unknown user", async () => {
     await authPost("/api/v1/auth/register", { email: "log@example.com", password: "correct horse" });
     const wrong = await authPost("/api/v1/auth/login", { email: "log@example.com", password: "nope nope nope" });

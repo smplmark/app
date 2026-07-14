@@ -38,7 +38,7 @@ import { sendNewAccountNotification, sendVerificationEmail } from "../email/rese
 import { BadRequestError, NotFoundError, ServiceUnavailableError, UnauthorizedError } from "../errors";
 import { getAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { rateLimit } from "../http/ratelimit";
-import { provisionAccountForUser } from "../services/provision";
+import { ensureActiveAccount, provisionAccountForUser } from "../services/provision";
 import { startSession, type IssuedSession } from "../services/session";
 import { ROLES } from "../types";
 import type { AccountRow, Provider, Role, UserRow } from "../types";
@@ -158,19 +158,16 @@ auth.post("/login", rateLimit((e) => e.RL_AUTH), async (c) => {
   if (!(await verifyPassword(password, identity.password_hash))) {
     throw new UnauthorizedError(LOGIN_FAILED);
   }
-  const membership = await getPrimaryMembershipForUser(c.env.DB, user.id);
-  const account = membership ? await getAccountById(c.env.DB, membership.account_id) : null;
-  if (!account || !membership) {
-    // A user should always have an account; treat a missing one as a server issue.
-    throw new UnauthorizedError(LOGIN_FAILED);
-  }
+  // A user should always land in a workspace; if their only account was deleted, hand them a fresh
+  // one rather than locking them out (see ensureActiveAccount).
+  const { account, role } = await ensureActiveAccount(c.env.DB, user);
   const session = await startSession(
     c.env,
     c.env.DB,
     appUrl(c.env, c.req.url),
     user,
     account,
-    membership.role,
+    role,
     Date.now(),
   );
   return jsonResponse({ ...session, verified: user.email_verified === 1 });
@@ -442,14 +439,10 @@ auth.get("/callback/:provider", async (c) => {
     return fail("Sign-in failed. Please try again.");
   }
 
-  const membership = await getPrimaryMembershipForUser(c.env.DB, user.id);
-  const account = membership ? await getAccountById(c.env.DB, membership.account_id) : null;
-  if (!account || !membership) {
-    console.error(`OIDC ${provider} callback: user ${user.id} has no active account/membership`);
-    return fail("Sign-in failed. Please try again.");
-  }
-
-  const session = await startSession(c.env, c.env.DB, origin, user, account, membership.role, Date.now());
+  // A returning user whose only account was deleted still resolves here; ensureActiveAccount hands
+  // them a fresh workspace instead of dead-ending at the membership check.
+  const { account, role } = await ensureActiveAccount(c.env.DB, user);
+  const session = await startSession(c.env, c.env.DB, origin, user, account, role, Date.now());
   // Frontend reads the token from the URL fragment (never sent to the server / logged).
   return c.redirect(
     `${origin}/auth/callback#token=${encodeURIComponent(session.token)}&expires_in=${session.expires_in}`,

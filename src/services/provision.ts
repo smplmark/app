@@ -1,9 +1,9 @@
 // Provision a fresh account + OWNER membership for a new user (password signup or OIDC first login).
 // Mirrors smplkit: a user with no membership never dead-ends — they get their own account.
-import { createAccount, getAccountByKey } from "../data/accounts";
-import { createMembership } from "../data/account_users";
+import { createAccount, getAccountById, getAccountByKey } from "../data/accounts";
+import { createMembership, getPrimaryMembershipForUser } from "../data/account_users";
 import { randomToken } from "../auth/crypto";
-import type { AccountRow, UserRow } from "../types";
+import type { AccountRow, Role, UserRow } from "../types";
 
 /** Slugify a name/email into a candidate account key. */
 export function slugifyKey(input: string): string {
@@ -45,4 +45,20 @@ export async function provisionAccountForUser(
     role: "OWNER",
   });
   return account;
+}
+
+/**
+ * Resolve the account + role to open a session for, provisioning a fresh workspace when the user has
+ * no active account. This enforces the "never dead-end" invariant on every sign-in — not just first
+ * signup — so a returning user whose only account was soft-deleted is handed a new one instead of
+ * failing the membership check. Both OIDC sign-in and password login funnel through here.
+ */
+export async function ensureActiveAccount(
+  db: D1Database,
+  user: UserRow,
+): Promise<{ account: AccountRow; role: Role }> {
+  const membership = await getPrimaryMembershipForUser(db, user.id);
+  const account = membership ? await getAccountById(db, membership.account_id) : null;
+  if (account && membership) return { account, role: membership.role };
+  return { account: await provisionAccountForUser(db, user), role: "OWNER" };
 }

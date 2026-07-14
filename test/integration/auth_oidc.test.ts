@@ -123,6 +123,35 @@ describe("OIDC callback — success", () => {
     expect(identities?.n).toBe(2); // PASSWORD + GOOGLE
   });
 
+  it("re-provisions a fresh account when the returning user's only account was deleted", async () => {
+    await resetDb();
+    // First sign-in creates the user + GOOGLE identity + account.
+    stubProvider(await signIdToken({ sub: "goog-del", email: "deleted@example.com", nonce: "d1" }));
+    expect((await callback("code=abc&state=sd1", await stateCookie("sd1", "d1"))).status).toBe(302);
+
+    // Soft-delete every account this user belongs to — the wedge that used to lock them out.
+    await env.DB.prepare(
+      "UPDATE account SET deleted_at = ? WHERE id IN (SELECT au.account_id FROM account_user au JOIN user u ON u.id = au.user_id WHERE u.email = ?)",
+    )
+      .bind(Date.now(), "deleted@example.com")
+      .run();
+
+    // Signing in again resolves the same user via the identity and must re-provision, not dead-end.
+    stubProvider(await signIdToken({ sub: "goog-del", email: "deleted@example.com", nonce: "d2" }));
+    const res = await callback("code=abc&state=sd2", await stateCookie("sd2", "d2"));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toContain("/auth/callback#token=");
+
+    // Exactly one active (non-deleted) account now backs this user.
+    const active = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM account_user au JOIN account a ON a.id = au.account_id " +
+        "JOIN user u ON u.id = au.user_id WHERE u.email = ? AND a.deleted_at IS NULL",
+    )
+      .bind("deleted@example.com")
+      .first<{ n: number }>();
+    expect(active?.n).toBe(1);
+  });
+
   it("re-logs an existing (provider, subject) identity", async () => {
     await resetDb();
     const idToken = await signIdToken({ sub: "goog-3", email: "repeat@example.com", nonce: "n3" });
