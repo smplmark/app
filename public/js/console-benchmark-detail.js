@@ -277,9 +277,9 @@
   function viewFields(a) {
     return (
       SM.detailField("Name", { value: a.name }) +
-      SM.detailField("Description", { value: a.description, emptyText: "(none)" }) +
-      SM.detailField("About", { value: a.about, multiline: true, emptyText: "(none)" }) +
-      SM.detailField("Methodology", { value: a.methodology, multiline: true, emptyText: "(none)" })
+      SM.detailField("Description", { value: a.description }) +
+      SM.detailField("About", { value: a.about, multiline: true }) +
+      SM.detailField("Methodology", { value: a.methodology, multiline: true })
     );
   }
   function editFields() {

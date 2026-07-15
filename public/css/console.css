@@ -25,6 +25,7 @@
   :root:not([data-theme]) {
     --accent-strong: #245ec2;
     --accent-soft: color-mix(in srgb, var(--accent) 12%, #ffffff);
+    --warning: #a87716; /* darker amber — #d9a441 text washes out on light tints */
     --shadow: 0 16px 36px rgba(18, 18, 20, 0.08);
   }
 }
@@ -32,6 +33,7 @@
 :root[data-theme="light"] {
   --accent-strong: #245ec2;
   --accent-soft: color-mix(in srgb, var(--accent) 12%, #ffffff);
+  --warning: #a87716;
   --shadow: 0 16px 36px rgba(18, 18, 20, 0.08);
 }
 
@@ -465,8 +467,9 @@
 .statusPill.is-private, .statusPill.is-ended, .statusPill.is-expired { background: var(--surface-alt); color: var(--text-muted); }
 .statusPill.is-withdrawn, .statusPill.is-revoked, .statusPill.is-invalidated, .statusPill.is-lapsed { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .statusPill.is-verified { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
-.statusPill.is-draft, .statusPill.is-pending { background: var(--surface-alt); color: var(--text-muted); }
+.statusPill.is-draft, .statusPill.is-pending { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
 .statusPill.is-ready { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.statusPill.is-complete { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 
 /* Segmented control (tabs) */
 .segmented { display: inline-flex; gap: 0.25rem; padding: 0.25rem; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); }
