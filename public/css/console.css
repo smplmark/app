@@ -525,7 +525,7 @@
 
 /* Metric form — a two-tab shell (Details / Formula, standard .modalTabBar tabs) with a lettered-steps
    formula builder. */
-.mfPanel { display: grid; gap: 1rem; align-content: start; margin-top: 1rem; }
+.mfPanel { display: grid; gap: 1rem; align-content: start; }
 .mfPanel[hidden] { display: none; }
 .mfFormatRow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .mfFormatPreset { flex: 1 1 12rem; min-width: 0; font-family: inherit; }

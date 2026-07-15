@@ -145,13 +145,17 @@
       '<div class="fieldModalBlock"><span class="detailFieldLabel">Kind</span><div class="radioGroup" role="radiogroup" aria-label="Metric kind">' + kindPills + "</div>" +
       '<p class="detailFieldHelp">Stored — a value clients POST on each measurement. Derived — computed on read from a formula.</p></div>';
 
+    // Tabs sit at the top level (a full-width .detailsTabHeader), with the panels below inside a single
+    // .detailsTabPanel card — the app's standard tabbed-detail layout (matches settings / subject pages).
     return (
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
       '<button type="button" class="modalTabBtn isActive" data-mftab="details" role="tab" aria-selected="true">Details</button>' +
       '<button type="button" class="modalTabBtn" data-mftab="formula" id="mf-tab-formula" role="tab" aria-selected="false"' + (derived ? "" : " hidden") + ">Formula</button>" +
       "</nav></div>" +
+      '<div class="detailsTabPanel">' +
       '<div class="mfPanel" data-mfpanel="details">' + details + "</div>" +
-      '<div class="mfPanel" data-mfpanel="formula" hidden><div id="mf-builder" class="mfBuilder"></div></div>'
+      '<div class="mfPanel" data-mfpanel="formula" hidden><div id="mf-builder" class="mfBuilder"></div></div>' +
+      "</div>"
     );
   }
 

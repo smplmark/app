@@ -105,8 +105,8 @@
 
     $("detail-root").innerHTML =
       SM.detailHeader({ name: title, secondaryId: isNewPage ? "" : (a.name || ""), actions: actions }) +
-      '<div class="detailsTabPanel"><form class="form" id="metric-edit-form" novalidate>' +
-      SMMetricForm.render(a, { isNew: isNewPage }) + "</form></div>" +
+      '<form class="form" id="metric-edit-form" novalidate>' +
+      SMMetricForm.render(a, { isNew: isNewPage }) + "</form>" +
       '<div id="m-msg" class="form-status" style="margin-top:0.5rem;"></div>';
 
     const cur = document.querySelector(".breadcrumbCurrent");
