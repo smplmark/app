@@ -6,6 +6,8 @@ import {
   apiPost,
   apiPut,
   bearer,
+  linkSubject,
+  makeAccountSubject,
   makeBenchmark,
   markReady,
   markVerified,
@@ -14,6 +16,7 @@ import {
   resetDb,
   SKEW_SCHEMA,
   type Resource,
+  makeSubjectType,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -33,9 +36,10 @@ describe("benchmark create + read", () => {
 
   it("auto-generates the key from the name when omitted (unique within the account)", async () => {
     const me = await register();
+    const st = (await makeSubjectType(me.token)).id;
     const mk = (name: string) => apiPost(
       "/api/v1/benchmarks",
-      { data: { type: "benchmark", attributes: { name } } },
+      { data: { type: "benchmark", attributes: { name, subject_type: st } } },
       bearer(me.token),
     );
     const first = ((await (await mk("CPU Throughput 2026")).json()) as { data: Resource }).data;
@@ -44,15 +48,16 @@ describe("benchmark create + read", () => {
     const second = ((await (await mk("CPU Throughput 2026")).json()) as { data: Resource }).data;
     expect(second.attributes.key).toBe("cpu-throughput-2026-2");
     // An explicit key is still honored.
-    const explicit = ((await (await apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: { key: "my-key", name: "Whatever" } } }, bearer(me.token))).json()) as { data: Resource }).data;
+    const explicit = ((await (await apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: { key: "my-key", name: "Whatever", subject_type: st } } }, bearer(me.token))).json()) as { data: Resource }).data;
     expect(explicit.attributes.key).toBe("my-key");
   });
 
   it("defaults to an empty measurement_schema when none is supplied, as a draft", async () => {
     const me = await register();
+    const st = (await makeSubjectType(me.token)).id;
     const res = await apiPost(
       "/api/v1/benchmarks",
-      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema" } } },
+      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema", subject_type: st } } },
       bearer(me.token),
     );
     expect(res.status).toBe(201);
@@ -186,12 +191,13 @@ describe("interpretation freeze + append-only", () => {
   it("allows cosmetic edits but freezes the semantic core after publish", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
+    const st = b.attributes.subject_type as string;
     await publish(me.token, me.user_id, b.id);
 
     // Cosmetic prose edit is allowed.
     const ok = await apiPut(
       `/api/v1/benchmarks/${b.id}`,
-      putBody({ name: "Renamed", description: "new tagline", measurement_schema: SKEW_SCHEMA }),
+      putBody({ name: "Renamed", description: "new tagline", subject_type: st, measurement_schema: SKEW_SCHEMA }),
       bearer(me.token),
     );
     expect(ok.status).toBe(200);
@@ -201,6 +207,7 @@ describe("interpretation freeze + append-only", () => {
       `/api/v1/benchmarks/${b.id}`,
       putBody({
         name: "Renamed",
+        subject_type: st,
         measurement_schema: {
           metrics: [],
           derived: [{ name: "skew_ms", expr: { "+": [1, 1] } }],
@@ -220,6 +227,38 @@ describe("interpretation freeze + append-only", () => {
     const pub = await makeBenchmark(me.token, { key: "pub" });
     await publish(me.token, me.user_id, pub.id);
     expect((await apiDelete(`/api/v1/benchmarks/${pub.id}`, bearer(me.token))).status).toBe(409);
+  });
+});
+
+describe("benchmark subject_type (like against like)", () => {
+  it("requires a valid subject_type in the caller's account on create", async () => {
+    const me = await register();
+    const post = (attrs: Record<string, unknown>) =>
+      apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: { name: "X", ...attrs } } }, bearer(me.token));
+    expect((await post({})).status).toBe(400); // missing
+    expect((await post({ subject_type: "ghost" })).status).toBe(400); // unknown
+    const other = await register("other-st@example.com");
+    const foreign = (await makeSubjectType(other.token)).id;
+    expect((await post({ subject_type: foreign })).status).toBe(400); // another account's type
+
+    const st = (await makeSubjectType(me.token, { name: "CPU" })).id;
+    const b = await makeBenchmark(me.token, { subject_type: st });
+    expect(b.attributes.subject_type).toBe(st);
+  });
+
+  it("locks subject_type while subjects are linked; editable again once unlinked", async () => {
+    const me = await register();
+    const st1 = (await makeSubjectType(me.token, { name: "CPU" })).id;
+    const st2 = (await makeSubjectType(me.token, { name: "GPU" })).id;
+    const b = await makeBenchmark(me.token, { subject_type: st1 });
+    const subject = await makeAccountSubject(me.token, "cpu-1", { subject_type: st1 });
+    const link = await linkSubject(me.token, b.id, subject.id);
+    const put = (stx: string) =>
+      apiPut(`/api/v1/benchmarks/${b.id}`, putBody({ name: "Scheduler Latency", subject_type: stx, measurement_schema: SKEW_SCHEMA }), bearer(me.token));
+    expect((await put(st2)).status).toBe(409); // linked → locked
+    expect((await put(st1)).status).toBe(200); // same value round-trips (get-mutate-put)
+    await apiDelete(`/api/v1/benchmark_subjects/${link.id}`, bearer(me.token));
+    expect((await put(st2)).status).toBe(200); // unlinked → change allowed
   });
 });
 

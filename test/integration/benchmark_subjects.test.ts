@@ -7,6 +7,7 @@ import {
   linkSubject,
   makeAccountSubject,
   makeBenchmark,
+  makeSubjectType,
   makeMeasurement,
   makeRun,
   markReady,
@@ -166,5 +167,20 @@ describe("measurements filter[subject] visibility across a shared subject's benc
     // The owner sees both.
     const owner = await apiGet(`/api/v1/measurements?filter[subject]=${t.id}`, bearer(me.token));
     expect(((await owner.json()) as { data: Resource[] }).data.length).toBe(2);
+  });
+});
+
+describe("benchmark_subject — type conformance", () => {
+  it("rejects linking a subject of a different type (like against like)", async () => {
+    const me = await register();
+    const stCpu = (await makeSubjectType(me.token, { name: "CPU" })).id;
+    const stGpu = (await makeSubjectType(me.token, { name: "GPU" })).id;
+    const b = await makeBenchmark(me.token, { subject_type: stCpu });
+
+    const gpu = await makeAccountSubject(me.token, "gpu-1", { subject_type: stGpu });
+    expect((await link(me.token, b.id, gpu.id)).status).toBe(409);
+
+    const cpu = await makeAccountSubject(me.token, "cpu-1", { subject_type: stCpu });
+    expect((await link(me.token, b.id, cpu.id)).status).toBe(201);
   });
 });

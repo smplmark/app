@@ -13,6 +13,7 @@ import {
   getSubjectTypeByKey,
   listSubjectTypes,
   updateSubjectType,
+  countBenchmarksOfType,
 } from "../data/subject_types";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors";
 import { requireString } from "../http/body";
@@ -111,6 +112,9 @@ subjectTypes.delete("/:id", requireAuth, async (c) => {
   const existing = await loadOwnedForWrite(c, c.req.param("id"));
   if ((await countSubjectsOfType(c.env.DB, existing.id)) > 0) {
     throw new ConflictError("This subject type is in use by one or more subjects; delete those subjects first.");
+  }
+  if ((await countBenchmarksOfType(c.env.DB, existing.id)) > 0) {
+    throw new ConflictError("This subject type is in use by one or more benchmarks; change their subject type first.");
   }
   await deleteSubjectType(c.env.DB, existing.id);
   return noContentResponse();

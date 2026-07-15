@@ -37,6 +37,8 @@ import {
   optionalTags,
   setBenchmarkTags,
 } from "../data/tags";
+import { countLinksForBenchmark } from "../data/benchmark_subjects";
+import { getSubjectTypeById } from "../data/subject_types";
 import { getUserById } from "../data/users";
 import {
   BadRequestError,
@@ -73,6 +75,17 @@ import {
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
 const EMPTY_SCHEMA: MeasurementSchema = { metrics: [], derived: [] };
+
+/** A benchmark compares like against like: `subject_type` is required and must name a subject type in
+ *  the caller's account. Returns the validated id. */
+async function requireSubjectType(db: D1Database, accountId: string, attrs: Record<string, unknown>): Promise<string> {
+  const id = requireString(attrs, "subject_type");
+  const type = await getSubjectTypeById(db, id);
+  if (!type || type.account_id !== accountId) {
+    throw new BadRequestError("subject_type must name a subject type in this account.");
+  }
+  return id;
+}
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = [
   "name",
@@ -153,6 +166,7 @@ benchmarks.post("/", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
+  const subject_type = await requireSubjectType(c.env.DB, auth.account_id, attrs);
   const measurement_schema =
     "measurement_schema" in attrs ? validateMeasurementSchema(attrs.measurement_schema) : EMPTY_SCHEMA;
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
@@ -171,6 +185,7 @@ benchmarks.post("/", requireAuth, async (c) => {
     description,
     about,
     methodology,
+    subject_type,
     measurement_schema,
     category,
     created_by_user_id: auth.user_id, // null when an API key creates it
@@ -245,6 +260,14 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
+  const subject_type = await requireSubjectType(c.env.DB, existing.account_id, attrs);
+  // The subject type is fixed while subjects are linked — they conform to it. (Setting it on a
+  // pre-0023 row that never had one is fine; that's the null → value transition.)
+  if (subject_type !== existing.subject_type && existing.subject_type !== null) {
+    if ((await countLinksForBenchmark(c.env.DB, existing.id)) > 0) {
+      throw new ConflictError("The subject type can't change while subjects are linked; unlink them first.");
+    }
+  }
   const measurement_schema =
     "measurement_schema" in attrs ? validateMeasurementSchema(attrs.measurement_schema) : EMPTY_SCHEMA;
   // Full-replace semantics, like measurement_schema: absent → the defaults, not "keep".
@@ -261,6 +284,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     description,
     about,
     methodology,
+    subject_type,
     measurement_schema,
     category,
   });

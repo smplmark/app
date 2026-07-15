@@ -57,6 +57,10 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
   if (!subject || subject.account_id !== benchmark.account_id) {
     throw new ConflictError("The subject does not belong to this benchmark's account.");
   }
+  // A benchmark compares like against like: every linked subject shares the benchmark's subject type.
+  if (subject.subject_type_id !== benchmark.subject_type) {
+    throw new ConflictError("This benchmark compares subjects of a different type; only subjects of the benchmark's subject type can be linked.");
+  }
   if ((await countLinksForBenchmark(c.env.DB, benchmark.id)) >= LIMITS.subjectsPerBenchmark) {
     throw new ConflictError(
       `This benchmark has reached the limit of ${LIMITS.subjectsPerBenchmark} subjects.`,

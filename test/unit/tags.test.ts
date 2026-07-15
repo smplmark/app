@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createAccount } from "../../src/data/accounts";
 import { createBenchmark } from "../../src/data/benchmarks";
+import { createSubjectType } from "../../src/data/subject_types";
 import {
   listTagsForBenchmark,
   listTagsForBenchmarks,
@@ -11,7 +12,7 @@ import {
 } from "../../src/data/tags";
 import { AppError } from "../../src/errors";
 
-const TABLES = ["benchmark_tag", "tag", "benchmark", "account"];
+const TABLES = ["benchmark_tag", "tag", "benchmark", "subject_type", "account"];
 beforeEach(async () => {
   for (const t of TABLES) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
@@ -20,9 +21,12 @@ async function bench(key: string): Promise<string> {
   const account =
     (await env.DB.prepare("SELECT id FROM account LIMIT 1").first<{ id: string }>()) ??
     (await createAccount(env.DB, { key: `acct-${crypto.randomUUID()}`, name: "A" }));
+  const subjectType =
+    (await env.DB.prepare("SELECT id FROM subject_type LIMIT 1").first<{ id: string }>()) ??
+    (await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] }));
   const row = await createBenchmark(env.DB, {
     account_id: account.id, key, name: key, description: null, about: null,
-    methodology: null, measurement_schema: { metrics: [], derived: [] },
+    methodology: null, subject_type: subjectType.id, measurement_schema: { metrics: [], derived: [] },
     category: "OTHER", created_by_user_id: null,
   });
   return row.id;

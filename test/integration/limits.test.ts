@@ -11,6 +11,7 @@ import {
   register,
   resetDb,
   type Resource,
+  makeSubjectType,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -27,8 +28,9 @@ async function bulkInsert(table: string, columns: string, rows: string[]): Promi
 describe("string-size limits (400)", () => {
   it("rejects over-limit benchmark fields", async () => {
     const { token } = await register();
+    const st = (await makeSubjectType(token)).id;
     const post = (attrs: Record<string, unknown>) =>
-      apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: attrs } }, bearer(token));
+      apiPost("/api/v1/benchmarks", { data: { type: "benchmark", attributes: { subject_type: st, ...attrs } } }, bearer(token));
     expect((await post({ key: "k".repeat(LIMITS.keyLength + 1), name: "n" })).status).toBe(400);
     expect((await post({ key: "k", name: "n".repeat(LIMITS.nameLength + 1) })).status).toBe(400);
     expect(
@@ -81,7 +83,7 @@ describe("count ceilings (409)", () => {
     );
     const res = await apiPost(
       "/api/v1/benchmarks",
-      { data: { type: "benchmark", attributes: { key: "one-too-many", name: "N" } } },
+      { data: { type: "benchmark", attributes: { key: "one-too-many", name: "N", subject_type: (await makeSubjectType(token)).id } } },
       bearer(token),
     );
     expect(res.status).toBe(409);

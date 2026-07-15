@@ -203,6 +203,7 @@ export function serializeBenchmark(
     description: row.description,
     about: row.about,
     methodology: row.methodology,
+    subject_type: row.subject_type,
     status: row.status,
     draft: row.draft === 1,
     created_by: row.created_by_user_id,

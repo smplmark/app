@@ -124,13 +124,13 @@ describe("closed lifecycle — ended runs", () => {
 });
 
 describe("additive schema freeze", () => {
-  const put = (token: string, id: string, schema: unknown) =>
+  const put = (token: string, bench: Resource, schema: unknown) =>
     apiPut(
-      `/api/v1/benchmarks/${id}`,
+      `/api/v1/benchmarks/${bench.id}`,
       {
         data: {
           type: "benchmark",
-          attributes: { name: "Scheduler Latency", measurement_schema: schema },
+          attributes: { name: "Scheduler Latency", subject_type: bench.attributes.subject_type, measurement_schema: schema },
         },
       },
       bearer(token),
@@ -146,20 +146,20 @@ describe("additive schema freeze", () => {
       ...SKEW_SCHEMA,
       metrics: [{ name: "cpu_ms", type: "number", description: "CPU time per firing." }],
     };
-    expect((await put(owner.token, bench.id, grown)).status).toBe(200);
+    expect((await put(owner.token, bench, grown)).status).toBe(200);
 
     // Mutating the existing derived expr → 409.
     const mutated = {
       ...grown,
       derived: [{ name: "skew_ms", unit: "ms", expr: { var: "created_at" } }],
     };
-    expect((await put(owner.token, bench.id, mutated)).status).toBe(409);
+    expect((await put(owner.token, bench, mutated)).status).toBe(409);
 
     // Removing a now-frozen metric → 409 (the additive PUT above froze cpu_ms too).
-    expect((await put(owner.token, bench.id, SKEW_SCHEMA)).status).toBe(409);
+    expect((await put(owner.token, bench, SKEW_SCHEMA)).status).toBe(409);
 
     // Changing the chart → 409.
     const rechart = { ...grown, chart: { x: null, y: "cpu_ms", x_kind: "CATEGORY" } };
-    expect((await put(owner.token, bench.id, rechart)).status).toBe(409);
+    expect((await put(owner.token, bench, rechart)).status).toBe(409);
   });
 });

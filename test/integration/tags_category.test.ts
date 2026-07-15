@@ -13,14 +13,16 @@ import {
   SKEW_SCHEMA,
   type Registered,
   type Resource,
+  makeSubjectType,
 } from "./helpers";
 
 beforeEach(resetDb);
 
-function post(token: string, attrs: Record<string, unknown>) {
+async function post(token: string, attrs: Record<string, unknown>) {
+  const subject_type = (await makeSubjectType(token, { name: `T${Date.now()}${Math.random()}` })).id;
   return apiPost(
     "/api/v1/benchmarks",
-    { data: { type: "benchmark", attributes: { key: "b", name: "B", ...attrs } } },
+    { data: { type: "benchmark", attributes: { key: "b", name: "B", subject_type, ...attrs } } },
     bearer(token),
   );
 }
@@ -77,6 +79,7 @@ describe("benchmark category + tags", () => {
           type: "benchmark",
           attributes: {
             name: "Renamed",
+            subject_type: bench.attributes.subject_type,
             measurement_schema: SKEW_SCHEMA,
             tags: ["three"],
             category: "NETWORK",
@@ -93,7 +96,7 @@ describe("benchmark category + tags", () => {
     // Omitting tags/category is a full-replace back to the defaults.
     const cleared = await apiPut(
       `/api/v1/benchmarks/${bench.id}`,
-      { data: { type: "benchmark", attributes: { name: "Renamed", measurement_schema: SKEW_SCHEMA } } },
+      { data: { type: "benchmark", attributes: { name: "Renamed", subject_type: bench.attributes.subject_type, measurement_schema: SKEW_SCHEMA } } },
       bearer(token),
     );
     expect(cleared.status).toBe(200);
@@ -114,6 +117,7 @@ describe("benchmark category + tags", () => {
           type: "benchmark",
           attributes: {
             name: "Scheduler Latency",
+            subject_type: bench.attributes.subject_type,
             measurement_schema: SKEW_SCHEMA,
             tags: ["new-tag"],
             category: "NETWORK",

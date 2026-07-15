@@ -47,6 +47,8 @@ export interface CreateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
+  /** The subject_type every linked subject must conform to. */
+  subject_type: string;
   measurement_schema: MeasurementSchema;
   category: Category;
   /** The creating user, or null if an API key created it. */
@@ -66,6 +68,7 @@ export async function createBenchmark(
     description: input.description,
     about: input.about,
     methodology: input.methodology,
+    subject_type: input.subject_type,
     status: "PRIVATE",
     published_at: null,
     withdrawn_at: null,
@@ -88,7 +91,7 @@ export async function createBenchmark(
   try {
     await db
       .prepare(
-        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
+        "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, subject_type, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL,?,?,?)",
       )
       .bind(
         row.id,
@@ -98,6 +101,7 @@ export async function createBenchmark(
         row.description,
         row.about,
         row.methodology,
+        row.subject_type,
         row.status,
         row.measurement_schema,
         row.created_by_user_id,
@@ -317,6 +321,8 @@ export interface UpdateBenchmarkInput {
   description: string | null;
   about: string | null;
   methodology: string | null;
+  /** The subject_type every linked subject must conform to. */
+  subject_type: string;
   measurement_schema: MeasurementSchema;
   /** Browse metadata — editable at any status, like `name`. */
   category: Category;
@@ -335,19 +341,21 @@ export async function updateBenchmark(
     description: input.description,
     about: input.about,
     methodology: input.methodology,
+    subject_type: input.subject_type,
     measurement_schema: JSON.stringify(input.measurement_schema),
     category: input.category,
     updated_at: Date.now(),
   };
   await db
     .prepare(
-      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, measurement_schema=?, category=?, updated_at=? WHERE id=?",
+      "UPDATE benchmark SET name=?, description=?, about=?, methodology=?, subject_type=?, measurement_schema=?, category=?, updated_at=? WHERE id=?",
     )
     .bind(
       updated.name,
       updated.description,
       updated.about,
       updated.methodology,
+      updated.subject_type,
       updated.measurement_schema,
       updated.category,
       updated.updated_at,

@@ -137,7 +137,7 @@ describe("serializeApiKey", () => {
 describe("serializeBenchmark", () => {
   const priv: BenchmarkRowWithPublisher = {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
-    description: null, about: null, methodology: null, status: "PRIVATE",
+    description: null, about: null, methodology: null, subject_type: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
     measurement_schema: "{}",
     created_by_user_id: "u1", draft: 1,

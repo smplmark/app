@@ -156,11 +156,13 @@ export async function addMember(
   return joinAs(email, ownerAccountId, inv.attributes.token as string);
 }
 
-/** Create a benchmark (PRIVATE by default); returns its resource. */
+/** Create a benchmark (PRIVATE by default); returns its resource. `subject_type` is required by the
+ *  API, so the account's default subject type is supplied unless the caller passes one. */
 export async function makeBenchmark(
   token: string,
   attrs: Record<string, unknown> = {},
 ): Promise<Resource> {
+  const subject_type = (attrs.subject_type as string | undefined) ?? (await defaultSubjectTypeId(token));
   const res = await apiPost(
     "/api/v1/benchmarks",
     {
@@ -170,6 +172,7 @@ export async function makeBenchmark(
           key: "scheduler-latency",
           name: "Scheduler Latency",
           measurement_schema: SKEW_SCHEMA,
+          subject_type,
           ...attrs,
         },
       },

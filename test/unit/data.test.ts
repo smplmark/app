@@ -25,10 +25,10 @@ const sort = { field: "created_at", desc: false };
 
 async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; subject: SubjectRow; run: RunRow }> {
   const account = await createAccount(env.DB, { key: `host-${crypto.randomUUID()}`, name: "Host" });
-  const benchmark = await createBenchmark(env.DB, {
-    account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null,
-  });
   const subjectType = await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] });
+  const benchmark = await createBenchmark(env.DB, {
+    account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, subject_type: subjectType.id, measurement_schema: schema, category: "OTHER", created_by_user_id: null,
+  });
   const subject = await createSubject(env.DB, { account_id: account.id, subject_type_id: subjectType.id, key: "t", name: "T", details: null });
   const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null });
   return { account, benchmark, subject, run };
@@ -49,7 +49,7 @@ describe("unique-violation → 409 on create", () => {
     const { account, benchmark, subject } = await chain();
     await expectConflict(() => createAccount(env.DB, { key: account.key, name: "B" }));
     await expectConflict(() =>
-      createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
+      createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, subject_type: subject.subject_type_id as string, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
     );
     await expectConflict(() => createSubject(env.DB, { account_id: account.id, subject_type_id: subject.subject_type_id as string, key: "t", name: "T2", details: null }));
     await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null }));
@@ -59,7 +59,7 @@ describe("unique-violation → 409 on create", () => {
 describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
   it("rethrows a foreign-key violation on create", async () => {
     await expect(
-      createBenchmark(env.DB, { account_id: "ghost-account", key: "x", name: "X", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
+      createBenchmark(env.DB, { account_id: "ghost-account", key: "x", name: "X", description: null, about: null, methodology: null, subject_type: "ghost-type", measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
       createSubject(env.DB, { account_id: "ghost-account", subject_type_id: "ghost-type", key: "x", name: "X", details: null }),
@@ -99,7 +99,7 @@ describe("listMeasurements with a date range", () => {
 describe("update / lookup not-found paths return null", () => {
   it("updates of missing rows and missing membership return null", async () => {
     expect(await updateAccount(env.DB, "nope", { name: "x", description: null, allow_personal_publish: 0 })).toBeNull();
-    expect(await updateBenchmark(env.DB, "nope", { name: "x", description: null, about: null, methodology: null, measurement_schema: schema, category: "OTHER" })).toBeNull();
+    expect(await updateBenchmark(env.DB, "nope", { name: "x", description: null, about: null, methodology: null, subject_type: "st", measurement_schema: schema, category: "OTHER" })).toBeNull();
     expect(await updateSubject(env.DB, "nope", { name: "x", details: null })).toBeNull();
     expect(await updateRun(env.DB, "nope", { name: "x", details: null, started_at: null })).toBeNull();
     expect(await getPrimaryMembershipForUser(env.DB, "no-user")).toBeNull();

@@ -450,7 +450,14 @@
       overlay.remove();
       if (opts.onClose) opts.onClose();
     }
-    function onKey(e) { if (e.key === "Escape") close(); }
+    // Escape closes only the TOPMOST modal — with stacked modals (e.g. View JSON over a form modal),
+    // each instance listens on document, so guard on being the last overlay in the DOM.
+    function onKey(e) {
+      if (e.key !== "Escape") return;
+      const overlays = document.querySelectorAll(".modalOverlay");
+      if (overlays[overlays.length - 1] !== overlay) return;
+      close();
+    }
     panel.querySelector(".modalCloseBtn").addEventListener("click", close);
     document.addEventListener("keydown", onKey);
     panel.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => close()));

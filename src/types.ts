@@ -196,6 +196,9 @@ export interface BenchmarkRow {
   description: string | null;
   about: string | null;
   methodology: string | null;
+  /** The subject_type every linked subject must conform to (a benchmark compares like against like).
+   *  Nullable at the DB level for pre-0023 rows with no subjects; the API requires it on write. */
+  subject_type: string | null;
   status: Status;
   published_at: number | null;
   withdrawn_at: number | null;

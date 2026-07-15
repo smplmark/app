@@ -9,6 +9,7 @@ import {
   register,
   resetDb,
   type Resource,
+  makeSubjectType,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -87,7 +88,7 @@ describe("domain-recheck job run", () => {
     const bench = ((await (
       await apiPost(
         "/api/v1/benchmarks",
-        { data: { type: "benchmark", attributes: { key: "b", name: "B" } } },
+        { data: { type: "benchmark", attributes: { key: "b", name: "B", subject_type: (await makeSubjectType(me.token)).id } } },
         bearer(me.token),
       )
     ).json()) as { data: Resource }).data;

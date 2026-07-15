@@ -146,3 +146,15 @@ describe("subject type authz", () => {
     expect((await apiGet(`/api/v1/subject_types/${st.id}`, bearer(other.token))).status).toBe(404);
   });
 });
+
+describe("subject type deletion guards", () => {
+  it("409s (not 500s) when a benchmark pins the type, even with zero subjects", async () => {
+    const me = await register();
+    const st = await create(me.token, { name: "Pinned" });
+    await makeBenchmark(me.token, { subject_type: st.id });
+    const res = await apiDelete(`/api/v1/subject_types/${st.id}`, bearer(me.token));
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { errors: { detail: string }[] };
+    expect(body.errors[0].detail).toContain("benchmarks");
+  });
+});

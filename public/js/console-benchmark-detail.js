@@ -16,7 +16,7 @@
 
   // Edit-mode state for the Details tab.
   let editing = false;
-  let form = { name: "", description: "", about: "", methodology: "" };
+  let form = { name: "", description: "", about: "", methodology: "", subject_type: "" };
 
   const TABS = ["details", "subjects", "metrics", "runs", "apikeys"];
   function activeTab() {
@@ -48,10 +48,23 @@
     $("detail-root").innerHTML = '<div class="errorBanner"><p>' + esc(msg) + "</p></div>";
   }
 
+  // The account's subject types — the benchmark's own type displays by name, and the Details edit
+  // form offers the list. Loaded once alongside the benchmark.
+  let SUBJECT_TYPES = null;
+  function typeName(id) {
+    const t = (SUBJECT_TYPES || []).find((x) => x.id === id);
+    const a = (t && t.attributes) || {};
+    return a.name || a.key || (id ? id : null);
+  }
+
   async function loadBenchmark() {
     if (!ID) { fail("No benchmark id."); return; }
     try {
-      const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID));
+      const [doc, typesDoc] = await Promise.all([
+        apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID)),
+        apiFetch("/api/v1/subject_types?page[size]=1000").catch(() => null),
+      ]);
+      SUBJECT_TYPES = (typesDoc && typesDoc.data) || [];
       BM = (doc && doc.data) || null;
       if (!BM) { fail("Benchmark not found."); return; }
       render();
@@ -209,13 +222,14 @@
       form.name.trim() !== (a.name || "") ||
       form.description !== (a.description || "") ||
       form.about !== (a.about || "") ||
-      form.methodology !== (a.methodology || "")
+      form.methodology !== (a.methodology || "") ||
+      form.subject_type !== (a.subject_type || "")
     );
   }
   function enterEdit() {
     const a = BM.attributes || {};
     editing = true;
-    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "" };
+    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "", subject_type: a.subject_type || "" };
     renderTab();
   }
   function exitEdit() { editing = false; window.removeEventListener("beforeunload", onBeforeUnload); }
@@ -264,6 +278,8 @@
         if (el) el.addEventListener("input", () => { form[name] = el.value; SM.clearFieldError(el); });
       };
       ["name", "description", "about", "methodology"].forEach(bind);
+      const stSel = p.querySelector('[data-edit="subject_type"]');
+      if (stSel) stSel.addEventListener("change", () => { form.subject_type = stSel.value; SM.clearFieldError(stSel); });
       $("d-cancel").addEventListener("click", cancelEdit);
       $("d-save").addEventListener("click", saveDetails);
       window.addEventListener("beforeunload", onBeforeUnload);
@@ -277,6 +293,7 @@
   function viewFields(a) {
     return (
       SM.detailField("Name", { value: a.name }) +
+      SM.detailField("Subject type", { value: typeName(a.subject_type) }) +
       SM.detailField("Description", { value: a.description }) +
       SM.detailField("About", { value: a.about, multiline: true }) +
       SM.detailField("Methodology", { value: a.methodology, multiline: true })
@@ -291,8 +308,22 @@
       return '<div class="field"><span class="detailFieldLabel' + (opts.required ? " fieldRequired" : "") + '">' + esc(label) + "</span>" + input +
         '<p class="fieldErrorMessage" hidden></p></div>';
     };
+    // The subject type is fixed while subjects are linked (they conform to it) — shown disabled then.
+    // An unknown count (still loading, or the count fetch failed) also locks: better a disabled select
+    // than offering a change the server will 409.
+    const locked = COUNTS.subjects === null || COUNTS.subjects > 0;
+    const typeOpts = (SUBJECT_TYPES || []).map((t) => {
+      const ta = t.attributes || {};
+      return '<option value="' + esc(t.id) + '"' + (t.id === form.subject_type ? " selected" : "") + ">" + esc(ta.name || ta.key || t.id) + "</option>";
+    }).join("");
+    const typeField =
+      '<div class="field"><span class="detailFieldLabel fieldRequired">Subject type</span>' +
+      '<select data-edit="subject_type"' + (locked ? " disabled" : "") + '><option value="">Pick a subject type…</option>' + typeOpts + "</select>" +
+      '<p class="detailFieldHelp">' + (locked ? "Fixed while subjects are linked — unlink them to change it." : "The type every linked subject must conform to.") + "</p>" +
+      '<p class="fieldErrorMessage" hidden></p></div>';
     return (
       f("Name", "name", { required: true }) +
+      typeField +
       f("Description", "description") +
       f("About", "about", { textarea: true, rows: 4 }) +
       f("Methodology", "methodology", { textarea: true, rows: 5 })
@@ -312,17 +343,24 @@
   async function saveDetails() {
     const panel = $("tab-panel");
     const nameEl = panel.querySelector('[data-edit="name"]');
+    const stSel = panel.querySelector('[data-edit="subject_type"]');
     let ok = true;
     if (!form.name.trim()) { SM.setFieldError(nameEl, "A name is required."); ok = false; }
-    if (!ok) { nameEl.focus(); return; }
+    if (!form.subject_type) { SM.setFieldError(stSel, "Pick the type of subject this benchmark compares."); ok = false; }
+    if (!ok) { (form.name.trim() ? stSel : nameEl).focus(); return; }
     const a = BM.attributes || {};
-    // get-mutate-put: round-trip the full representation, changing only the edited fields.
+    // get-mutate-put: round-trip the FULL representation, changing only the edited fields — PUT is
+    // full-replace, so omitting measurement_schema / tags / category would reset them.
     const attrs = {
       key: a.key,
       name: form.name.trim(),
       description: form.description.trim() || null,
       about: form.about.trim() || null,
       methodology: form.methodology.trim() || null,
+      subject_type: form.subject_type,
+      measurement_schema: a.measurement_schema,
+      tags: a.tags || [],
+      category: a.category,
     };
     const save = $("d-save"); save.disabled = true;
     setMsg("");
@@ -394,26 +432,30 @@
     }
   }
 
-  // ── Add-subject modal (pick an existing account subject to link) ──
+  // ── Add-subject modal (pick an existing subject of the benchmark's type, or create one inline) ──
   async function openAddSubjectModal() {
+    const stId = (BM.attributes || {}).subject_type;
+    const stName = typeName(stId) || "subject";
     const bodyHtml =
       '<form class="form" id="add-subject-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span>' +
       '<input name="q" type="text" autocomplete="off" placeholder="Pick a subject to link" />' +
-      '<p class="detailFieldHelp">Subjects are created on the Subjects page (choosing their type), then linked here.</p>' +
+      '<p class="detailFieldHelp">This benchmark compares ' + esc(stName) + ' subjects — only those can link. Don’t see it? Create it right here.</p>' +
       '<p class="fieldErrorMessage" hidden></p></label>' +
       '<p class="form-status" id="add-subject-msg"></p>' +
-      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<div class="modalActions"><button type="button" class="buttonLink" id="as-new" style="margin-right:auto;">+ New ' + esc(stName) + "</button>" +
+      '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add subject</button></div></form>';
     const m = SM.modal({ title: "Add subject", description: "Link an existing subject to this benchmark.", bodyHtml: bodyHtml, width: 520 });
     const f = m.panel.querySelector("#add-subject-form");
     const msg = m.panel.querySelector("#add-subject-msg");
+    m.panel.querySelector("#as-new").addEventListener("click", () => { m.close(); openNewSubjectModal(); });
     let acct = [];
-    // The picker offers the account's subjects that aren't already linked to this benchmark. The pick
-    // VALUE is the unique key (what lands in the input); the label shows "name — key". `pickable` is
-    // null until the fetch lands so the popup says "Loading…" rather than a false "No matches."
+    // The picker offers the account's subjects OF THE BENCHMARK'S TYPE that aren't already linked. The
+    // pick VALUE is the unique key (what lands in the input); the label shows "name — key". `pickable`
+    // is null until the fetch lands so the popup says "Loading…" rather than a false "No matches."
     let pickable = null;
-    const combo = SM.combobox(f.q, { options: () => pickable || [], emptyText: () => (pickable ? "No matches." : "Loading…") });
+    const combo = SM.combobox(f.q, { options: () => pickable || [], emptyText: () => (pickable ? "No matches — create it below." : "Loading…") });
     try {
       const [acctDoc, linksDoc] = await Promise.all([
         apiFetch("/api/v1/subjects"),
@@ -421,7 +463,7 @@
       ]);
       acct = (acctDoc && acctDoc.data) || [];
       const linkedIds = new Set(((linksDoc && linksDoc.data) || []).map((l) => (l.attributes || {}).subject));
-      pickable = acct.filter((t) => !linkedIds.has(t.id)).map((t) => {
+      pickable = acct.filter((t) => !linkedIds.has(t.id) && (t.attributes || {}).subject_type === stId).map((t) => {
         const a = t.attributes || {};
         return { value: a.key || "", label: (a.name || "") + (a.key ? " — " + a.key : "") };
       });
@@ -451,6 +493,64 @@
         m.close();
         renderSubjects($("tab-panel"), $("tab-actions"));
       } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+    });
+  }
+
+  // ── New-subject modal: create a subject of the benchmark's type (typed fields included) and link
+  //    it — no detour through the Subjects page. ──
+  async function openNewSubjectModal() {
+    const stId = (BM.attributes || {}).subject_type;
+    let TYPE = null;
+    try {
+      const d = await apiFetch("/api/v1/subject_types/" + encodeURIComponent(stId));
+      TYPE = (d && d.data) || null;
+    } catch (_e) { /* fall through to the guard below */ }
+    if (!TYPE) { SM.toast("Set the benchmark's subject type first (Details tab).", { kind: "error" }); return; }
+    const ta = TYPE.attributes || {};
+    const stName = ta.name || ta.key || "subject";
+    const fields = ta.fields || [];
+    const bodyHtml =
+      '<form class="form" id="new-subject-form" novalidate>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input name="name" type="text" autocomplete="off" /><p class="fieldErrorMessage" hidden></p></label>' +
+      '<div class="subjectFormFields" id="new-subject-fields">' + SMSubjectForm.render(fields, {}) + "</div>" +
+      '<p class="form-status" id="new-subject-msg"></p>' +
+      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<button type="submit" class="button buttonPrimary buttonSmall">Create &amp; link</button></div></form>';
+    const m = SM.modal({ title: "New " + stName, description: "Create a " + stName + " and link it to this benchmark.", bodyHtml: bodyHtml, width: 560 });
+    const f = m.panel.querySelector("#new-subject-form");
+    const msg = m.panel.querySelector("#new-subject-msg");
+    const nameEl = f.querySelector('[name="name"]');
+    let createdSubject = null; // survives a failed link so a retry doesn't mint a duplicate
+    SMSubjectForm.wire(m.panel.querySelector("#new-subject-fields"));
+    nameEl.addEventListener("input", () => SM.clearFieldError(nameEl));
+    nameEl.focus();
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      msg.textContent = ""; msg.className = "form-status";
+      SM.clearFieldError(nameEl);
+      let ok = true;
+      const name = nameEl.value.trim();
+      if (!name) { SM.setFieldError(nameEl, "A name is required."); ok = false; }
+      const collected = SMSubjectForm.collect(m.panel.querySelector("#new-subject-fields"), fields);
+      if (!collected.ok) ok = false;
+      if (!ok) return;
+      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+      try {
+        // Create the subject (key auto-generated server-side), then link it here. The created id is
+        // retained across retries so a failed LINK never re-creates the subject (no duplicate mints).
+        if (!createdSubject) {
+          const doc = await apiFetch("/api/v1/subjects", { method: "POST", body: jsonapiBody("subject", { subject_type: stId, name: name, details: collected.values }) });
+          createdSubject = doc && doc.data;
+        }
+        await apiFetch("/api/v1/benchmark_subjects", { method: "POST", body: jsonapiBody("benchmark_subject", { benchmark: ID, subject: createdSubject.id }) });
+        m.close();
+        SM.toast("Subject created and linked.", { kind: "success" });
+        renderSubjects($("tab-panel"), $("tab-actions"));
+      } catch (err) {
+        submit.disabled = false;
+        const note = createdSubject ? " The subject was created — retrying will only retry the link." : "";
+        msg.textContent = err.message + note; msg.className = "form-status is-error";
+      }
     });
   }
 
@@ -512,14 +612,16 @@
       '<form class="form" id="add-metric-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Metric</span>' +
       '<input name="q" type="text" autocomplete="off" placeholder="Pick a metric to link" />' +
-      '<p class="detailFieldHelp">Metrics are defined on the Metrics page, then linked here. Linking copies the metric’s definition into this benchmark.</p>' +
+      '<p class="detailFieldHelp">Linking copies the metric’s definition into this benchmark. Don’t see the metric you need? Define it right here.</p>' +
       '<p class="fieldErrorMessage" hidden></p></label>' +
       '<p class="form-status" id="add-metric-msg"></p>' +
-      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<div class="modalActions"><button type="button" class="buttonLink" id="am-new" style="margin-right:auto;">+ New metric</button>' +
+      '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add metric</button></div></form>';
     const m = SM.modal({ title: "Add metric", description: "Link a metric from your library to this benchmark.", bodyHtml: bodyHtml, width: 520 });
     const f = m.panel.querySelector("#add-metric-form");
     const msg = m.panel.querySelector("#add-metric-msg");
+    m.panel.querySelector("#am-new").addEventListener("click", () => { m.close(); openNewMetricModal(); });
     let lib = [];
     // The picker offers the account's metrics that aren't already linked to this benchmark. The pick
     // VALUE is the unique name (what lands in the input); the label shows "label — name". `pickable` is
@@ -557,6 +659,46 @@
         m.close();
         renderMetrics($("tab-panel"), $("tab-actions"));
       } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+    });
+  }
+
+  // ── New-metric modal: the full metric form (Details + Formula tabs via SMMetricForm) in a modal —
+  //    define a metric on the fly, then link it to this benchmark without leaving the page. ──
+  function openNewMetricModal() {
+    const bodyHtml =
+      '<form class="form" id="new-metric-form" novalidate>' + SMMetricForm.render({}, { isNew: true }) + "</form>" +
+      '<p class="form-status" id="new-metric-msg" style="margin-top:0.5rem;"></p>';
+    const m = SM.modal({ title: "New metric", description: "Define a new metric and link it to this benchmark.", bodyHtml: bodyHtml, width: 720 });
+    const f = m.panel.querySelector("#new-metric-form");
+    const msg = m.panel.querySelector("#new-metric-msg");
+    // The metric form's tab row carries the actions (same slot the metric detail page uses).
+    let createdMetric = null; // survives a failed link so a retry doesn't mint a duplicate
+    const actions = f.querySelector("#mf-tab-actions");
+    actions.innerHTML =
+      '<button type="button" class="button buttonSecondary buttonSmall" id="nm-cancel">Cancel</button>' +
+      '<button type="button" class="button buttonPrimary buttonSmall" id="nm-save">Create &amp; link</button>';
+    SMMetricForm.wire(f, { isNew: true });
+    m.panel.querySelector("#nm-cancel").addEventListener("click", m.close);
+    m.panel.querySelector("#nm-save").addEventListener("click", async () => {
+      const res = SMMetricForm.collect(f, { isNew: true });
+      if (!res.ok) { msg.textContent = res.message || ""; msg.className = "form-status" + (res.message ? " is-error" : ""); return; }
+      const btn = m.panel.querySelector("#nm-save"); btn.disabled = true;
+      msg.textContent = ""; msg.className = "form-status";
+      try {
+        // The created id is retained across retries so a failed LINK never re-creates the metric.
+        if (!createdMetric) {
+          const doc = await apiFetch("/api/v1/metrics", { method: "POST", body: jsonapiBody("metric", res.attrs) });
+          createdMetric = doc && doc.data;
+        }
+        await apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: ID, metric: createdMetric.id }) });
+        m.close();
+        SM.toast("Metric created and linked.", { kind: "success" });
+        renderMetrics($("tab-panel"), $("tab-actions"));
+      } catch (err) {
+        btn.disabled = false;
+        const note = createdMetric ? " The metric was created — retrying will only retry the link." : "";
+        msg.textContent = err.message + note; msg.className = "form-status is-error";
+      }
     });
   }
 

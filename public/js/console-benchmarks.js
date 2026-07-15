@@ -89,11 +89,12 @@
   //    always addable later from the benchmark's tabs). Finish creates the benchmark, links the chosen
   //    subjects + metrics, and opens it in view mode.
   function openCreateModal() {
-    const data = { name: "", description: "" };
+    const data = { name: "", description: "", subject_type: "" };
     const subjects = []; // chosen subject resources
     const metrics = [];  // chosen metric resources
     let acctSubjects = null; // account library, loaded lazily on first visit to each step
     let acctMetrics = null;
+    let acctTypes = null; // the account's subject types (required pick on step 2)
 
     const m = SM.modal({ title: "", bodyHtml: '<div id="bw-root"></div>', width: 520 });
     const header = m.panel.querySelector(".modalHeader");
@@ -173,23 +174,45 @@
       renderSubjects();
     }
 
-    // ── Step 2: subjects ──
+    // ── Step 2: subject type (required — a benchmark compares like against like) + subjects ──
     function renderSubjects() {
+      const typeOpts = (acctTypes || []).map((t) => {
+        const a = t.attributes || {};
+        return '<option value="' + esc(t.id) + '"' + (t.id === data.subject_type ? " selected" : "") + ">" + esc(a.name || a.key || t.id) + "</option>";
+      }).join("");
+      const noTypes = acctTypes !== null && acctTypes.length === 0;
       root.innerHTML =
         '<div class="wzScreen">' +
-        '<div class="wzHead"><h2 class="wzTitle">Add subjects</h2><p class="wzText">Link the subjects this benchmark compares — the things you’re measuring. This is optional: add one or more now, or add them anytime later from the benchmark’s Subjects tab.</p></div>' +
+        '<div class="wzHead"><h2 class="wzTitle">Add subjects</h2><p class="wzText">A benchmark compares subjects of one type — pick it, then link the subjects you’re measuring. Subjects are optional now and always addable later from the benchmark’s Subjects tab.</p></div>' +
+        '<label class="field"><span class="detailFieldLabel fieldRequired">Subject type</span>' +
+        '<select id="bw-st"><option value="">Pick a subject type…</option>' + typeOpts + "</select>" +
+        (noTypes ? '<p class="detailFieldHelp">No subject types yet — create one on the Subject types page first.</p>' : "") +
+        '<p class="fieldErrorMessage" hidden></p></label>' +
         '<label class="field"><span class="detailFieldLabel">Subject</span><input id="bw-subj" type="text" autocomplete="off" placeholder="Pick a subject to add" /></label>' +
         '<div class="wzChips" id="bw-subj-chips"></div>' +
         '<p class="form-status" id="bw-msg"></p>' +
         dots(1) +
         nav(renderName, "Next", null);
-      const fillList = setupPicker("#bw-subj", "#bw-subj-chips", () => acctSubjects, subjects,
+      const fillList = setupPicker("#bw-subj", "#bw-subj-chips",
+        () => (acctSubjects || []).filter((t) => (t.attributes || {}).subject_type === data.subject_type),
+        subjects,
         (t) => [(t.attributes || {}).key, (t.attributes || {}).name],
         (t) => { const a = t.attributes || {}; return (a.name || "") + (a.key ? " — " + a.key : ""); },
         (t) => (t.attributes || {}).name || (t.attributes || {}).key || "");
+      const stEl = root.querySelector("#bw-st");
+      stEl.addEventListener("change", () => {
+        SM.clearFieldError(stEl);
+        data.subject_type = stEl.value;
+        subjects.length = 0; // chosen subjects must conform to the newly-picked type
+        renderSubjects();
+      });
       root.querySelector("#bw-back").addEventListener("click", renderName);
-      root.querySelector("#bw-next").addEventListener("click", renderMetrics);
-      root.querySelector("#bw-subj").focus();
+      root.querySelector("#bw-next").addEventListener("click", () => {
+        if (!data.subject_type) { SM.setFieldError(stEl, "Pick the type of subject this benchmark compares."); stEl.focus(); return; }
+        renderMetrics();
+      });
+      (data.subject_type ? root.querySelector("#bw-subj") : stEl).focus();
+      if (acctTypes === null) loadList("/api/v1/subject_types?page[size]=1000", (rows) => { acctTypes = rows; renderSubjects(); });
       if (acctSubjects === null) loadList("/api/v1/subjects?page[size]=1000", (rows) => { acctSubjects = rows; fillList(); });
     }
 
@@ -219,7 +242,7 @@
       const msg = root.querySelector("#bw-msg"); msg.textContent = ""; msg.className = "form-status";
       const btn = root.querySelector("#bw-finish"); btn.disabled = true;
       try {
-        const attrs = { name: data.name };
+        const attrs = { name: data.name, subject_type: data.subject_type };
         if (data.description) attrs.description = data.description;
         const doc = await apiFetch("/api/v1/benchmarks", { method: "POST", body: jsonapiBody("benchmark", attrs) });
         const id = doc && doc.data && doc.data.id;

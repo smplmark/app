@@ -142,6 +142,15 @@ export async function countSubjectsOfType(db: D1Database, subjectTypeId: string)
   return r?.n ?? 0;
 }
 
+/** How many benchmarks pin this subject type (benchmark.subject_type — see 0024). */
+export async function countBenchmarksOfType(db: D1Database, subjectTypeId: string): Promise<number> {
+  const r = await db
+    .prepare("SELECT COUNT(*) AS n FROM benchmark WHERE subject_type = ?")
+    .bind(subjectTypeId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 export async function deleteSubjectType(db: D1Database, id: string): Promise<void> {
   await db.prepare("DELETE FROM subject_type WHERE id = ?").bind(id).run();
 }

@@ -106,9 +106,9 @@ describe("sql builders", () => {
       "benchmark_subject",
       "run",
       "subject",
-      "subject_type",
       "benchmark_tag",
       "benchmark",
+      "subject_type",
       "tag",
       "account",
     ]);

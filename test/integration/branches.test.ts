@@ -17,6 +17,7 @@ import {
   register,
   resetDb,
   type Resource,
+  makeSubjectType,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -26,7 +27,7 @@ describe("benchmark create defaults + scoped-key visibility", () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
-      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema" } } },
+      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema", subject_type: (await makeSubjectType(me.token)).id } } },
       bearer(me.token),
     );
     expect(res.status).toBe(201);

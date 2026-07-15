@@ -93,9 +93,10 @@ export function buildWipeSql() {
     `DELETE FROM benchmark_subject WHERE benchmark_id IN (${owned}) OR subject_id LIKE 'ing-%'`,
     `DELETE FROM run WHERE benchmark_id IN (${owned})`,
     `DELETE FROM subject WHERE id LIKE 'ing-%'`,
-    `DELETE FROM subject_type WHERE id LIKE 'ing-st-%'`,
     `DELETE FROM benchmark_tag WHERE benchmark_id IN (${owned})`,
+    // benchmark before subject_type: benchmark.subject_type references subject_type (0024).
     `DELETE FROM benchmark WHERE published_as_kind = 'INGESTED'`,
+    `DELETE FROM subject_type WHERE id LIKE 'ing-st-%'`,
     `DELETE FROM tag WHERE id NOT IN (SELECT DISTINCT tag_id FROM benchmark_tag)`,
     `DELETE FROM account WHERE id = ${q(SYSTEM_ACCOUNT_ID)} AND NOT EXISTS (SELECT 1 FROM benchmark WHERE account_id = ${q(SYSTEM_ACCOUNT_ID)})`,
   ];
@@ -252,7 +253,7 @@ export function buildInsertSql(entries) {
       retrieved_at: retrievedAt,
     });
     benchRows.push(
-      `(${q(bid)}, ${q(publisherAccountId(slug))}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.measurementSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
+      `(${q(bid)}, ${q(publisherAccountId(slug))}, ${q(b.key)}, ${q(clamp(b.name, LIMITS.nameLength, counts))}, ${q(clamp(b.description, LIMITS.descriptionLength, counts))}, ${q(clamp(b.about, LIMITS.longTextLength, counts))}, ${q(clamp(b.methodology, LIMITS.longTextLength, counts))}, ${q(subjectTypeIdFor(slug))}, 'PUBLISHED', ${n(b.published_at ?? retrievedAt)}, NULL, NULL, ${q(JSON.stringify(b.measurementSchema))}, ${n(retrievedAt)}, ${n(retrievedAt)}, NULL, 0, NULL, 'INGESTED', NULL, ${q(attribution)}, ${q(b.category)}, ${n(retrievedAt)})`,
     );
     counts.benchmarks += 1;
 
@@ -382,15 +383,16 @@ export function buildInsertSql(entries) {
   }
 
   statements.push(
-    ...chunkInsert(
-      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, closed_at) VALUES",
-      benchRows,
-    ),
-    ...tagStatements,
+    // subject_type before benchmark: benchmark.subject_type references subject_type (0024).
     ...chunkInsert(
       "INSERT INTO subject_type (id, account_id, key, name, fields, created_at, updated_at) VALUES",
       subjectTypeRows,
     ),
+    ...chunkInsert(
+      "INSERT INTO benchmark (id, account_id, key, name, description, about, methodology, subject_type, status, published_at, withdrawn_at, withdrawal_reason, measurement_schema, created_at, updated_at, created_by_user_id, draft, published_by_user_id, published_as_kind, published_identity_id, attribution_snapshot, category, closed_at) VALUES",
+      benchRows,
+    ),
+    ...tagStatements,
     ...chunkInsert(
       "INSERT INTO subject (id, account_id, subject_type_id, key, name, details, created_at, updated_at) VALUES",
       subjectRows,
