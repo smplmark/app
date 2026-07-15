@@ -146,7 +146,6 @@
     const initCustom = initFormatSel === "__custom__" ? initFormat : "";
 
     const typePills = TYPES.map((p) => radioPill("mf-type", p[0], p[1], p[0] === initType)).join("");
-    const unitDatalist = '<datalist id="mf-unit-presets">' + UNIT_PRESETS.map((u) => '<option value="' + esc(u) + '"></option>').join("") + "</datalist>";
     const formatOptions = FORMAT_PRESETS.map((p) => '<option value="' + esc(p[0]) + '"' + (p[0] === initFormatSel ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
     const nameHelp = isNew
       ? "The identifier used in the API and a measurement’s JSON — lowercase letters, numbers, and underscores."
@@ -156,7 +155,7 @@
       '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input name="name" type="text" placeholder="throughput" autocomplete="off" spellcheck="false"' + (isNew ? "" : " disabled") + ' value="' + esc(attrs.name || "") + '" /><p class="fieldErrorMessage" hidden></p><p class="detailFieldHelp">' + nameHelp + "</p></label>" +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Label</span><input name="label" type="text" placeholder="Throughput" autocomplete="off" value="' + esc(attrs.label || "") + '" /><p class="fieldErrorMessage" hidden></p></label>' +
       '<label class="field"><span class="detailFieldLabel">Description</span><input name="description" type="text" placeholder="Optional — a note about this metric" autocomplete="off" value="' + esc(attrs.description || "") + '" /></label>' +
-      '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" list="mf-unit-presets" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(initUnit) + '" />' + unitDatalist +
+      '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(initUnit) + '" />' +
       '<p class="detailFieldHelp">What the metric measures. A display label — it doesn’t affect computation.</p></label>' +
       '<div class="fieldModalBlock"><span class="detailFieldLabel">Format</span>' +
       '<div class="mfFormatRow"><select name="mf-format-preset" class="mfSlotPick mfFormatPreset">' + formatOptions + "</select>" +
@@ -261,6 +260,8 @@
     // Format: a preset <select> plus a custom-pattern input (shown only for "Custom…"), with a live
     // sample that reflects the current pattern, type default, and unit.
     const unitEl = container.querySelector('[name="unit"]');
+    // Unit presets via the shared themed popup (free text stays allowed — the popup hides on no match).
+    SM.combobox(unitEl, { options: () => UNIT_PRESETS, emptyText: null });
     const fmtPreset = container.querySelector('[name="mf-format-preset"]');
     const fmtCustom = container.querySelector('[name="mf-format-custom"]');
     const sampleEl = container.querySelector(".mfSampleVal");
@@ -301,15 +302,13 @@
     // ── Steps builder ──
     const builder = container.querySelector("#mf-builder");
 
-    // One operand slot — an editable combobox with a CUSTOM popup (the native <datalist> popup is
-    // unstylable: it ignores the app theme, detaches from the input, and sizes itself). The popup lists
+    // One operand slot — an editable combobox (SM.combobox provides the themed popup). The popup lists
     // every metric, the built-in `created_at`, and the earlier steps (A, B…), grouped and filtered as
     // the user types; they can pick one or just type a number. The typed value is parsed into a token on
     // input and validated on save.
     function slotHtml(tok, si, slot) {
       return '<span class="mfSlot">' +
-        '<input class="mfSlotInput" data-role="slot" data-si="' + si + '" data-slot="' + slot + '" autocomplete="off" spellcheck="false" placeholder="metric / step / number" value="' + esc(slotDisplay(tok)) + '" role="combobox" aria-expanded="false" aria-autocomplete="list" />' +
-        '<div class="mfSlotMenu" hidden></div></span>';
+        '<input class="mfSlotInput" data-role="slot" data-si="' + si + '" data-slot="' + slot + '" autocomplete="off" spellcheck="false" placeholder="metric / step / number" value="' + esc(slotDisplay(tok)) + '" /></span>';
     }
 
     // The option groups available to a slot on step `si` (earlier steps only — no self/forward refs).
@@ -320,44 +319,6 @@
       groups.push(["Built-in", ["created_at"]]);
       if (priorIds.length) groups.push(["Steps", priorIds]);
       return groups;
-    }
-
-    // Render (or re-filter) the popup under a slot input. Substring match; empty input shows everything.
-    function renderSlotMenu(input) {
-      const menu = input.parentElement.querySelector(".mfSlotMenu");
-      if (!menu) return;
-      const q = input.value.trim().toLowerCase();
-      let html = "";
-      slotGroups(Number(input.getAttribute("data-si"))).forEach((g) => {
-        const hits = g[1].filter((v) => !q || v.toLowerCase().indexOf(q) >= 0);
-        if (!hits.length) return;
-        html += '<div class="mfSlotOptGroup">' + esc(g[0]) + "</div>" +
-          hits.map((v) => '<button type="button" class="mfSlotOpt" data-v="' + esc(v) + '">' + esc(v) + "</button>").join("");
-      });
-      menu.innerHTML = html || '<div class="mfSlotOptEmpty">No matches — a number works too</div>';
-      menu.hidden = false;
-      input.setAttribute("aria-expanded", "true");
-    }
-    function closeSlotMenu(input) {
-      const menu = input.parentElement.querySelector(".mfSlotMenu");
-      if (menu) menu.hidden = true;
-      input.setAttribute("aria-expanded", "false");
-    }
-    // Keyboard: move the highlighted option (ArrowUp/Down), Enter picks it, Escape closes.
-    function moveSlotActive(menu, dir) {
-      const opts = Array.from(menu.querySelectorAll(".mfSlotOpt"));
-      if (!opts.length) return;
-      const cur = menu.querySelector(".mfSlotOpt.isActive");
-      let i = cur ? opts.indexOf(cur) + dir : dir > 0 ? 0 : opts.length - 1;
-      i = Math.max(0, Math.min(opts.length - 1, i));
-      opts.forEach((o) => o.classList.remove("isActive"));
-      opts[i].classList.add("isActive");
-      opts[i].scrollIntoView({ block: "nearest" });
-    }
-    function pickSlotOption(input, value) {
-      input.value = value;
-      input.dispatchEvent(new Event("input", { bubbles: true })); // reuse the parse + preview path
-      closeSlotMenu(input);
     }
 
     function stepRowHtml(step, si) {
@@ -409,6 +370,11 @@
         "</div>" +
         resultRowHtml() +
         previewHtml();
+      // Every operand slot gets the shared themed popup (metrics / created_at / earlier steps).
+      builder.querySelectorAll(".mfSlotInput").forEach((inp) => {
+        const si = Number(inp.getAttribute("data-si"));
+        SM.combobox(inp, { options: () => slotGroups(si), emptyText: "No matches — a number works too", mono: true });
+      });
     }
     function updatePreviewOnly() {
       const el = builder.querySelector(".mfPreviewText");
@@ -437,8 +403,8 @@
       else if (role === "fn") { state.formula.steps[si].fn = t.value; updatePreviewOnly(); }
       else if (role === "result") { state.formula.result = t.value; updatePreviewOnly(); }
     });
-    // Operand slots are editable inputs — parse on each keystroke (no re-render, so focus is kept) and
-    // re-filter the popup.
+    // Operand slots are editable inputs — parse on each keystroke (no re-render, so focus is kept).
+    // The popup itself (open/filter/pick/keyboard) is SM.combobox's, attached in renderBuilder.
     builder.addEventListener("input", (e) => {
       const t = e.target;
       if (!t.getAttribute || t.getAttribute("data-role") !== "slot") return;
@@ -447,39 +413,6 @@
       const metricNames = state.metrics.map((m) => m.name);
       state.formula.steps[si][t.getAttribute("data-slot")] = parseSlotText(t.value, priorIds, metricNames);
       updatePreviewOnly();
-      renderSlotMenu(t);
-    });
-    // Slot popup lifecycle: open on focus, close on blur. Picking an option uses mousedown with
-    // preventDefault so the input never loses focus (click would blur first and the menu would vanish).
-    builder.addEventListener("focusin", (e) => {
-      const t = e.target;
-      if (t.getAttribute && t.getAttribute("data-role") === "slot") renderSlotMenu(t);
-    });
-    builder.addEventListener("focusout", (e) => {
-      const t = e.target;
-      if (t.getAttribute && t.getAttribute("data-role") === "slot") closeSlotMenu(t);
-    });
-    builder.addEventListener("mousedown", (e) => {
-      const opt = e.target.closest && e.target.closest(".mfSlotOpt");
-      if (!opt || !builder.contains(opt)) return;
-      e.preventDefault();
-      pickSlotOption(opt.closest(".mfSlot").querySelector(".mfSlotInput"), opt.getAttribute("data-v"));
-    });
-    builder.addEventListener("keydown", (e) => {
-      const t = e.target;
-      if (!t.getAttribute || t.getAttribute("data-role") !== "slot") return;
-      const menu = t.parentElement.querySelector(".mfSlotMenu");
-      if (!menu) return;
-      if (e.key === "Escape") { closeSlotMenu(t); return; }
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        if (menu.hidden) renderSlotMenu(t);
-        moveSlotActive(menu, e.key === "ArrowDown" ? 1 : -1);
-      } else if (e.key === "Enter" && !menu.hidden) {
-        const active = menu.querySelector(".mfSlotOpt.isActive");
-        if (active) { e.preventDefault(); pickSlotOption(t, active.getAttribute("data-v")); }
-        else closeSlotMenu(t);
-      }
     });
     builder.addEventListener("click", (e) => {
       const btn = e.target.closest && e.target.closest("[data-role]");

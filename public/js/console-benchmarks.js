@@ -111,32 +111,35 @@
         '<button type="button" class="button buttonPrimary buttonSmall" id="bw-next">' + nextLabel + "</button></div>";
     }
 
-    // A datalist picker that accumulates chosen items into `chosen` (dedup by id). matchKeys(t) lists the
-    // strings a typed value can match; optLabel(t)/chipLabel(t) render the option + chip; onChange re-renders.
-    function setupPicker(inputSel, listSel, chipsSel, source, chosen, matchKeys, optLabel, chipLabel) {
+    // A combobox picker (SM.combobox — themed popup) that accumulates chosen items into `chosen` (dedup
+    // by id). matchKeys(t) lists the strings a typed value can match (the first is the pick value);
+    // optLabel(t)/chipLabel(t) render the option + chip. Already-chosen items drop out of the popup.
+    function setupPicker(inputSel, chipsSel, source, chosen, matchKeys, optLabel, chipLabel) {
       const input = root.querySelector(inputSel);
-      function fillList() {
-        const ids = new Set(chosen.map((c) => c.id));
-        root.querySelector(listSel).innerHTML = (source() || []).filter((t) => !ids.has(t.id))
-          .map((t) => '<option value="' + esc(matchKeys(t)[0] || "") + '">' + esc(optLabel(t)) + "</option>").join("");
-      }
+      const combo = SM.combobox(input, {
+        options: () => {
+          const ids = new Set(chosen.map((c) => c.id));
+          return (source() || []).filter((t) => !ids.has(t.id))
+            .map((t) => ({ value: matchKeys(t)[0] || "", label: optLabel(t) }));
+        },
+        emptyText: "No matches.",
+      });
       function renderChips() {
         const host = root.querySelector(chipsSel);
         host.innerHTML = chosen.map((t, i) => '<span class="wzChip">' + esc(chipLabel(t)) + '<button type="button" data-i="' + i + '" title="Remove" aria-label="Remove">×</button></span>').join("");
-        host.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => { chosen.splice(Number(b.dataset.i), 1); renderChips(); fillList(); }));
+        host.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => { chosen.splice(Number(b.dataset.i), 1); renderChips(); combo.refresh(); }));
       }
       function add() {
         const val = input.value.trim().toLowerCase();
         input.value = "";
         if (!val) return;
         const t = (source() || []).find((x) => matchKeys(x).some((k) => String(k || "").toLowerCase() === val));
-        if (t && !chosen.some((c) => c.id === t.id)) { chosen.push(t); renderChips(); fillList(); }
+        if (t && !chosen.some((c) => c.id === t.id)) { chosen.push(t); renderChips(); }
       }
       input.addEventListener("change", add);
       input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); add(); } });
       renderChips();
-      fillList();
-      return fillList;
+      return combo.refresh;
     }
 
     async function loadList(url, set) {
@@ -175,12 +178,12 @@
       root.innerHTML =
         '<div class="wzScreen">' +
         '<div class="wzHead"><h2 class="wzTitle">Add subjects</h2><p class="wzText">Link the subjects this benchmark compares — the things you’re measuring. This is optional: add one or more now, or add them anytime later from the benchmark’s Subjects tab.</p></div>' +
-        '<label class="field"><span class="detailFieldLabel">Subject</span><input id="bw-subj" type="text" list="bw-subj-list" autocomplete="off" placeholder="Pick a subject to add" /><datalist id="bw-subj-list"></datalist></label>' +
+        '<label class="field"><span class="detailFieldLabel">Subject</span><input id="bw-subj" type="text" autocomplete="off" placeholder="Pick a subject to add" /></label>' +
         '<div class="wzChips" id="bw-subj-chips"></div>' +
         '<p class="form-status" id="bw-msg"></p>' +
         dots(1) +
         nav(renderName, "Next", null);
-      const fillList = setupPicker("#bw-subj", "#bw-subj-list", "#bw-subj-chips", () => acctSubjects, subjects,
+      const fillList = setupPicker("#bw-subj", "#bw-subj-chips", () => acctSubjects, subjects,
         (t) => [(t.attributes || {}).key, (t.attributes || {}).name],
         (t) => { const a = t.attributes || {}; return (a.name || "") + (a.key ? " — " + a.key : ""); },
         (t) => (t.attributes || {}).name || (t.attributes || {}).key || "");
@@ -195,12 +198,12 @@
       root.innerHTML =
         '<div class="wzScreen">' +
         '<div class="wzHead"><h2 class="wzTitle">Add metrics</h2><p class="wzText">Link the metrics this benchmark reports. This is optional: add one or more now, or add them anytime later from the benchmark’s Metrics tab.</p></div>' +
-        '<label class="field"><span class="detailFieldLabel">Metric</span><input id="bw-metric" type="text" list="bw-metric-list" autocomplete="off" placeholder="Pick a metric to add" /><datalist id="bw-metric-list"></datalist></label>' +
+        '<label class="field"><span class="detailFieldLabel">Metric</span><input id="bw-metric" type="text" autocomplete="off" placeholder="Pick a metric to add" /></label>' +
         '<div class="wzChips" id="bw-metric-chips"></div>' +
         '<p class="form-status" id="bw-msg"></p>' +
         dots(2) +
         nav(renderSubjects, "Finish", null);
-      const fillList = setupPicker("#bw-metric", "#bw-metric-list", "#bw-metric-chips", () => acctMetrics, metrics,
+      const fillList = setupPicker("#bw-metric", "#bw-metric-chips", () => acctMetrics, metrics,
         (t) => [(t.attributes || {}).name, (t.attributes || {}).label],
         (t) => { const a = t.attributes || {}; return (a.label || "") + (a.name ? " — " + a.name : ""); },
         (t) => (t.attributes || {}).label || (t.attributes || {}).name || "");

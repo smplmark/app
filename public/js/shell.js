@@ -755,6 +755,148 @@
     };
   }
 
+  // ── Combobox ── an editable input with a themed popup of pickable options. The native <datalist>
+  // popup is unstylable (it ignores the app theme, detaches from the input, and sizes itself), so this
+  // renders its own: anchored under the input at the input's width, filtered as the user types
+  // (substring on value + label), with hover/keyboard highlight (ArrowUp/Down + Enter, Escape closes)
+  // and mousedown-to-pick so the input never loses focus. The menu is position:fixed at viewport
+  // coordinates so it is never clipped by a scrollable ancestor (modal panels overflow-y:auto); it
+  // closes on any outside scroll or resize rather than tracking the moving anchor.
+  //
+  // opts.options() is called fresh on every open/refilter and may return, interchangeably:
+  //   ["a", "b"]                                — flat values
+  //   [{ value, label }, …]                     — values with display labels
+  //   [["Group", [items]], …]                   — grouped (items in either form above)
+  // Picking sets input.value and dispatches `input` + `change` so the caller's existing listeners run.
+  // opts.emptyText (string, or a function evaluated per render — e.g. "Loading…" until a fetch lands)
+  // shows when nothing matches; null/undefined hides the popup instead (free-text fields).
+  // opts.mono renders options in the monospace font. Returns { refresh, close }.
+  let comboSeq = 0;
+  function combobox(input, opts) {
+    opts = opts || {};
+    const menuId = "sm-combo-" + ++comboSeq;
+    const menu = document.createElement("div");
+    menu.className = "smComboMenu" + (opts.mono ? " isMono" : "");
+    menu.id = menuId;
+    menu.setAttribute("role", "listbox");
+    menu.hidden = true;
+    input.insertAdjacentElement("afterend", menu);
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "false");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-controls", menuId);
+
+    // Normalize options() output to [[groupLabel, [{ value, label }]]].
+    function groupsOf() {
+      const src = (opts.options && opts.options()) || [];
+      const grouped = Array.isArray(src[0]) ? src : [["", src]];
+      return grouped.map(function (g) {
+        return [g[0], (g[1] || []).map(function (it) { return typeof it === "string" ? { value: it, label: "" } : it; })];
+      });
+    }
+    // Close when anything outside the menu scrolls (the anchor moves) or the window resizes. Attached
+    // only while the menu is open so per-instance listeners never accumulate on window.
+    function onOutsideScroll(e) { if (!menu.contains(e.target)) close(); }
+    function onResize() { close(); }
+    function close() {
+      if (menu.hidden) return;
+      menu.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+      window.removeEventListener("scroll", onOutsideScroll, true);
+      window.removeEventListener("resize", onResize);
+    }
+    function setActive(items, i) {
+      items.forEach(function (o, n) {
+        o.classList.toggle("isActive", n === i);
+        o.setAttribute("aria-selected", String(n === i));
+      });
+      if (i >= 0 && items[i]) {
+        input.setAttribute("aria-activedescendant", items[i].id);
+        items[i].scrollIntoView({ block: "nearest" });
+      } else {
+        input.removeAttribute("aria-activedescendant");
+      }
+    }
+    function render() {
+      const q = input.value.trim().toLowerCase();
+      let html = "";
+      let n = 0;
+      groupsOf().forEach(function (g) {
+        const hits = g[1].filter(function (o) {
+          return !q || o.value.toLowerCase().indexOf(q) >= 0 || (o.label || "").toLowerCase().indexOf(q) >= 0;
+        });
+        if (!hits.length) return;
+        if (g[0]) html += '<div class="smComboOptGroup" role="presentation">' + esc(g[0]) + "</div>";
+        html += hits.map(function (o) {
+          return '<button type="button" class="smComboOpt" role="option" id="' + menuId + "-" + (n++) + '" tabindex="-1" aria-selected="false" data-v="' + esc(o.value) + '">' + esc(o.label || o.value) + "</button>";
+        }).join("");
+      });
+      if (!html) {
+        const et = typeof opts.emptyText === "function" ? opts.emptyText() : opts.emptyText;
+        if (et == null) { close(); return; }
+        html = '<div class="smComboEmpty">' + esc(et) + "</div>";
+      }
+      // Fixed positioning at viewport coordinates — never clipped by a scrollable ancestor.
+      const r = input.getBoundingClientRect();
+      menu.style.top = r.bottom + 4 + "px";
+      menu.style.left = r.left + "px";
+      menu.style.width = r.width + "px";
+      menu.innerHTML = html;
+      input.removeAttribute("aria-activedescendant");
+      if (menu.hidden) {
+        menu.hidden = false;
+        input.setAttribute("aria-expanded", "true");
+        window.addEventListener("scroll", onOutsideScroll, true);
+        window.addEventListener("resize", onResize);
+      }
+    }
+    function pick(value) {
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      close();
+    }
+    input.addEventListener("focus", render);
+    input.addEventListener("input", render);
+    input.addEventListener("blur", function () { close(); });
+    // A click on the already-focused input fires no focus event — reopen the menu explicitly (the
+    // native datalist reopens on click too; without this, Escape or a pick would be a mouse dead end).
+    input.addEventListener("click", function () { if (menu.hidden) render(); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        if (!menu.hidden) { close(); e.stopPropagation(); }
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (menu.hidden) render();
+        const items = Array.from(menu.querySelectorAll(".smComboOpt"));
+        if (!items.length) return;
+        const cur = menu.querySelector(".smComboOpt.isActive");
+        let i = cur ? items.indexOf(cur) + (e.key === "ArrowDown" ? 1 : -1) : e.key === "ArrowDown" ? 0 : items.length - 1;
+        i = Math.max(0, Math.min(items.length - 1, i));
+        setActive(items, i);
+      } else if (e.key === "Enter" && !menu.hidden) {
+        const active = menu.querySelector(".smComboOpt.isActive");
+        if (active) { e.preventDefault(); pick(active.getAttribute("data-v")); }
+        else close(); // fall through — the caller's own Enter/submit behavior applies to the typed text
+      }
+    });
+    // mousedown (not click) so the pick lands before blur would close the menu.
+    menu.addEventListener("mousedown", function (e) {
+      const opt = e.target.closest && e.target.closest(".smComboOpt");
+      if (!opt) { e.preventDefault(); return; }
+      e.preventDefault();
+      pick(opt.getAttribute("data-v"));
+    });
+
+    return {
+      refresh: function () { if (!menu.hidden) render(); },
+      close: close,
+    };
+  }
+
   // ── Favicon resolution ── sites keep their icon at different conventional paths (many have no
   // /favicon.ico at all — they declare an SVG/PNG via <link>). We can't read another origin's <link>
   // tags (CORS), so we probe the common paths in order and use the first that loads as an image.
@@ -792,6 +934,7 @@
     fmtDateTime: fmtDateTime,
     formatNumber: formatNumber,
     pagedTable: pagedTable,
+    combobox: combobox,
     setFieldError: setFieldError,
     clearFieldError: clearFieldError,
     toolbar: toolbar,

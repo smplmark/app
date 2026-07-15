@@ -399,8 +399,7 @@
     const bodyHtml =
       '<form class="form" id="add-subject-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span>' +
-      '<input name="q" type="text" list="modal-acct-subjects" autocomplete="off" placeholder="Pick a subject to link" />' +
-      '<datalist id="modal-acct-subjects"></datalist>' +
+      '<input name="q" type="text" autocomplete="off" placeholder="Pick a subject to link" />' +
       '<p class="detailFieldHelp">Subjects are created on the Subjects page (choosing their type), then linked here.</p>' +
       '<p class="fieldErrorMessage" hidden></p></label>' +
       '<p class="form-status" id="add-subject-msg"></p>' +
@@ -410,7 +409,11 @@
     const f = m.panel.querySelector("#add-subject-form");
     const msg = m.panel.querySelector("#add-subject-msg");
     let acct = [];
-    // Fill the picker with the account's subjects that aren't already linked to this benchmark.
+    // The picker offers the account's subjects that aren't already linked to this benchmark. The pick
+    // VALUE is the unique key (what lands in the input); the label shows "name — key". `pickable` is
+    // null until the fetch lands so the popup says "Loading…" rather than a false "No matches."
+    let pickable = null;
+    const combo = SM.combobox(f.q, { options: () => pickable || [], emptyText: () => (pickable ? "No matches." : "Loading…") });
     try {
       const [acctDoc, linksDoc] = await Promise.all([
         apiFetch("/api/v1/subjects"),
@@ -418,12 +421,12 @@
       ]);
       acct = (acctDoc && acctDoc.data) || [];
       const linkedIds = new Set(((linksDoc && linksDoc.data) || []).map((l) => (l.attributes || {}).subject));
-      // The option VALUE is the unique key (what lands in the input on pick); the label shows "name — key".
-      m.panel.querySelector("#modal-acct-subjects").innerHTML = acct.filter((t) => !linkedIds.has(t.id)).map((t) => {
+      pickable = acct.filter((t) => !linkedIds.has(t.id)).map((t) => {
         const a = t.attributes || {};
-        return '<option value="' + esc(a.key || "") + '">' + esc((a.name || "") + (a.key ? " — " + a.key : "")) + "</option>";
-      }).join("");
-    } catch (_e) { /* leave the picker empty; server resolution by exact key still works */ }
+        return { value: a.key || "", label: (a.name || "") + (a.key ? " — " + a.key : "") };
+      });
+      combo.refresh();
+    } catch (_e) { pickable = []; combo.refresh(); /* picker empty; server resolution by exact key still works */ }
     f.q.addEventListener("input", () => SM.clearFieldError(f.q));
     f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -508,8 +511,7 @@
     const bodyHtml =
       '<form class="form" id="add-metric-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Metric</span>' +
-      '<input name="q" type="text" list="modal-acct-metrics" autocomplete="off" placeholder="Pick a metric to link" />' +
-      '<datalist id="modal-acct-metrics"></datalist>' +
+      '<input name="q" type="text" autocomplete="off" placeholder="Pick a metric to link" />' +
       '<p class="detailFieldHelp">Metrics are defined on the Metrics page, then linked here. Linking copies the metric’s definition into this benchmark.</p>' +
       '<p class="fieldErrorMessage" hidden></p></label>' +
       '<p class="form-status" id="add-metric-msg"></p>' +
@@ -519,7 +521,11 @@
     const f = m.panel.querySelector("#add-metric-form");
     const msg = m.panel.querySelector("#add-metric-msg");
     let lib = [];
-    // Fill the picker with the account's metrics that aren't already linked to this benchmark.
+    // The picker offers the account's metrics that aren't already linked to this benchmark. The pick
+    // VALUE is the unique name (what lands in the input); the label shows "label — name". `pickable` is
+    // null until the fetch lands so the popup says "Loading…" rather than a false "No matches."
+    let pickable = null;
+    const combo = SM.combobox(f.q, { options: () => pickable || [], emptyText: () => (pickable ? "No matches." : "Loading…") });
     try {
       const [libDoc, linksDoc] = await Promise.all([
         apiFetch("/api/v1/metrics?page[size]=1000"),
@@ -527,12 +533,12 @@
       ]);
       lib = (libDoc && libDoc.data) || [];
       const linkedIds = new Set(((linksDoc && linksDoc.data) || []).map((l) => (l.attributes || {}).metric));
-      // The option VALUE is the unique name (what lands in the input on pick); the label shows "label — name".
-      m.panel.querySelector("#modal-acct-metrics").innerHTML = lib.filter((t) => !linkedIds.has(t.id)).map((t) => {
+      pickable = lib.filter((t) => !linkedIds.has(t.id)).map((t) => {
         const a = t.attributes || {};
-        return '<option value="' + esc(a.name || "") + '">' + esc((a.label || "") + (a.name ? " — " + a.name : "")) + "</option>";
-      }).join("");
-    } catch (_e) { /* leave the picker empty; server resolution by exact name still works */ }
+        return { value: a.name || "", label: (a.label || "") + (a.name ? " — " + a.name : "") };
+      });
+      combo.refresh();
+    } catch (_e) { pickable = []; combo.refresh(); /* picker empty; server resolution by exact name still works */ }
     f.q.addEventListener("input", () => SM.clearFieldError(f.q));
     f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -699,11 +705,15 @@
   async function openAddMeasurementModal() {
     const r = selectedRun(); if (!r) return;
     const stored = measSchema().metrics || [];
-    const subjOptions = Object.values(MEAS_SUBJECTS).map((s) => { const a = s.attributes || {}; return '<option value="' + esc(a.key || "") + '">' + esc((a.name || "") + (a.key ? " — " + a.key : "")) + "</option>"; }).join("");
+    // The pick VALUE is the subject's key (what lands in the input); the label shows "name — key".
+    const subjOptions = Object.values(MEAS_SUBJECTS).map((s) => {
+      const a = s.attributes || {};
+      return { value: a.key || "", label: (a.name || "") + (a.key ? " — " + a.key : "") };
+    });
     const metricFields = stored.map((m) => '<label class="field"><span class="detailFieldLabel">' + esc(m.name) + '</span><input data-metric="' + esc(m.name) + '" type="number" step="any" autocomplete="off" placeholder="optional" /></label>').join("");
     const bodyHtml =
       '<form class="form" id="add-meas-form" novalidate>' +
-      '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span><input name="subject" type="text" list="meas-subjects" autocomplete="off" placeholder="Pick a subject to measure" /><datalist id="meas-subjects">' + subjOptions + '</datalist><p class="fieldErrorMessage" hidden></p></label>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span><input name="subject" type="text" autocomplete="off" placeholder="Pick a subject to measure" /><p class="fieldErrorMessage" hidden></p></label>' +
       (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : '<p class="detailFieldHelp">This benchmark has no stored metrics yet — add them on the Metrics tab to record values.</p>') +
       '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="text" autocomplete="off" placeholder="Defaults to now" /></label>' +
       '<p class="form-status" id="add-meas-msg"></p>' +
@@ -712,6 +722,7 @@
     const m = SM.modal({ title: "Add measurement", description: "Record a measurement for a subject in run " + (r.attributes || {}).key + ".", bodyHtml: bodyHtml, width: 560 });
     const f = m.panel.querySelector("#add-meas-form");
     const msg = m.panel.querySelector("#add-meas-msg");
+    SM.combobox(f.subject, { options: () => subjOptions, emptyText: "No matches." });
     f.subject.addEventListener("input", () => SM.clearFieldError(f.subject));
     f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
