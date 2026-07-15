@@ -634,6 +634,31 @@
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   }
 
+  // Render a number with an Excel-style pattern (a bounded subset: # 0 , . %). `#` is an optional digit
+  // (trailing zeros trimmed), `0` is a required digit (padded), `,` groups thousands, and a trailing `%`
+  // multiplies by 100 and appends a percent sign. Empty pattern → grouped with up to 6 trimmed decimals.
+  // Cosmetic only — this mirrors how metric values are shown; it never changes stored data.
+  function formatNumber(value, pattern) {
+    const n = Number(value);
+    if (!isFinite(n)) return "—";
+    if (!pattern) return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+    const percent = pattern.indexOf("%") >= 0;
+    const grouping = pattern.indexOf(",") >= 0;
+    const dot = pattern.indexOf(".");
+    const decs = dot >= 0 ? pattern.slice(dot + 1).replace(/[^0#]/g, "") : "";
+    const minD = (decs.match(/0/g) || []).length;
+    const maxD = decs.length;
+    const v = percent ? n * 100 : n;
+    const neg = v < 0;
+    const fixed = Math.abs(v).toFixed(maxD).split(".");
+    let ip = fixed[0];
+    let fp = fixed[1] || "";
+    while (fp.length > minD && fp.charAt(fp.length - 1) === "0") fp = fp.slice(0, -1);
+    if (grouping) ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    let out = (neg ? "-" : "") + (fp ? ip + "." + fp : ip);
+    return percent ? out + "%" : out;
+  }
+
   // ── Reusable sortable + client-paged table ── emits the shared dataTable markup: isSortable headers
   // with a ▲/▼ caret on the active column, and a "Showing X–Y of Z" footer with Previous/Next. Renders
   // into `container` and returns a controller { setRows, rerender, getSort }. Per-row action controls
@@ -765,6 +790,7 @@
     detailField: detailField,
     fmtDate: fmtDate,
     fmtDateTime: fmtDateTime,
+    formatNumber: formatNumber,
     pagedTable: pagedTable,
     setFieldError: setFieldError,
     clearFieldError: clearFieldError,

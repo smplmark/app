@@ -336,8 +336,10 @@ export interface SubjectTypeRow {
 }
 
 // ── Metrics ── a reusable, account-owned catalogue of metric definitions (stored or computed-on-read).
-export type MetricType = "NUMBER" | "DURATION_MS" | "PERCENT" | "COUNT" | "BYTES";
-export const METRIC_TYPES: readonly MetricType[] = ["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"];
+// Every metric is a numeric measurement; `type` is the numeric kind (whole number vs continuous). What
+// it measures (`unit`) and how it renders (`format`) are separate, cosmetic facets.
+export type MetricType = "INTEGER" | "DECIMAL";
+export const METRIC_TYPES: readonly MetricType[] = ["INTEGER", "DECIMAL"];
 export type MetricKind = "STORED" | "DERIVED";
 export const METRIC_KINDS: readonly MetricKind[] = ["STORED", "DERIVED"];
 /** The binary operators a formula step can apply: add, subtract, multiply, divide, modulo. */
@@ -381,6 +383,10 @@ export interface MetricRow {
   description: string | null;
   type: MetricType;
   kind: MetricKind;
+  /** The unit of measure — a short display label (`ms`, `bytes`, `req/s`, `%`). Cosmetic; null when unset. */
+  unit: string | null;
+  /** An Excel-style number-format pattern (`#,##0.00`, `0.0%`). Cosmetic; null uses a default per type. */
+  format: string | null;
   /** JSON string of MetricFormula, for DERIVED metrics; null for STORED. */
   formula: string | null;
   created_at: number;
@@ -446,6 +452,8 @@ export interface MetricDecl {
   type: string;
   /** Cosmetic — editable after publish. */
   unit?: string;
+  /** Excel-style number-format pattern for display. Cosmetic — editable after publish. */
+  format?: string;
   /** Human-readable description, surfaced on the benchmark page. Cosmetic — editable after publish. */
   description?: string;
 }
@@ -455,6 +463,8 @@ export interface DerivedDecl {
   name: string;
   /** Cosmetic — editable after publish. */
   unit?: string;
+  /** Excel-style number-format pattern for display. Cosmetic — editable after publish. */
+  format?: string;
   /** Semantic core — frozen on publish. */
   expr: JsonLogicRule;
   /** Human-readable description, surfaced on the benchmark page. Cosmetic — editable after publish. */

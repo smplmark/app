@@ -44,6 +44,9 @@ function parseMetric(m: unknown, i: number): MetricDecl {
   if (mm.unit !== undefined) {
     decl.unit = nonEmptyString(mm.unit, `measurement_schema.metrics[${i}].unit`);
   }
+  if (mm.format !== undefined) {
+    decl.format = nonEmptyString(mm.format, `measurement_schema.metrics[${i}].format`);
+  }
   if (mm.description !== undefined) {
     decl.description = nonEmptyString(
       mm.description,
@@ -64,6 +67,9 @@ function parseDerived(d: unknown, i: number): DerivedDecl {
   };
   if (dd.unit !== undefined) {
     decl.unit = nonEmptyString(dd.unit, `measurement_schema.derived[${i}].unit`);
+  }
+  if (dd.format !== undefined) {
+    decl.format = nonEmptyString(dd.format, `measurement_schema.derived[${i}].format`);
   }
   if (dd.description !== undefined) {
     decl.description = nonEmptyString(

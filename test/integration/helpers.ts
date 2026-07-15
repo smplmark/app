@@ -187,7 +187,7 @@ export async function makeMetric(
 ): Promise<Resource> {
   const res = await apiPost(
     "/api/v1/metrics",
-    { data: { type: "metric", attributes: { label: "Throughput", type: "NUMBER", ...attrs } } },
+    { data: { type: "metric", attributes: { label: "Throughput", type: "DECIMAL", ...attrs } } },
     bearer(token),
   );
   expect(res.status).toBe(201);

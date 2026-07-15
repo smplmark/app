@@ -72,6 +72,8 @@ metrics.post("/", requireAuth, async (c) => {
     description: parsed.description,
     type: parsed.type,
     kind: parsed.kind,
+    unit: parsed.unit,
+    format: parsed.format,
     formula: parsed.formula ? JSON.stringify(parsed.formula) : null,
   });
   return resourceResponse(serializeMetric(row), { status: 201 });
@@ -111,6 +113,8 @@ metrics.put("/:id", requireAuth, async (c) => {
     description: parsed.description,
     type: parsed.type,
     kind: parsed.kind,
+    unit: parsed.unit,
+    format: parsed.format,
     formula: parsed.formula ? JSON.stringify(parsed.formula) : null,
   });
   if (!row) throw new NotFoundError();

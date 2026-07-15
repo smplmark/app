@@ -287,6 +287,8 @@ export function serializeMetric(row: MetricRow): ResourceObject {
       description: row.description,
       type: row.type,
       kind: row.kind,
+      unit: row.unit,
+      format: row.format,
       // The structured OOTB formula (DERIVED metrics only), plus the JSON Logic it compiles to — the
       // expression the compute-on-read engine evaluates once the metric is attached to a benchmark.
       formula: formula,

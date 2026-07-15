@@ -10,6 +10,8 @@ export interface CreateMetricInput {
   description: string | null;
   type: MetricType;
   kind: MetricKind;
+  unit: string | null;
+  format: string | null;
   /** JSON string of a MetricFormula (DERIVED) or null (STORED). */
   formula: string | null;
 }
@@ -24,6 +26,8 @@ export async function createMetric(db: D1Database, input: CreateMetricInput): Pr
     description: input.description,
     type: input.type,
     kind: input.kind,
+    unit: input.unit,
+    format: input.format,
     formula: input.formula,
     created_at: now,
     updated_at: now,
@@ -31,9 +35,9 @@ export async function createMetric(db: D1Database, input: CreateMetricInput): Pr
   try {
     await db
       .prepare(
-        "INSERT INTO metric (id, account_id, name, label, description, type, kind, formula, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO metric (id, account_id, name, label, description, type, kind, unit, format, formula, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
       )
-      .bind(row.id, row.account_id, row.name, row.label, row.description, row.type, row.kind, row.formula, row.created_at, row.updated_at)
+      .bind(row.id, row.account_id, row.name, row.label, row.description, row.type, row.kind, row.unit, row.format, row.formula, row.created_at, row.updated_at)
       .run();
   } catch (e) {
     if (isUniqueViolation(e)) {
@@ -98,10 +102,12 @@ export interface UpdateMetricInput {
   description: string | null;
   type: MetricType;
   kind: MetricKind;
+  unit: string | null;
+  format: string | null;
   formula: string | null;
 }
 
-/** Update a metric's label / description / type / kind / formula. Its `name` (the identifier) is immutable. */
+/** Update a metric's label / description / type / kind / unit / format / formula. Its `name` is immutable. */
 export async function updateMetric(db: D1Database, id: string, input: UpdateMetricInput): Promise<MetricRow | null> {
   const existing = await getMetricById(db, id);
   if (!existing) return null;
@@ -111,12 +117,14 @@ export async function updateMetric(db: D1Database, id: string, input: UpdateMetr
     description: input.description,
     type: input.type,
     kind: input.kind,
+    unit: input.unit,
+    format: input.format,
     formula: input.formula,
     updated_at: Date.now(),
   };
   await db
-    .prepare("UPDATE metric SET label = ?, description = ?, type = ?, kind = ?, formula = ?, updated_at = ? WHERE id = ?")
-    .bind(updated.label, updated.description, updated.type, updated.kind, updated.formula, updated.updated_at, id)
+    .prepare("UPDATE metric SET label = ?, description = ?, type = ?, kind = ?, unit = ?, format = ?, formula = ?, updated_at = ? WHERE id = ?")
+    .bind(updated.label, updated.description, updated.type, updated.kind, updated.unit, updated.format, updated.formula, updated.updated_at, id)
     .run();
   return updated;
 }

@@ -67,8 +67,13 @@
         ? SM.detailField("Formula", { value: SMMetricForm.formulaText(a.formula) }) +
           SM.detailField("Expression", { value: a.expr ? JSON.stringify(a.expr) : "—", mono: true })
         : "");
+    const fmtPattern = a.format || (a.type === "INTEGER" ? "#,##0" : "#,##0.###");
+    const sample = SM.formatNumber(/%/.test(fmtPattern) ? 0.1234 : 1234.567, fmtPattern) + (a.unit ? " " + a.unit : "");
     const right =
       SM.detailField("Type", { value: SMMetricForm.typeLabel(a.type) }) +
+      SM.detailField("Unit", { value: a.unit, emptyText: "—" }) +
+      SM.detailField("Format", { value: a.format || "Default", mono: true }) +
+      SM.detailField("Sample", { value: sample, mono: true }) +
       SM.detailField("Kind", { value: SMMetricForm.kindLabel(a.kind) }) +
       SM.detailField("Created", { value: SM.fmtDateTime(a.created_at) }) +
       SM.detailField("Updated", { value: SM.fmtDateTime(a.updated_at) });

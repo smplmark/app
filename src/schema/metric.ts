@@ -25,6 +25,11 @@ import {
 } from "../types";
 
 const MAX_DESCRIPTION = 500;
+const MAX_UNIT = 24;
+const MAX_FORMAT = 32;
+/** An Excel-style number-format pattern uses only these characters: digits placeholders (# and 0), a
+ *  grouping comma, a decimal point, and a percent sign. */
+const FORMAT_PATTERN = /^[#0.,%]+$/;
 
 /** Snake_case a label/name into a metric identifier: lowercase, runs of non-alphanumerics → single
  *  underscore. Metric names are JSON keys in a measurement's metrics bag, so they use `[a-z0-9_]` only. */
@@ -47,7 +52,30 @@ export interface ParsedMetric {
   description: string | null;
   type: MetricType;
   kind: MetricKind;
+  unit: string | null;
+  format: string | null;
   formula: MetricFormula | null;
+}
+
+/** The unit of measure — a short, optional display label. */
+function parseUnit(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") throw new BadRequestError("unit must be a string.");
+  const u = v.trim();
+  if (u.length > MAX_UNIT) throw new BadRequestError(`unit must be at most ${MAX_UNIT} characters.`);
+  return u || null;
+}
+
+/** An optional Excel-style number-format pattern (`#,##0.00`, `0.0%`); null uses a default per type. */
+function parseFormat(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") throw new BadRequestError("format must be a string.");
+  const f = v.trim();
+  if (!f) return null;
+  if (f.length > MAX_FORMAT) throw new BadRequestError(`format must be at most ${MAX_FORMAT} characters.`);
+  if (!FORMAT_PATTERN.test(f)) throw new BadRequestError("format may use only the characters # 0 , . and %.");
+  if ((f.match(/\./g) || []).length > 1) throw new BadRequestError("format may contain at most one decimal point.");
+  return f;
 }
 
 /** Validate + normalize a client-supplied metric. `name` is the given name (or the label) slugified. */
@@ -68,7 +96,7 @@ export function parseMetric(attrs: Record<string, unknown>): ParsedMetric {
   }
 
   const formula = kind === "DERIVED" ? parseFormula(attrs.formula) : null;
-  return { name, label, description, type: attrs.type, kind, formula };
+  return { name, label, description, type: attrs.type, kind, unit: parseUnit(attrs.unit), format: parseFormat(attrs.format), formula };
 }
 
 /** Validate one step operand. A STEP operand may only reference an id in `priorIds` — a step defined
@@ -198,16 +226,22 @@ export function parseStoredFormula(formula: string | null): MetricFormula | null
  */
 export function metricSnapshot(row: MetricRow): { metric?: MetricDecl; derived?: DerivedDecl } {
   const description = row.description ?? undefined;
+  const unit = row.unit ?? undefined;
+  const format = row.format ?? undefined;
   if (row.kind === "DERIVED") {
     const formula = parseStoredFormula(row.formula);
     const derived: DerivedDecl = {
       name: row.name,
       expr: formula ? metricExprToJsonLogic(formula) : null,
     };
+    if (unit) derived.unit = unit;
+    if (format) derived.format = format;
     if (description) derived.description = description;
     return { derived };
   }
   const metric: MetricDecl = { name: row.name, type: row.type };
+  if (unit) metric.unit = unit;
+  if (format) metric.format = format;
   if (description) metric.description = description;
   return { metric };
 }

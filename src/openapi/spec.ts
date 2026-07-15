@@ -177,8 +177,9 @@ const X_KINDS = ["TIME", "NUMBER", "CATEGORY"] as const;
 const MetricDecl = z
   .object({
     name: z.string().openapi({ description: "The metric's identifier, used as its key in measurement payloads." }),
-    type: z.string().openapi({ description: "The value type of the metric, e.g. \"number\"." }),
+    type: z.string().openapi({ description: "The numeric kind of the metric: \"INTEGER\" or \"DECIMAL\"." }),
     unit: z.string().optional().openapi({ description: "A display unit for the metric, e.g. \"ms\" or \"tokens\"." }),
+    format: z.string().optional().openapi({ description: "An Excel-style number-format pattern for display, e.g. \"#,##0.00\" or \"0.0%\"." }),
     description: z.string().optional().openapi({ description: "A human-readable explanation of what the metric measures." }),
   })
   .openapi("MetricDecl", { description: "A metric a client supplies directly on each measurement." });
@@ -190,6 +191,7 @@ const DerivedDecl = z
       "A JSON Logic expression evaluated on read against the measurement and its run context (e.g. elapsed_ms = created_at − run.started_at).",
     ),
     unit: z.string().optional().openapi({ description: "A display unit for the derived value, e.g. \"ms\"." }),
+    format: z.string().optional().openapi({ description: "An Excel-style number-format pattern for display, e.g. \"#,##0.00\" or \"0.0%\"." }),
     description: z.string().optional().openapi({ description: "A human-readable explanation of what the derived value represents." }),
   })
   .openapi("DerivedDecl", { description: "A metric computed when an measurement is read, from other metrics and run context." });
@@ -530,7 +532,7 @@ const subjectType = registerEntity(
   }),
 );
 
-const metricType = z.enum(["NUMBER", "DURATION_MS", "PERCENT", "COUNT", "BYTES"]);
+const metricType = z.enum(["INTEGER", "DECIMAL"]);
 const metricKind = z.enum(["STORED", "DERIVED"]);
 const MetricToken = z
   .object({
@@ -567,8 +569,10 @@ const metric = registerEntity(
     name: z.string().openapi({ description: "The metric's identifier — the key it occupies in a measurement's metrics bag (snake_case: lowercase alphanumerics and underscores, unique within the account)." }),
     label: z.string().openapi({ description: "The metric's human-readable display name." }),
     description: z.string().nullable().openapi({ description: "An optional longer description of the metric." }),
-    type: metricType.openapi({ description: "The metric's semantic value type." }),
+    type: metricType.openapi({ description: "The numeric kind: INTEGER (whole numbers) or DECIMAL (continuous)." }),
     kind: metricKind.openapi({ description: "STORED — a value clients POST on each measurement; or DERIVED — computed on read from a formula." }),
+    unit: z.string().nullable().openapi({ description: "The unit of measure — a short display label such as `ms`, `bytes`, `req/s`, or `%`; null when unset. Cosmetic; does not affect computation." }),
+    format: z.string().nullable().openapi({ description: "An Excel-style number-format pattern for display, e.g. `#,##0.00` or `0.0%` (characters # 0 , . %); null uses a default for the type. Cosmetic." }),
     formula: MetricFormula.nullable().openapi({ description: "The built-in derived formula (DERIVED metrics only); null for STORED." }),
     expr: z.record(z.unknown()).nullable().openapi({ description: "The JSON Logic the formula compiles to — what the compute-on-read engine evaluates once the metric is attached to a benchmark; null for STORED.", type: "object" }),
     created_at: dateTime("When the metric was created."),
@@ -578,8 +582,10 @@ const metric = registerEntity(
     name: z.string().optional().openapi({ description: "The metric's identifier. Normalized to snake_case (lowercase alphanumerics and underscores); derived from `label` when omitted; made unique within the account." }),
     label: z.string().max(200).openapi({ description: "The metric's display name. At most 200 characters." }),
     description: z.string().max(500).optional().openapi({ description: "An optional longer description. At most 500 characters." }),
-    type: metricType.openapi({ description: "The metric's semantic value type." }),
+    type: metricType.openapi({ description: "The numeric kind: INTEGER (whole numbers) or DECIMAL (continuous)." }),
     kind: metricKind.optional().openapi({ description: "STORED (the default) or DERIVED." }),
+    unit: z.string().max(24).optional().openapi({ description: "The unit of measure — a short display label such as `ms`, `bytes`, `req/s`, or `%`. At most 24 characters. Cosmetic; does not affect computation." }),
+    format: z.string().max(32).optional().openapi({ description: "An Excel-style number-format pattern for display, e.g. `#,##0.00` or `0.0%`. May use only the characters # 0 , . % and at most one decimal point. Cosmetic." }),
     formula: MetricFormula.optional().openapi({ description: "Required for a DERIVED metric — the built-in formula to compute it." }),
   }),
 );

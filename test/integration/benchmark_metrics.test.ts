@@ -31,13 +31,14 @@ describe("benchmark_metric — snapshot on link", () => {
   it("links a STORED metric, appending a MetricDecl to the schema", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "Throughput (req/s)", type: "COUNT", description: "Requests per second" });
+    const metric = await makeMetric(me.token, { label: "Throughput (req/s)", type: "INTEGER", unit: "req/s", format: "#,##0", description: "Requests per second" });
 
     const link = await linkMetric(me.token, bm.id, metric.id);
     expect(link.attributes).toMatchObject({ benchmark: bm.id, metric: metric.id });
 
     const schema = await schemaOf(me.token, bm.id);
-    expect(schema.metrics).toEqual([{ name: "throughput_req_s", type: "COUNT", description: "Requests per second" }]);
+    // The unit + format snapshot into the schema so the display layer can render values.
+    expect(schema.metrics).toEqual([{ name: "throughput_req_s", type: "INTEGER", unit: "req/s", format: "#,##0", description: "Requests per second" }]);
     expect(schema.derived).toEqual([]);
   });
 
@@ -46,7 +47,8 @@ describe("benchmark_metric — snapshot on link", () => {
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
     const metric = await makeMetric(me.token, {
       label: "Skew",
-      type: "DURATION_MS",
+      type: "DECIMAL",
+      unit: "ms",
       kind: "DERIVED",
       // Minute-skew from primitives: created_at mod 60000.
       formula: {
@@ -58,14 +60,14 @@ describe("benchmark_metric — snapshot on link", () => {
     await linkMetric(me.token, bm.id, metric.id);
     const schema = await schemaOf(me.token, bm.id);
     expect(schema.metrics).toEqual([]);
-    expect(schema.derived).toEqual([{ name: "skew", expr: { "%": [{ var: "created_at" }, 60000] } }]);
+    expect(schema.derived).toEqual([{ name: "skew", unit: "ms", expr: { "%": [{ var: "created_at" }, 60000] } }]);
   });
 
   it("rejects a double-link and a foreign-account metric", async () => {
     const me = await register();
     const other = await register("other@example.com");
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "Latency", type: "DURATION_MS" });
+    const metric = await makeMetric(me.token, { label: "Latency", type: "DECIMAL" });
     await linkMetric(me.token, bm.id, metric.id);
 
     // Double-link → 409.
@@ -77,7 +79,7 @@ describe("benchmark_metric — snapshot on link", () => {
     expect(dup.status).toBe(409);
 
     // Foreign-account metric → 409 (indistinguishable from missing).
-    const foreign = await makeMetric(other.token, { label: "Foreign", type: "NUMBER" });
+    const foreign = await makeMetric(other.token, { label: "Foreign", type: "DECIMAL" });
     const cross = await apiPost(
       "/api/v1/benchmark_metrics",
       { data: { type: "benchmark_metric", attributes: { benchmark: bm.id, metric: foreign.id } } },
@@ -90,9 +92,9 @@ describe("benchmark_metric — snapshot on link", () => {
     const me = await register();
     // A hand-authored schema entry named "latency" already occupies that key.
     const bm = await makeBenchmark(me.token, {
-      measurement_schema: { metrics: [{ name: "latency", type: "DURATION_MS" }], derived: [] },
+      measurement_schema: { metrics: [{ name: "latency", type: "DECIMAL" }], derived: [] },
     });
-    const metric = await makeMetric(me.token, { label: "Latency", type: "DURATION_MS" });
+    const metric = await makeMetric(me.token, { label: "Latency", type: "DECIMAL" });
     expect(metric.attributes.name).toBe("latency");
 
     const res = await apiPost(
@@ -111,7 +113,7 @@ describe("benchmark_metric — snapshot on link", () => {
     const me = await register();
     const bmA = await makeBenchmark(me.token, { key: "a", name: "A", measurement_schema: EMPTY });
     const bmB = await makeBenchmark(me.token, { key: "b", name: "B", measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "Shared", type: "NUMBER" });
+    const metric = await makeMetric(me.token, { label: "Shared", type: "DECIMAL" });
     await linkMetric(me.token, bmA.id, metric.id);
     await linkMetric(me.token, bmB.id, metric.id);
 
@@ -129,7 +131,7 @@ describe("benchmark_metric — snapshot on link", () => {
   it("unlinks a metric, removing its snapshot from the schema", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "Temp", type: "NUMBER" });
+    const metric = await makeMetric(me.token, { label: "Temp", type: "DECIMAL" });
     const link = await linkMetric(me.token, bm.id, metric.id);
     expect((await schemaOf(me.token, bm.id)).metrics).toHaveLength(1);
 
@@ -147,12 +149,12 @@ describe("benchmark_metric — publish freeze", () => {
   it("allows linking (append) on a published benchmark but forbids unlinking", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const first = await makeMetric(me.token, { label: "First", type: "NUMBER" });
+    const first = await makeMetric(me.token, { label: "First", type: "DECIMAL" });
     const preLink = await linkMetric(me.token, bm.id, first.id);
     await publish(me.token, me.user_id, bm.id);
 
     // Linking a NEW metric after publish is an append → allowed.
-    const second = await makeMetric(me.token, { label: "Second", type: "COUNT" });
+    const second = await makeMetric(me.token, { label: "Second", type: "INTEGER" });
     const link = await apiPost(
       "/api/v1/benchmark_metrics",
       { data: { type: "benchmark_metric", attributes: { benchmark: bm.id, metric: second.id } } },
@@ -171,7 +173,7 @@ describe("benchmark_metric — delete guard + authz", () => {
   it("blocks deleting a library metric that is still linked", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "Linked", type: "NUMBER" });
+    const metric = await makeMetric(me.token, { label: "Linked", type: "DECIMAL" });
     const link = await linkMetric(me.token, bm.id, metric.id);
 
     expect((await apiDelete(`/api/v1/metrics/${metric.id}`, bearer(me.token))).status).toBe(409);
@@ -184,7 +186,7 @@ describe("benchmark_metric — delete guard + authz", () => {
     const me = await register();
     const viewer = await addMember(me.token, me.account_id, "viewer@example.com", "VIEWER");
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
-    const metric = await makeMetric(me.token, { label: "M", type: "NUMBER" });
+    const metric = await makeMetric(me.token, { label: "M", type: "DECIMAL" });
 
     const asViewer = await apiPost(
       "/api/v1/benchmark_metrics",
@@ -194,7 +196,7 @@ describe("benchmark_metric — delete guard + authz", () => {
     expect(asViewer.status).toBe(403);
 
     const other = await register("stranger@example.com");
-    const strangerMetric = await makeMetric(other.token, { label: "S", type: "NUMBER" });
+    const strangerMetric = await makeMetric(other.token, { label: "S", type: "DECIMAL" });
     const cross = await apiPost(
       "/api/v1/benchmark_metrics",
       { data: { type: "benchmark_metric", attributes: { benchmark: bm.id, metric: strangerMetric.id } } },

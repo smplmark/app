@@ -13,8 +13,21 @@
 
 (function () {
   const esc = SM.esc;
-  const TYPES = [["NUMBER", "Number"], ["DURATION_MS", "Duration (ms)"], ["PERCENT", "Percent"], ["COUNT", "Count"], ["BYTES", "Bytes"]];
+  const TYPES = [["INTEGER", "Integer"], ["DECIMAL", "Decimal"]];
   const KINDS = [["STORED", "Stored"], ["DERIVED", "Derived"]];
+  // Common units offered as suggestions (free text — any unit is allowed).
+  const UNIT_PRESETS = ["ms", "s", "µs", "ns", "bytes", "KB", "MB", "GB", "req/s", "ops/s", "tokens", "tokens/s", "%", "°C", "count", "score"];
+  // Format presets → an Excel-style pattern (SM.formatNumber). "" = default; "__custom__" reveals a field.
+  const FORMAT_PRESETS = [
+    ["", "Default"],
+    ["#,##0", "Integer — 1,235"],
+    ["#,##0.0", "1 decimal — 1,234.6"],
+    ["#,##0.00", "2 decimals — 1,234.57"],
+    ["#,##0.000", "3 decimals — 1,234.567"],
+    ["0.0%", "Percent — 12.3%"],
+    ["__custom__", "Custom…"],
+  ];
+  function defaultFormatFor(type) { return type === "INTEGER" ? "#,##0" : "#,##0.###"; }
   const OPS = [["ADD", "+"], ["SUB", "−"], ["MUL", "×"], ["DIV", "÷"], ["MOD", "mod"]];
   const FNS = [["FLOOR", "floor"], ["ROUND", "round"], ["CEIL", "ceil"], ["ABS", "abs"]];
   const OP_SYM = { ADD: "+", SUB: "−", MUL: "×", DIV: "÷", MOD: "mod" };
@@ -100,12 +113,19 @@
     attrs = attrs || {};
     opts = opts || {};
     const isNew = !!opts.isNew;
-    const initType = attrs.type || "NUMBER";
+    const initType = attrs.type || "DECIMAL";
     const initKind = attrs.kind || "STORED";
     const derived = initKind === "DERIVED";
+    const initUnit = attrs.unit || "";
+    const initFormat = attrs.format || "";
+    const presetVals = FORMAT_PRESETS.map((p) => p[0]);
+    const initFormatSel = initFormat === "" ? "" : presetVals.indexOf(initFormat) >= 0 ? initFormat : "__custom__";
+    const initCustom = initFormatSel === "__custom__" ? initFormat : "";
 
     const typePills = TYPES.map((p) => radioPill("mf-type", p[0], p[1], p[0] === initType)).join("");
     const kindPills = KINDS.map((p) => radioPill("mf-kind", p[0], p[1], p[0] === initKind)).join("");
+    const unitDatalist = '<datalist id="mf-unit-presets">' + UNIT_PRESETS.map((u) => '<option value="' + esc(u) + '"></option>').join("") + "</datalist>";
+    const formatOptions = FORMAT_PRESETS.map((p) => '<option value="' + esc(p[0]) + '"' + (p[0] === initFormatSel ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
     const nameHelp = isNew
       ? "The identifier used in the API and a measurement’s JSON — lowercase letters, numbers, and underscores."
       : "The identifier used in the API and a measurement’s JSON. Fixed after creation.";
@@ -114,15 +134,22 @@
       '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input name="name" type="text" placeholder="throughput" autocomplete="off" spellcheck="false"' + (isNew ? "" : " disabled") + ' value="' + esc(attrs.name || "") + '" /><p class="fieldErrorMessage" hidden></p><p class="detailFieldHelp">' + nameHelp + "</p></label>" +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Label</span><input name="label" type="text" placeholder="Throughput" autocomplete="off" value="' + esc(attrs.label || "") + '" /><p class="fieldErrorMessage" hidden></p></label>' +
       '<label class="field"><span class="detailFieldLabel">Description</span><input name="description" type="text" placeholder="Optional — a note about this metric" autocomplete="off" value="' + esc(attrs.description || "") + '" /></label>' +
-      '<div class="fieldModalBlock"><span class="detailFieldLabel">Type</span><div class="radioGroup" role="radiogroup" aria-label="Metric type">' + typePills + "</div></div>" +
+      '<div class="fieldModalBlock"><span class="detailFieldLabel">Type</span><div class="radioGroup" role="radiogroup" aria-label="Metric type">' + typePills + "</div>" +
+      '<p class="detailFieldHelp">Every metric is a number. Integer — whole numbers; Decimal — continuous.</p></div>' +
+      '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" list="mf-unit-presets" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(initUnit) + '" />' + unitDatalist +
+      '<p class="detailFieldHelp">What the metric measures. A display label — it doesn’t affect computation.</p></label>' +
+      '<div class="fieldModalBlock"><span class="detailFieldLabel">Format</span>' +
+      '<div class="mfFormatRow"><select name="mf-format-preset" class="mfSlotPick mfFormatPreset">' + formatOptions + "</select>" +
+      '<input name="mf-format-custom" type="text" class="mfSlotPick mfFormatCustom" autocomplete="off" spellcheck="false" placeholder="#,##0.00" maxlength="32" value="' + esc(initCustom) + '"' + (initFormatSel === "__custom__" ? "" : " hidden") + " /></div>" +
+      '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>' +
       '<div class="fieldModalBlock"><span class="detailFieldLabel">Kind</span><div class="radioGroup" role="radiogroup" aria-label="Metric kind">' + kindPills + "</div>" +
       '<p class="detailFieldHelp">Stored — a value clients POST on each measurement. Derived — computed on read from a formula.</p></div>';
 
     return (
-      '<div class="mfTabBar" role="tablist">' +
-      '<button type="button" class="mfTab isActive" data-mftab="details" role="tab">Details</button>' +
-      '<button type="button" class="mfTab" data-mftab="formula" id="mf-tab-formula" role="tab"' + (derived ? "" : " hidden") + ">Formula</button>" +
-      "</div>" +
+      '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
+      '<button type="button" class="modalTabBtn isActive" data-mftab="details" role="tab" aria-selected="true">Details</button>' +
+      '<button type="button" class="modalTabBtn" data-mftab="formula" id="mf-tab-formula" role="tab" aria-selected="false"' + (derived ? "" : " hidden") + ">Formula</button>" +
+      "</nav></div>" +
       '<div class="mfPanel" data-mfpanel="details">' + details + "</div>" +
       '<div class="mfPanel" data-mfpanel="formula" hidden><div id="mf-builder" class="mfBuilder"></div></div>'
     );
@@ -178,10 +205,14 @@
     container.__mfState = state;
 
     // Tabs
-    const tabs = container.querySelectorAll(".mfTab");
+    const tabs = container.querySelectorAll(".modalTabBtn");
     const panels = container.querySelectorAll(".mfPanel");
     function showTab(which) {
-      tabs.forEach((t) => t.classList.toggle("isActive", t.getAttribute("data-mftab") === which));
+      tabs.forEach((t) => {
+        const on = t.getAttribute("data-mftab") === which;
+        t.classList.toggle("isActive", on);
+        t.setAttribute("aria-selected", String(on));
+      });
       panels.forEach((p) => { p.hidden = p.getAttribute("data-mfpanel") !== which; });
     }
     tabs.forEach((t) => t.addEventListener("click", () => showTab(t.getAttribute("data-mftab"))));
@@ -196,6 +227,32 @@
     }
     container.querySelectorAll('input[name="mf-kind"]').forEach((r) => r.addEventListener("change", syncKind));
     syncKind();
+
+    // Format: a preset <select> plus a custom-pattern input (shown only for "Custom…"), with a live
+    // sample that reflects the current pattern, type default, and unit.
+    const unitEl = container.querySelector('[name="unit"]');
+    const fmtPreset = container.querySelector('[name="mf-format-preset"]');
+    const fmtCustom = container.querySelector('[name="mf-format-custom"]');
+    const sampleEl = container.querySelector(".mfSampleVal");
+    function formatValue() {
+      return fmtPreset.value === "__custom__" ? fmtCustom.value.trim() : fmtPreset.value;
+    }
+    container.__mfFormat = formatValue; // read by collect()
+    function updateSample() {
+      const pattern = formatValue() || defaultFormatFor(current("mf-type"));
+      const unit = unitEl.value.trim();
+      const seed = /%/.test(pattern) ? 0.1234 : 1234.567;
+      sampleEl.textContent = SM.formatNumber(seed, pattern) + (unit ? " " + unit : "");
+    }
+    fmtPreset.addEventListener("change", () => {
+      fmtCustom.hidden = fmtPreset.value !== "__custom__";
+      if (!fmtCustom.hidden) fmtCustom.focus();
+      updateSample();
+    });
+    fmtCustom.addEventListener("input", updateSample);
+    unitEl.addEventListener("input", updateSample);
+    container.querySelectorAll('input[name="mf-type"]').forEach((r) => r.addEventListener("change", updateSample));
+    updateSample();
 
     // Name auto-derive from label (create only).
     if (isNew) {
@@ -406,6 +463,10 @@
     const attrs = { name: name, label: label, type: current("mf-type"), kind: current("mf-kind") };
     const desc = container.querySelector('[name="description"]').value.trim();
     if (desc) attrs.description = desc;
+    const unit = container.querySelector('[name="unit"]').value.trim();
+    if (unit) attrs.unit = unit;
+    const format = container.__mfFormat ? container.__mfFormat() : "";
+    if (format) attrs.format = format;
 
     if (attrs.kind === "DERIVED") {
       const state = container.__mfState;
@@ -418,9 +479,13 @@
   }
 
   function showDetails(container) {
-    const tabs = container.querySelectorAll(".mfTab");
+    const tabs = container.querySelectorAll(".modalTabBtn");
     const panels = container.querySelectorAll(".mfPanel");
-    tabs.forEach((t) => t.classList.toggle("isActive", t.getAttribute("data-mftab") === "details"));
+    tabs.forEach((t) => {
+      const on = t.getAttribute("data-mftab") === "details";
+      t.classList.toggle("isActive", on);
+      t.setAttribute("aria-selected", String(on));
+    });
     panels.forEach((p) => { p.hidden = p.getAttribute("data-mfpanel") !== "details"; });
   }
 
