@@ -18,7 +18,7 @@
   let METRIC = null;
   let CAN_WRITE = false;
   let editing = false;
-  let viewTab = "details"; // active tab in VIEW mode
+  let activeTab = "details"; // active tab in VIEW mode
 
   function setMsg(text, kind) {
     const el = $("m-msg");
@@ -54,10 +54,10 @@
     const a = METRIC.attributes || {};
     const derived = a.kind === "DERIVED";
     const tabs = derived ? ["details", "formula"] : ["details"];
-    if (tabs.indexOf(viewTab) < 0) viewTab = "details";
+    if (tabs.indexOf(activeTab) < 0) activeTab = "details";
     const decorations = SMMetricForm.typePillHtml(a.type) + SMMetricForm.kindPillHtml(a.kind);
     const tabBtn = (key, label) =>
-      '<button type="button" class="modalTabBtn' + (viewTab === key ? " isActive" : "") + '" data-tab="' + key + '" role="tab" aria-selected="' + (viewTab === key) + '">' + esc(label) + "</button>";
+      '<button type="button" class="modalTabBtn' + (activeTab === key ? " isActive" : "") + '" data-tab="' + key + '" role="tab" aria-selected="' + (activeTab === key) + '">' + esc(label) + "</button>";
 
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.label || a.name || "Metric", decorations: decorations, secondaryId: a.name || "", actions: "" }) +
@@ -72,7 +72,7 @@
     document.title = (a.label || a.name || "Metric") + " — smplmark";
 
     $("detail-root").querySelectorAll(".modalTabBar .modalTabBtn").forEach((el) =>
-      el.addEventListener("click", () => { if (el.dataset.tab !== viewTab) { viewTab = el.dataset.tab; renderView(); } }));
+      el.addEventListener("click", () => { if (el.dataset.tab !== activeTab) { activeTab = el.dataset.tab; renderView(); } }));
 
     if (CAN_WRITE) {
       $("tab-actions").innerHTML =
@@ -82,7 +82,7 @@
       $("m-delete").addEventListener("click", del);
     }
 
-    if (viewTab === "formula") renderFormulaView($("tab-panel"), a);
+    if (activeTab === "formula") renderFormulaView($("tab-panel"), a);
     else renderDetailsView($("tab-panel"), a);
   }
 
@@ -90,16 +90,18 @@
     // A formatted sample shows the effect of unit + format (default pattern per type when none is set).
     const fmtPattern = a.format || (a.type === "INTEGER" ? "#,##0" : "#,##0.###");
     const sample = SM.formatNumber(/%/.test(fmtPattern) ? 0.1234 : 1234.567, fmtPattern) + (a.unit ? " " + a.unit : "");
+    // Left column mirrors the edit form's fields (so nothing jumps on Edit); the right column is the
+    // standard read-only Created / Updated metadata.
     const left =
       SM.detailField("Name", { value: a.name, mono: true }) +
       SM.detailField("Label", { value: a.label }) +
-      SM.detailField("Description", { value: a.description, emptyText: "—" });
-    const right =
+      SM.detailField("Description", { value: a.description, emptyText: "—" }) +
       SM.detailField("Type", { value: SMMetricForm.typeLabel(a.type) }) +
       SM.detailField("Unit", { value: a.unit, emptyText: "—" }) +
       SM.detailField("Format", { value: a.format || "Default", mono: true }) +
       SM.detailField("Sample", { value: sample, mono: true }) +
-      SM.detailField("Kind", { value: SMMetricForm.kindLabel(a.kind) }) +
+      SM.detailField("Kind", { value: SMMetricForm.kindLabel(a.kind) });
+    const right =
       SM.detailField("Created", { value: SM.fmtDateTime(a.created_at) }) +
       SM.detailField("Updated", { value: SM.fmtDateTime(a.updated_at) });
     panel.innerHTML =
@@ -142,10 +144,10 @@
         '<button type="button" class="button buttonSecondary buttonSmall" id="m-cancel">Cancel</button>' +
         '<button type="button" class="button buttonPrimary buttonSmall" id="m-save">Save</button>';
     }
-    SMMetricForm.wire(form, { isNew: isNewPage, selfName: isNewPage ? null : a.name, initFormula: a.formula });
+    SMMetricForm.wire(form, { isNew: isNewPage, selfName: isNewPage ? null : a.name, initFormula: a.formula, initTab: activeTab });
     $("m-cancel").addEventListener("click", () => {
       if (isNewPage) location.href = "/account/metrics";
-      else { editing = false; renderView(); }
+      else { editing = false; activeTab = SMMetricForm.activeTab(form); renderView(); }
     });
     $("m-save").addEventListener("click", save);
     const first = form.querySelector('input[name="' + (isNewPage ? "name" : "label") + '"]');
@@ -166,6 +168,7 @@
         const doc = await apiFetch("/api/v1/metrics/" + encodeURIComponent(ID), { method: "PUT", body: jsonapiBody("metric", res.attrs) });
         METRIC = (doc && doc.data) || METRIC;
         editing = false;
+        activeTab = SMMetricForm.activeTab(form);
         renderView();
         SM.toast("Metric saved.", { kind: "success" });
       }

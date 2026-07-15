@@ -14,7 +14,8 @@
 (function () {
   const esc = SM.esc;
   const TYPES = [["INTEGER", "Integer"], ["DECIMAL", "Decimal"]];
-  const KINDS = [["STORED", "Stored"], ["DERIVED", "Derived"]];
+  // The API value for a computed metric is DERIVED; the console labels it "Formula" to match the tab.
+  const KINDS = [["STORED", "Stored"], ["DERIVED", "Formula"]];
   // Common units offered as suggestions (free text — any unit is allowed).
   const UNIT_PRESETS = ["ms", "s", "µs", "ns", "bytes", "KB", "MB", "GB", "req/s", "ops/s", "tokens", "tokens/s", "%", "°C", "count", "score"];
   // Format presets → an Excel-style pattern (SM.formatNumber). "" = default; "__custom__" reveals a field.
@@ -52,6 +53,7 @@
     if (tok.kind === "METRIC") return tok.name || "…";
     if (tok.kind === "NUMBER") return String(tok.value);
     if (tok.kind === "CREATED_AT") return "created_at";
+    if (tok.kind === "RAW") return tok.text || "…";
     if (tok.kind === "STEP") {
       const s = byId[tok.step];
       if (!s) return "…";
@@ -59,6 +61,30 @@
       return s.kind === "OP" ? "(" + inner + ")" : inner;
     }
     return "…";
+  }
+
+  // The editable text shown in an operand input for a token (empty when unset).
+  function slotDisplay(tok) {
+    if (!tok || !tok.kind) return "";
+    if (tok.kind === "METRIC") return tok.name || "";
+    if (tok.kind === "NUMBER") return String(tok.value);
+    if (tok.kind === "CREATED_AT") return "created_at";
+    if (tok.kind === "STEP") return tok.step || "";
+    if (tok.kind === "RAW") return tok.text || "";
+    return "";
+  }
+
+  // Parse what the user typed/picked in an operand slot into a token: the built-in `created_at`, an
+  // earlier step (A, B…), a known metric, or a number. Anything else is RAW — kept as-is so the preview
+  // echoes it, but rejected on save.
+  function parseSlotText(text, priorIds, metricNames) {
+    const t = String(text == null ? "" : text).trim();
+    if (!t) return null;
+    if (t === "created_at") return { kind: "CREATED_AT" };
+    if (priorIds.indexOf(t) >= 0) return { kind: "STEP", step: t };
+    if (metricNames.indexOf(t) >= 0) return { kind: "METRIC", name: t };
+    if (Number.isFinite(Number(t))) return { kind: "NUMBER", value: Number(t) };
+    return { kind: "RAW", text: t };
   }
   function stepText(step, byId) {
     if (!step) return "…";
@@ -143,7 +169,14 @@
       '<input name="mf-format-custom" type="text" class="mfSlotPick mfFormatCustom" autocomplete="off" spellcheck="false" placeholder="#,##0.00" maxlength="32" value="' + esc(initCustom) + '"' + (initFormatSel === "__custom__" ? "" : " hidden") + " /></div>" +
       '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>' +
       '<div class="fieldModalBlock"><span class="detailFieldLabel">Kind</span><div class="radioGroup" role="radiogroup" aria-label="Metric kind">' + kindPills + "</div>" +
-      '<p class="detailFieldHelp">Stored — a value clients POST on each measurement. Derived — computed on read from a formula.</p></div>';
+      '<p class="detailFieldHelp">Stored — a value clients POST on each measurement. Formula — computed on read from a formula you define.</p></div>';
+
+    // The Details panel is a two-column grid (matching the view + the other detail pages): the editable
+    // fields on the left, the read-only Created / Updated metadata on the right, so nothing jumps
+    // position when the page toggles between view and edit. Created/Updated are absent on a new metric.
+    const meta = attrs.created_at
+      ? SM.detailField("Created", { value: SM.fmtDateTime(attrs.created_at) }) + SM.detailField("Updated", { value: SM.fmtDateTime(attrs.updated_at) })
+      : "";
 
     // Tabs sit at the top level (a full-width .detailsTabHeader with tabs left, an actions slot right),
     // with the panels below in a single .detailsTabPanel card — the app's standard tabbed-detail layout
@@ -155,7 +188,10 @@
       "</nav>" +
       '<div class="detailsTabActions" id="mf-tab-actions"></div></div>' +
       '<div class="detailsTabPanel">' +
-      '<div class="mfPanel" data-mfpanel="details">' + details + "</div>" +
+      '<div class="mfPanel" data-mfpanel="details"><div class="detailGrid">' +
+      '<div class="detailCol">' + details + "</div>" +
+      '<div class="detailCol">' + meta + "</div>" +
+      "</div></div>" +
       '<div class="mfPanel" data-mfpanel="formula" hidden><div id="mf-builder" class="mfBuilder"></div></div>' +
       "</div>"
     );
@@ -184,16 +220,6 @@
     if (t.kind === "CREATED_AT") return { kind: "CREATED_AT" };
     if (t.kind === "STEP") return { kind: "STEP", step: t.step };
     return null;
-  }
-
-  // Encode/decode a token as a <select> value. NUMBER is a sentinel that reveals a number input.
-  function tokValue(tok) {
-    if (!tok || !tok.kind) return "";
-    if (tok.kind === "METRIC") return "metric:" + tok.name;
-    if (tok.kind === "NUMBER") return "__number__";
-    if (tok.kind === "CREATED_AT") return "__created_at__";
-    if (tok.kind === "STEP") return "step:" + tok.step;
-    return "";
   }
 
   // ── wire(): live behaviors — name derive, kind→formula-tab, tab switching, and the steps builder ──
@@ -233,6 +259,8 @@
     }
     container.querySelectorAll('input[name="mf-kind"]').forEach((r) => r.addEventListener("change", syncKind));
     syncKind();
+    // Open on the tab the caller asked for (e.g. Edit was clicked from the Formula tab in view mode).
+    if (opts.initTab === "formula" && current("mf-kind") === "DERIVED") showTab("formula");
 
     // Format: a preset <select> plus a custom-pattern input (shown only for "Custom…"), with a live
     // sample that reflects the current pattern, type default, and unit.
@@ -277,23 +305,16 @@
     // ── Steps builder ──
     const builder = container.querySelector("#mf-builder");
 
-    // One operand slot: a picker (metrics / created_at / earlier steps / number) plus a number input
-    // shown only when "number" is chosen. `priorIds` are the step ids selectable here (earlier steps).
+    // One operand slot — an editable combobox. The datalist lists every metric, the built-in
+    // `created_at`, and the earlier steps (A, B…); the user can pick one or just type a number. The
+    // typed value is parsed into a token on input and validated on save. `priorIds` are the earlier steps.
     function slotHtml(tok, si, slot, priorIds) {
-      const val = tokValue(tok);
-      const metricOpts = state.metrics.map((m) => '<option value="metric:' + esc(m.name) + '"' + (val === "metric:" + m.name ? " selected" : "") + ">" + esc(m.name) + "</option>").join("");
-      const stepOpts = priorIds.map((id) => '<option value="step:' + esc(id) + '"' + (val === "step:" + id ? " selected" : "") + ">" + esc(id) + "</option>").join("");
-      const sel =
-        '<select class="mfSlotPick" data-role="slot" data-si="' + si + '" data-slot="' + slot + '">' +
-        '<option value=""' + (val === "" ? " selected" : "") + ">Pick…</option>" +
-        (metricOpts ? '<optgroup label="Metrics">' + metricOpts + "</optgroup>" : "") +
-        (stepOpts ? '<optgroup label="Steps">' + stepOpts + "</optgroup>" : "") +
-        '<optgroup label="Built-in"><option value="__created_at__"' + (val === "__created_at__" ? " selected" : "") + ">created_at</option></optgroup>" +
-        '<option value="__number__"' + (val === "__number__" ? " selected" : "") + ">number…</option>" +
-        "</select>";
-      const numVal = tok && tok.kind === "NUMBER" ? tok.value : "";
-      const num = '<input type="number" step="any" class="mfSlotNum" data-role="num" data-si="' + si + '" data-slot="' + slot + '" placeholder="0" value="' + esc(String(numVal)) + '"' + (val === "__number__" ? "" : " hidden") + " />";
-      return '<span class="mfSlot">' + sel + num + "</span>";
+      const listId = "mf-dl-" + si + slot;
+      const options = state.metrics.map((m) => m.name).concat(["created_at"], priorIds)
+        .map((v) => '<option value="' + esc(v) + '"></option>').join("");
+      return '<span class="mfSlot">' +
+        '<input class="mfSlotInput" list="' + listId + '" data-role="slot" data-si="' + si + '" data-slot="' + slot + '" autocomplete="off" spellcheck="false" placeholder="metric / step / number" value="' + esc(slotDisplay(tok)) + '" />' +
+        '<datalist id="' + listId + '">' + options + "</datalist></span>";
     }
 
     function stepRowHtml(step, si) {
@@ -338,6 +359,7 @@
       const steps = state.formula.steps.map((s, i) => stepRowHtml(s, i)).join("");
       builder.innerHTML =
         '<div class="mfSectionLabel mfStepsLabel">Steps</div>' +
+        '<p class="detailFieldHelp mfStepsHelp">Each slot takes a metric, an earlier step (A, B…), or a number — type it or pick from the list.</p>' +
         '<div class="mfSteps">' + steps + "</div>" +
         '<div class="mfAddRow">' +
         '<button type="button" class="buttonLink" data-role="addop">' + SM.icon("plus", 14) + " Operation</button>" +
@@ -363,39 +385,24 @@
       });
       if (state.formula.result === removedId) state.formula.result = state.formula.steps[state.formula.steps.length - 1].id;
     }
-    function decodeSlot(value) {
-      if (value === "") return null;
-      if (value === "__created_at__") return { kind: "CREATED_AT" };
-      if (value === "__number__") return { kind: "NUMBER", value: 0 };
-      if (value.indexOf("metric:") === 0) return { kind: "METRIC", name: value.slice(7) };
-      if (value.indexOf("step:") === 0) return { kind: "STEP", step: value.slice(5) };
-      return null;
-    }
-
+    // op / fn / result are <select>s (fixed sets) — a change updates the model + preview, no re-render.
     builder.addEventListener("change", (e) => {
       const t = e.target;
       const role = t.getAttribute && t.getAttribute("data-role");
       if (!role) return;
       const si = Number(t.getAttribute("data-si"));
-      if (role === "slot") {
-        const step = state.formula.steps[si];
-        step[t.getAttribute("data-slot")] = decodeSlot(t.value);
-        renderBuilder();
-      } else if (role === "op") {
-        state.formula.steps[si].op = t.value; updatePreviewOnly();
-      } else if (role === "fn") {
-        state.formula.steps[si].fn = t.value; updatePreviewOnly();
-      } else if (role === "result") {
-        state.formula.result = t.value; updatePreviewOnly();
-      }
+      if (role === "op") { state.formula.steps[si].op = t.value; updatePreviewOnly(); }
+      else if (role === "fn") { state.formula.steps[si].fn = t.value; updatePreviewOnly(); }
+      else if (role === "result") { state.formula.result = t.value; updatePreviewOnly(); }
     });
+    // Operand slots are editable inputs — parse on each keystroke (no re-render, so focus is kept).
     builder.addEventListener("input", (e) => {
       const t = e.target;
-      if (!t.getAttribute || t.getAttribute("data-role") !== "num") return;
-      const step = state.formula.steps[Number(t.getAttribute("data-si"))];
-      const slot = t.getAttribute("data-slot");
-      const v = Number(t.value);
-      step[slot] = { kind: "NUMBER", value: Number.isFinite(v) ? v : 0 };
+      if (!t.getAttribute || t.getAttribute("data-role") !== "slot") return;
+      const si = Number(t.getAttribute("data-si"));
+      const priorIds = state.formula.steps.slice(0, si).map((s) => s.id);
+      const metricNames = state.metrics.map((m) => m.name);
+      state.formula.steps[si][t.getAttribute("data-slot")] = parseSlotText(t.value, priorIds, metricNames);
       updatePreviewOnly();
     });
     builder.addEventListener("click", (e) => {
@@ -495,21 +502,39 @@
     panels.forEach((p) => { p.hidden = p.getAttribute("data-mfpanel") !== "details"; });
   }
 
-  // Return an error message if the formula has an unfinished slot, else null.
+  // Return an error message if any slot is empty or unresolved (not a metric, step, or number), else null.
   function validateFormula(formula) {
     if (!formula || !Array.isArray(formula.steps) || !formula.steps.length) return "Add at least one step to the formula.";
-    const okTok = (t) => t && t.kind && (t.kind !== "NUMBER" || Number.isFinite(t.value));
+    const problem = (t) => {
+      if (!t) return "empty";
+      if (t.kind === "RAW") return t.text || "invalid";
+      if (t.kind === "NUMBER" && !Number.isFinite(t.value)) return "invalid";
+      if (["METRIC", "CREATED_AT", "STEP", "NUMBER"].indexOf(t.kind) < 0) return "invalid";
+      return null;
+    };
     for (const s of formula.steps) {
-      if (!okTok(s.a)) return "Every step needs its operands filled in — pick a metric, number, created_at, or step.";
-      if (s.kind === "OP" && !okTok(s.b)) return "Every operation needs both operands filled in.";
+      const slots = s.kind === "OP" ? ["a", "b"] : ["a"];
+      for (const k of slots) {
+        const p = problem(s[k]);
+        if (p === "empty") return "Every slot needs a metric, an earlier step, or a number.";
+        if (p) return "“" + p + "” isn’t a metric, step, or number — pick one from the list or enter a number.";
+      }
     }
     return null;
+  }
+
+  // Which tab (details / formula) is currently active in a rendered form — read on save/cancel so the
+  // page can return to the same tab in view mode.
+  function activeTab(container) {
+    const t = container.querySelector(".modalTabBtn.isActive");
+    return t ? t.getAttribute("data-mftab") : "details";
   }
 
   window.SMMetricForm = {
     render: render,
     wire: wire,
     collect: collect,
+    activeTab: activeTab,
     typePillHtml: typePillHtml,
     kindPillHtml: kindPillHtml,
     formulaText: formulaText,
