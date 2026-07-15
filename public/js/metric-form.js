@@ -301,20 +301,66 @@
     // ── Steps builder ──
     const builder = container.querySelector("#mf-builder");
 
-    // One operand slot — an editable combobox. The datalist lists every metric, the built-in
-    // `created_at`, and the earlier steps (A, B…); the user can pick one or just type a number. The
-    // typed value is parsed into a token on input and validated on save. `priorIds` are the earlier steps.
-    function slotHtml(tok, si, slot, priorIds) {
-      const listId = "mf-dl-" + si + slot;
-      const options = state.metrics.map((m) => m.name).concat(["created_at"], priorIds)
-        .map((v) => '<option value="' + esc(v) + '"></option>').join("");
+    // One operand slot — an editable combobox with a CUSTOM popup (the native <datalist> popup is
+    // unstylable: it ignores the app theme, detaches from the input, and sizes itself). The popup lists
+    // every metric, the built-in `created_at`, and the earlier steps (A, B…), grouped and filtered as
+    // the user types; they can pick one or just type a number. The typed value is parsed into a token on
+    // input and validated on save.
+    function slotHtml(tok, si, slot) {
       return '<span class="mfSlot">' +
-        '<input class="mfSlotInput" list="' + listId + '" data-role="slot" data-si="' + si + '" data-slot="' + slot + '" autocomplete="off" spellcheck="false" placeholder="metric / step / number" value="' + esc(slotDisplay(tok)) + '" />' +
-        '<datalist id="' + listId + '">' + options + "</datalist></span>";
+        '<input class="mfSlotInput" data-role="slot" data-si="' + si + '" data-slot="' + slot + '" autocomplete="off" spellcheck="false" placeholder="metric / step / number" value="' + esc(slotDisplay(tok)) + '" role="combobox" aria-expanded="false" aria-autocomplete="list" />' +
+        '<div class="mfSlotMenu" hidden></div></span>';
+    }
+
+    // The option groups available to a slot on step `si` (earlier steps only — no self/forward refs).
+    function slotGroups(si) {
+      const priorIds = state.formula.steps.slice(0, si).map((s) => s.id);
+      const groups = [];
+      if (state.metrics.length) groups.push(["Metrics", state.metrics.map((m) => m.name)]);
+      groups.push(["Built-in", ["created_at"]]);
+      if (priorIds.length) groups.push(["Steps", priorIds]);
+      return groups;
+    }
+
+    // Render (or re-filter) the popup under a slot input. Substring match; empty input shows everything.
+    function renderSlotMenu(input) {
+      const menu = input.parentElement.querySelector(".mfSlotMenu");
+      if (!menu) return;
+      const q = input.value.trim().toLowerCase();
+      let html = "";
+      slotGroups(Number(input.getAttribute("data-si"))).forEach((g) => {
+        const hits = g[1].filter((v) => !q || v.toLowerCase().indexOf(q) >= 0);
+        if (!hits.length) return;
+        html += '<div class="mfSlotOptGroup">' + esc(g[0]) + "</div>" +
+          hits.map((v) => '<button type="button" class="mfSlotOpt" data-v="' + esc(v) + '">' + esc(v) + "</button>").join("");
+      });
+      menu.innerHTML = html || '<div class="mfSlotOptEmpty">No matches — a number works too</div>';
+      menu.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    }
+    function closeSlotMenu(input) {
+      const menu = input.parentElement.querySelector(".mfSlotMenu");
+      if (menu) menu.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+    }
+    // Keyboard: move the highlighted option (ArrowUp/Down), Enter picks it, Escape closes.
+    function moveSlotActive(menu, dir) {
+      const opts = Array.from(menu.querySelectorAll(".mfSlotOpt"));
+      if (!opts.length) return;
+      const cur = menu.querySelector(".mfSlotOpt.isActive");
+      let i = cur ? opts.indexOf(cur) + dir : dir > 0 ? 0 : opts.length - 1;
+      i = Math.max(0, Math.min(opts.length - 1, i));
+      opts.forEach((o) => o.classList.remove("isActive"));
+      opts[i].classList.add("isActive");
+      opts[i].scrollIntoView({ block: "nearest" });
+    }
+    function pickSlotOption(input, value) {
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true })); // reuse the parse + preview path
+      closeSlotMenu(input);
     }
 
     function stepRowHtml(step, si) {
-      const priorIds = state.formula.steps.slice(0, si).map((s) => s.id);
       const letter = '<span class="mfLetter">' + esc(step.id) + "</span>";
       const kindToggle =
         '<span class="mfStepKind" role="group" aria-label="Step kind">' +
@@ -325,12 +371,12 @@
       if (step.kind === "FN") {
         const fnOpts = FNS.map((p) => '<option value="' + p[0] + '"' + (p[0] === step.fn ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
         body = '<select class="mfFn" data-role="fn" data-si="' + si + '">' + fnOpts + "</select>" +
-          '<span class="mfParen">(</span>' + slotHtml(step.a, si, "a", priorIds) + '<span class="mfParen">)</span>';
+          '<span class="mfParen">(</span>' + slotHtml(step.a, si, "a") + '<span class="mfParen">)</span>';
       } else {
         const opOpts = OPS.map((p) => '<option value="' + p[0] + '"' + (p[0] === step.op ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
-        body = slotHtml(step.a, si, "a", priorIds) +
+        body = slotHtml(step.a, si, "a") +
           '<select class="mfOp" data-role="op" data-si="' + si + '">' + opOpts + "</select>" +
-          slotHtml(step.b, si, "b", priorIds);
+          slotHtml(step.b, si, "b");
       }
       const del = state.formula.steps.length > 1
         ? '<button type="button" class="mfStepDel" data-role="delstep" data-si="' + si + '" aria-label="Remove step ' + esc(step.id) + '">' + SM.icon("trash", 16) + "</button>"
@@ -391,7 +437,8 @@
       else if (role === "fn") { state.formula.steps[si].fn = t.value; updatePreviewOnly(); }
       else if (role === "result") { state.formula.result = t.value; updatePreviewOnly(); }
     });
-    // Operand slots are editable inputs — parse on each keystroke (no re-render, so focus is kept).
+    // Operand slots are editable inputs — parse on each keystroke (no re-render, so focus is kept) and
+    // re-filter the popup.
     builder.addEventListener("input", (e) => {
       const t = e.target;
       if (!t.getAttribute || t.getAttribute("data-role") !== "slot") return;
@@ -400,6 +447,39 @@
       const metricNames = state.metrics.map((m) => m.name);
       state.formula.steps[si][t.getAttribute("data-slot")] = parseSlotText(t.value, priorIds, metricNames);
       updatePreviewOnly();
+      renderSlotMenu(t);
+    });
+    // Slot popup lifecycle: open on focus, close on blur. Picking an option uses mousedown with
+    // preventDefault so the input never loses focus (click would blur first and the menu would vanish).
+    builder.addEventListener("focusin", (e) => {
+      const t = e.target;
+      if (t.getAttribute && t.getAttribute("data-role") === "slot") renderSlotMenu(t);
+    });
+    builder.addEventListener("focusout", (e) => {
+      const t = e.target;
+      if (t.getAttribute && t.getAttribute("data-role") === "slot") closeSlotMenu(t);
+    });
+    builder.addEventListener("mousedown", (e) => {
+      const opt = e.target.closest && e.target.closest(".mfSlotOpt");
+      if (!opt || !builder.contains(opt)) return;
+      e.preventDefault();
+      pickSlotOption(opt.closest(".mfSlot").querySelector(".mfSlotInput"), opt.getAttribute("data-v"));
+    });
+    builder.addEventListener("keydown", (e) => {
+      const t = e.target;
+      if (!t.getAttribute || t.getAttribute("data-role") !== "slot") return;
+      const menu = t.parentElement.querySelector(".mfSlotMenu");
+      if (!menu) return;
+      if (e.key === "Escape") { closeSlotMenu(t); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (menu.hidden) renderSlotMenu(t);
+        moveSlotActive(menu, e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && !menu.hidden) {
+        const active = menu.querySelector(".mfSlotOpt.isActive");
+        if (active) { e.preventDefault(); pickSlotOption(t, active.getAttribute("data-v")); }
+        else closeSlotMenu(t);
+      }
     });
     builder.addEventListener("click", (e) => {
       const btn = e.target.closest && e.target.closest("[data-role]");
