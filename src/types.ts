@@ -336,12 +336,11 @@ export interface SubjectTypeRow {
 }
 
 // ── Metrics ── a reusable, account-owned catalogue of metric definitions (stored or computed-on-read).
-// Every metric is a numeric measurement; `type` is the numeric kind (whole number vs continuous). What
-// it measures (`unit`) and how it renders (`format`) are separate, cosmetic facets.
-export type MetricType = "INTEGER" | "DECIMAL";
-export const METRIC_TYPES: readonly MetricType[] = ["INTEGER", "DECIMAL"];
-export type MetricKind = "STORED" | "DERIVED";
-export const METRIC_KINDS: readonly MetricKind[] = ["STORED", "DERIVED"];
+// Every metric is a numeric measurement; `type` says what it is: an INTEGER or DECIMAL value clients
+// POST on each measurement, or a FORMULA computed on read. What it measures (`unit`) and how it renders
+// (`format`) are separate, cosmetic facets.
+export type MetricType = "INTEGER" | "DECIMAL" | "FORMULA";
+export const METRIC_TYPES: readonly MetricType[] = ["INTEGER", "DECIMAL", "FORMULA"];
 /** The binary operators a formula step can apply: add, subtract, multiply, divide, modulo. */
 export type MetricStepOp = "ADD" | "SUB" | "MUL" | "DIV" | "MOD";
 export const METRIC_STEP_OPS: readonly MetricStepOp[] = ["ADD", "SUB", "MUL", "DIV", "MOD"];
@@ -373,8 +372,8 @@ export interface MetricFormula {
 }
 
 /** A metric definition: `name` is the snake_case identifier (the key it occupies in a measurement's
- *  metrics bag, unique per account); `label` is the display name; `kind` is STORED (POSTed by clients)
- *  or DERIVED (computed on read from `formula`). */
+ *  metrics bag, unique per account); `label` is the display name; `type` is INTEGER/DECIMAL (a value
+ *  clients POST) or FORMULA (computed on read from `formula`). */
 export interface MetricRow {
   id: string;
   account_id: string;
@@ -382,12 +381,11 @@ export interface MetricRow {
   label: string;
   description: string | null;
   type: MetricType;
-  kind: MetricKind;
   /** The unit of measure — a short display label (`ms`, `bytes`, `req/s`, `%`). Cosmetic; null when unset. */
   unit: string | null;
   /** An Excel-style number-format pattern (`#,##0.00`, `0.0%`). Cosmetic; null uses a default per type. */
   format: string | null;
-  /** JSON string of MetricFormula, for DERIVED metrics; null for STORED. */
+  /** JSON string of MetricFormula, for FORMULA metrics; null otherwise. */
   formula: string | null;
   created_at: number;
   updated_at: number;

@@ -55,7 +55,7 @@
       SM.setTopBarAction("");
       host.innerHTML =
         '<div class="emptyState"><div class="emptyIcon">' + SM.icon("activity", 44) + "</div>" +
-        "<h2>No metrics yet</h2><p>A metric is a value your benchmarks report — stored (posted with each measurement) or derived (computed on read from a built-in formula). Define your library here, then link metrics from a benchmark.</p>" +
+        "<h2>No metrics yet</h2><p>A metric is a value your benchmarks report — an integer or decimal posted with each measurement, or a formula computed on read. Define your library here, then link metrics from a benchmark.</p>" +
         (CAN_WRITE ? '<button type="button" class="button buttonPrimary" id="empty-create">New metric</button>' : "") + "</div>";
       const b = $("empty-create"); if (b) b.addEventListener("click", openCreate);
       return;
@@ -70,7 +70,6 @@
         { key: "name", label: "Name", sortable: true, sortValue: (m) => (m.attributes || {}).name || "", render: (m) => "<code>" + esc((m.attributes || {}).name || "") + "</code>" },
         { key: "label", label: "Label", sortable: true, sortValue: (m) => (m.attributes || {}).label || "", render: (m) => esc((m.attributes || {}).label || "") },
         { key: "type", label: "Type", sortable: true, sortValue: (m) => (m.attributes || {}).type || "", render: (m) => SMMetricForm.typePillHtml((m.attributes || {}).type) },
-        { key: "kind", label: "Kind", sortable: true, sortValue: (m) => (m.attributes || {}).kind || "", render: (m) => SMMetricForm.kindPillHtml((m.attributes || {}).kind) },
       ],
       rows: filtered(),
       sort: { key: "name", dir: "asc" },

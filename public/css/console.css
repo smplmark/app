@@ -520,7 +520,7 @@
 .fieldCheckRow input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .subjectFormFields { display: grid; gap: 0.75rem; margin-top: 0.25rem; padding-top: 0.85rem; border-top: 1px solid var(--border); }
 
-/* Metric editor — a DERIVED-kind pill gets an accent so STORED vs DERIVED reads at a glance. */
+/* Metric editor — a FORMULA-type pill gets an accent so computed metrics read at a glance. */
 .typePill.kindDerived { background: color-mix(in srgb, var(--accent) 16%, var(--surface-alt)); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent-strong); }
 
 /* Metric form — a two-tab shell (Details / Formula, standard .modalTabBar tabs) with a lettered-steps

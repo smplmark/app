@@ -1,6 +1,6 @@
 // Link a library metric to a benchmark (M:N). Linking is snapshot-on-link: the metric's current
-// definition is copied into the benchmark's measurement_schema — a MetricDecl for STORED, a DerivedDecl
-// (with the compiled JSON Logic) for DERIVED — which is what the compute-on-read engine and the publish
+// definition is copied into the benchmark's measurement_schema — a MetricDecl for INTEGER/DECIMAL, a
+// DerivedDecl (with the compiled JSON Logic) for FORMULA — which is what the compute-on-read engine and the publish
 // freeze read. Because a snapshot is an APPEND, linking is allowed even on a published benchmark; the
 // interpretation freeze only forbids changing/removing existing entries. Unlinking removes the snapshot,
 // so — like unlinking a subject — it's only allowed while the benchmark is PRIVATE.

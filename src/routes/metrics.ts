@@ -1,5 +1,5 @@
-// Metrics — a reusable, account-owned catalogue of metric definitions (STORED values or DERIVED,
-// computed-on-read). All endpoints need an account-scoped credential (a benchmark/run-scoped key can't
+// Metrics — a reusable, account-owned catalogue of metric definitions (INTEGER/DECIMAL values clients
+// POST, or FORMULA metrics computed on read). All endpoints need an account-scoped credential (a benchmark/run-scoped key can't
 // reach the account's shared metric namespace); writes are write-tier (a viewer may read, not mutate).
 // Metrics are linked to benchmarks many-to-many in a later change.
 import { Hono, type Context } from "hono";
@@ -24,7 +24,7 @@ import { serializeMetric } from "../serialize/resource";
 import type { AuthContext, MetricRow } from "../types";
 import { readAttributes, readPagination, readSort } from "./shared";
 
-const SORT_ALLOWED = ["name", "label", "type", "kind", "created_at", "updated_at"] as const;
+const SORT_ALLOWED = ["name", "label", "type", "created_at", "updated_at"] as const;
 
 export const metrics = new Hono<AppBindings>();
 
@@ -71,7 +71,6 @@ metrics.post("/", requireAuth, async (c) => {
     label: parsed.label,
     description: parsed.description,
     type: parsed.type,
-    kind: parsed.kind,
     unit: parsed.unit,
     format: parsed.format,
     formula: parsed.formula ? JSON.stringify(parsed.formula) : null,
@@ -112,7 +111,6 @@ metrics.put("/:id", requireAuth, async (c) => {
     label: parsed.label,
     description: parsed.description,
     type: parsed.type,
-    kind: parsed.kind,
     unit: parsed.unit,
     format: parsed.format,
     formula: parsed.formula ? JSON.stringify(parsed.formula) : null,

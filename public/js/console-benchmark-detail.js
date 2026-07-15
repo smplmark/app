@@ -465,7 +465,7 @@
   // ── Metrics tab (the values this benchmark reports) ──
   // Metrics are an account-owned library; linking one snapshots its definition into this benchmark's
   // measurement schema. The table is driven by the link rows joined to the account library (which
-  // supplies each metric's name/label/type/kind); unlink removes the snapshot (draft benchmarks only).
+  // supplies each metric's name/label/type); unlink removes the snapshot (draft benchmarks only).
   async function renderMetrics(panel, actions) {
     if (CAN_WRITE && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-metric-btn">' + SM.icon("plus", 14) + " Add metric</button>";
@@ -476,7 +476,6 @@
       { key: "name", label: "Name", sortable: true, sortValue: (t) => (t.attributes || {}).name || "", render: (t) => "<code>" + esc((t.attributes || {}).name || "") + "</code>" },
       { key: "label", label: "Label", sortable: true, sortValue: (t) => (t.attributes || {}).label || "", render: (t) => esc((t.attributes || {}).label || "") },
       { key: "type", label: "Type", sortable: true, sortValue: (t) => (t.attributes || {}).type || "", render: (t) => SMMetricForm.typePillHtml((t.attributes || {}).type) },
-      { key: "kind", label: "Kind", sortable: true, sortValue: (t) => (t.attributes || {}).kind || "", render: (t) => SMMetricForm.kindPillHtml((t.attributes || {}).kind) },
     ];
     if (CAN_WRITE) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn unlink-metric" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).label || (t.attributes || {}).name || "") + '" title="Unlink metric" aria-label="Unlink metric">' + SM.icon("trash", 15) + "</button>" });

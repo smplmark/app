@@ -180,7 +180,7 @@ export async function makeBenchmark(
   return ((await res.json()) as { data: Resource }).data;
 }
 
-/** Create a metric in the account library (defaults to a STORED NUMBER); returns its resource. */
+/** Create a metric in the account library (defaults to a DECIMAL metric); returns its resource. */
 export async function makeMetric(
   token: string,
   attrs: Record<string, unknown> = {},

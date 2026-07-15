@@ -2,7 +2,7 @@
 
 // Shared metric form + display helpers, used by the Metrics module. The editable form is rendered
 // INLINE on the metric detail page (both create and edit), not in a modal, and is split into two tabs:
-// a DETAILS tab (name, label, description, type, kind) and — for a DERIVED metric — a FORMULA tab that
+// a DETAILS tab (name, label, description, unit, format, type) and — for a FORMULA metric — a FORMULA tab that
 // builds the compute-on-read expression without any JSON Logic syntax.
 //
 // The formula is an ordered list of lettered steps (A, B, C…). Each step is either a binary OPERATION
@@ -13,9 +13,8 @@
 
 (function () {
   const esc = SM.esc;
-  const TYPES = [["INTEGER", "Integer"], ["DECIMAL", "Decimal"]];
-  // The API value for a computed metric is DERIVED; the console labels it "Formula" to match the tab.
-  const KINDS = [["STORED", "Stored"], ["DERIVED", "Formula"]];
+  // A metric's single type facet: an INTEGER or DECIMAL value clients POST, or a FORMULA computed on read.
+  const TYPES = [["INTEGER", "Integer"], ["DECIMAL", "Decimal"], ["FORMULA", "Formula"]];
   // Common units offered as suggestions (free text — any unit is allowed).
   const UNIT_PRESETS = ["ms", "s", "µs", "ns", "bytes", "KB", "MB", "GB", "req/s", "ops/s", "tokens", "tokens/s", "%", "°C", "count", "score"];
   // Format presets → an Excel-style pattern (SM.formatNumber). "" = default; "__custom__" reveals a field.
@@ -28,7 +27,7 @@
     ["0.0%", "Percent — 12.3%"],
     ["__custom__", "Custom…"],
   ];
-  function defaultFormatFor(type) { return type === "INTEGER" ? "#,##0" : "#,##0.###"; }
+  function defaultFormatFor(type) { return type === "INTEGER" ? "#,##0" : "#,##0.###"; } // DECIMAL + FORMULA share the decimal default
   const OPS = [["ADD", "+"], ["SUB", "−"], ["MUL", "×"], ["DIV", "÷"], ["MOD", "mod"]];
   const FNS = [["FLOOR", "floor"], ["ROUND", "round"], ["CEIL", "ceil"], ["ABS", "abs"]];
   const OP_SYM = { ADD: "+", SUB: "−", MUL: "×", DIV: "÷", MOD: "mod" };
@@ -37,12 +36,11 @@
   const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
   function typeLabel(t) { const x = TYPES.find((p) => p[0] === t); return x ? x[1] : String(t || ""); }
-  function kindLabel(k) { const x = KINDS.find((p) => p[0] === k); return x ? x[1] : String(k || ""); }
   function metricNameSlug(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60); }
   function sanitizeName(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 60); }
 
-  function typePillHtml(t) { return '<span class="typePill">' + esc(typeLabel(t)) + "</span>"; }
-  function kindPillHtml(k) { return '<span class="typePill' + (k === "DERIVED" ? " kindDerived" : "") + '">' + esc(kindLabel(k)) + "</span>"; }
+  // FORMULA gets the accent pill so computed metrics read at a glance in tables + the header.
+  function typePillHtml(t) { return '<span class="typePill' + (t === "FORMULA" ? " kindDerived" : "") + '">' + esc(typeLabel(t)) + "</span>"; }
 
   // ── Formula rendering (shared by the builder preview and the read-only detail view) ──
 
@@ -140,8 +138,7 @@
     opts = opts || {};
     const isNew = !!opts.isNew;
     const initType = attrs.type || "DECIMAL";
-    const initKind = attrs.kind || "STORED";
-    const derived = initKind === "DERIVED";
+    const isFormula = initType === "FORMULA";
     const initUnit = attrs.unit || "";
     const initFormat = attrs.format || "";
     const presetVals = FORMAT_PRESETS.map((p) => p[0]);
@@ -149,7 +146,6 @@
     const initCustom = initFormatSel === "__custom__" ? initFormat : "";
 
     const typePills = TYPES.map((p) => radioPill("mf-type", p[0], p[1], p[0] === initType)).join("");
-    const kindPills = KINDS.map((p) => radioPill("mf-kind", p[0], p[1], p[0] === initKind)).join("");
     const unitDatalist = '<datalist id="mf-unit-presets">' + UNIT_PRESETS.map((u) => '<option value="' + esc(u) + '"></option>').join("") + "</datalist>";
     const formatOptions = FORMAT_PRESETS.map((p) => '<option value="' + esc(p[0]) + '"' + (p[0] === initFormatSel ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
     const nameHelp = isNew
@@ -160,23 +156,23 @@
       '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input name="name" type="text" placeholder="throughput" autocomplete="off" spellcheck="false"' + (isNew ? "" : " disabled") + ' value="' + esc(attrs.name || "") + '" /><p class="fieldErrorMessage" hidden></p><p class="detailFieldHelp">' + nameHelp + "</p></label>" +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Label</span><input name="label" type="text" placeholder="Throughput" autocomplete="off" value="' + esc(attrs.label || "") + '" /><p class="fieldErrorMessage" hidden></p></label>' +
       '<label class="field"><span class="detailFieldLabel">Description</span><input name="description" type="text" placeholder="Optional — a note about this metric" autocomplete="off" value="' + esc(attrs.description || "") + '" /></label>' +
-      '<div class="fieldModalBlock"><span class="detailFieldLabel">Type</span><div class="radioGroup" role="radiogroup" aria-label="Metric type">' + typePills + "</div>" +
-      '<p class="detailFieldHelp">Every metric is a number. Integer — whole numbers; Decimal — continuous.</p></div>' +
       '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" list="mf-unit-presets" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(initUnit) + '" />' + unitDatalist +
       '<p class="detailFieldHelp">What the metric measures. A display label — it doesn’t affect computation.</p></label>' +
       '<div class="fieldModalBlock"><span class="detailFieldLabel">Format</span>' +
       '<div class="mfFormatRow"><select name="mf-format-preset" class="mfSlotPick mfFormatPreset">' + formatOptions + "</select>" +
       '<input name="mf-format-custom" type="text" class="mfSlotPick mfFormatCustom" autocomplete="off" spellcheck="false" placeholder="#,##0.00" maxlength="32" value="' + esc(initCustom) + '"' + (initFormatSel === "__custom__" ? "" : " hidden") + " /></div>" +
-      '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>' +
-      '<div class="fieldModalBlock"><span class="detailFieldLabel">Kind</span><div class="radioGroup" role="radiogroup" aria-label="Metric kind">' + kindPills + "</div>" +
-      '<p class="detailFieldHelp">Stored — a value clients POST on each measurement. Formula — computed on read from a formula you define.</p></div>';
+      '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>';
 
     // The Details panel is a two-column grid (matching the view + the other detail pages): the editable
-    // fields on the left, the read-only Created / Updated metadata on the right, so nothing jumps
-    // position when the page toggles between view and edit. Created/Updated are absent on a new metric.
-    const meta = attrs.created_at
-      ? SM.detailField("Created", { value: SM.fmtDateTime(attrs.created_at) }) + SM.detailField("Updated", { value: SM.fmtDateTime(attrs.updated_at) })
-      : "";
+    // fields on the left; the read-only Created / Updated metadata with Type beneath it on the right, so
+    // nothing jumps position when the page toggles between view and edit. Created/Updated are absent on
+    // a new metric. Picking Formula reveals the Formula tab.
+    const meta =
+      (attrs.created_at
+        ? SM.detailField("Created", { value: SM.fmtDateTime(attrs.created_at) }) + SM.detailField("Updated", { value: SM.fmtDateTime(attrs.updated_at) })
+        : "") +
+      '<div class="fieldModalBlock"><span class="detailFieldLabel">Type</span><div class="radioGroup" role="radiogroup" aria-label="Metric type">' + typePills + "</div>" +
+      '<p class="detailFieldHelp">Integer / Decimal — a value clients POST on each measurement. Formula — computed on read from a formula you define.</p></div>';
 
     // Tabs sit at the top level (a full-width .detailsTabHeader with tabs left, an actions slot right),
     // with the panels below in a single .detailsTabPanel card — the app's standard tabbed-detail layout
@@ -184,7 +180,7 @@
     return (
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
       '<button type="button" class="modalTabBtn isActive" data-mftab="details" role="tab" aria-selected="true">Details</button>' +
-      '<button type="button" class="modalTabBtn" data-mftab="formula" id="mf-tab-formula" role="tab" aria-selected="false"' + (derived ? "" : " hidden") + ">Formula</button>" +
+      '<button type="button" class="modalTabBtn" data-mftab="formula" id="mf-tab-formula" role="tab" aria-selected="false"' + (isFormula ? "" : " hidden") + ">Formula</button>" +
       "</nav>" +
       '<div class="detailsTabActions" id="mf-tab-actions"></div></div>' +
       '<div class="detailsTabPanel">' +
@@ -197,7 +193,7 @@
     );
   }
 
-  // A default formula for a metric switched to DERIVED with none yet: one empty operation step.
+  // A default formula for a metric switched to FORMULA with none yet: one empty operation step.
   function defaultFormula() {
     return { steps: [{ id: "A", kind: "OP", op: "DIV", a: null, b: null }], result: "A" };
   }
@@ -222,7 +218,7 @@
     return null;
   }
 
-  // ── wire(): live behaviors — name derive, kind→formula-tab, tab switching, and the steps builder ──
+  // ── wire(): live behaviors — name derive, type→formula-tab, tab switching, and the steps builder ──
   function wire(container, opts) {
     opts = opts || {};
     const isNew = !!opts.isNew;
@@ -250,17 +246,17 @@
     tabs.forEach((t) => t.addEventListener("click", () => showTab(t.getAttribute("data-mftab"))));
     container.__mfShowFormulaTab = () => showTab("formula");
 
-    // Kind toggle reveals/hides the Formula tab.
+    // The FORMULA type reveals/hides the Formula tab.
     const formulaTabBtn = container.querySelector("#mf-tab-formula");
-    function syncKind() {
-      const derived = current("mf-kind") === "DERIVED";
-      formulaTabBtn.hidden = !derived;
-      if (!derived) showTab("details");
+    function syncType() {
+      const isFormula = current("mf-type") === "FORMULA";
+      formulaTabBtn.hidden = !isFormula;
+      if (!isFormula) showTab("details");
     }
-    container.querySelectorAll('input[name="mf-kind"]').forEach((r) => r.addEventListener("change", syncKind));
-    syncKind();
+    container.querySelectorAll('input[name="mf-type"]').forEach((r) => r.addEventListener("change", syncType));
+    syncType();
     // Open on the tab the caller asked for (e.g. Edit was clicked from the Formula tab in view mode).
-    if (opts.initTab === "formula" && current("mf-kind") === "DERIVED") showTab("formula");
+    if (opts.initTab === "formula" && current("mf-type") === "FORMULA") showTab("formula");
 
     // Format: a preset <select> plus a custom-pattern input (shown only for "Custom…"), with a live
     // sample that reflects the current pattern, type default, and unit.
@@ -473,7 +469,7 @@
     const name = metricNameSlug(nameEl.value.trim() || label) || metricNameSlug(label);
     if (!name) { SM.setFieldError(nameEl, "Enter a name with letters or numbers."); return { ok: false }; }
 
-    const attrs = { name: name, label: label, type: current("mf-type"), kind: current("mf-kind") };
+    const attrs = { name: name, label: label, type: current("mf-type") };
     const desc = container.querySelector('[name="description"]').value.trim();
     if (desc) attrs.description = desc;
     const unit = container.querySelector('[name="unit"]').value.trim();
@@ -481,7 +477,7 @@
     const format = container.__mfFormat ? container.__mfFormat() : "";
     if (format) attrs.format = format;
 
-    if (attrs.kind === "DERIVED") {
+    if (attrs.type === "FORMULA") {
       const state = container.__mfState;
       const formula = state && state.formula;
       const bad = validateFormula(formula);
@@ -536,10 +532,8 @@
     collect: collect,
     activeTab: activeTab,
     typePillHtml: typePillHtml,
-    kindPillHtml: kindPillHtml,
     formulaText: formulaText,
     formulaJson: formulaJson,
     typeLabel: typeLabel,
-    kindLabel: kindLabel,
   };
 })();

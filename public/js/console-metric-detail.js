@@ -1,9 +1,9 @@
 "use strict";
 
 // Metric detail (/account/metrics/detail?id=…) — a conforming tabbed detail page (same shape as the
-// subject / benchmark pages): a DetailHeader (title + Type/Kind pills, no header buttons), a
+// subject / benchmark pages): a DetailHeader (title + Type pill, no header buttons), a
 // .detailsTabHeader with tabs on the left and the actions on the right, and a .detailsTabPanel card per
-// tab. Tabs are Details, plus Formula for a DERIVED metric.
+// tab. Tabs are Details, plus Formula for a FORMULA metric.
 //
 // With no id it is the CREATE page (the editable form, POST). With an id it shows the metric in VIEW mode
 // (Edit / Delete in the tab row); Edit turns the same page into the inline editable form (PUT). The
@@ -49,13 +49,13 @@
     } catch (err) { fail(err.message || "Failed to load metric."); }
   }
 
-  // ── VIEW mode: a tabbed detail page (Details, plus Formula for a DERIVED metric) ──
+  // ── VIEW mode: a tabbed detail page (Details, plus Formula for a FORMULA metric) ──
   function renderView() {
     const a = METRIC.attributes || {};
-    const derived = a.kind === "DERIVED";
-    const tabs = derived ? ["details", "formula"] : ["details"];
+    const isFormula = a.type === "FORMULA";
+    const tabs = isFormula ? ["details", "formula"] : ["details"];
     if (tabs.indexOf(activeTab) < 0) activeTab = "details";
-    const decorations = SMMetricForm.typePillHtml(a.type) + SMMetricForm.kindPillHtml(a.kind);
+    const decorations = SMMetricForm.typePillHtml(a.type);
     const tabBtn = (key, label) =>
       '<button type="button" class="modalTabBtn' + (activeTab === key ? " isActive" : "") + '" data-tab="' + key + '" role="tab" aria-selected="' + (activeTab === key) + '">' + esc(label) + "</button>";
 
@@ -91,19 +91,18 @@
     const fmtPattern = a.format || (a.type === "INTEGER" ? "#,##0" : "#,##0.###");
     const sample = SM.formatNumber(/%/.test(fmtPattern) ? 0.1234 : 1234.567, fmtPattern) + (a.unit ? " " + a.unit : "");
     // Left column mirrors the edit form's fields (so nothing jumps on Edit); the right column is the
-    // standard read-only Created / Updated metadata.
+    // standard read-only Created / Updated metadata with Type beneath it — same spot as the edit form.
     const left =
       SM.detailField("Name", { value: a.name, mono: true }) +
       SM.detailField("Label", { value: a.label }) +
       SM.detailField("Description", { value: a.description, emptyText: "—" }) +
-      SM.detailField("Type", { value: SMMetricForm.typeLabel(a.type) }) +
       SM.detailField("Unit", { value: a.unit, emptyText: "—" }) +
       SM.detailField("Format", { value: a.format || "Default", mono: true }) +
-      SM.detailField("Sample", { value: sample, mono: true }) +
-      SM.detailField("Kind", { value: SMMetricForm.kindLabel(a.kind) });
+      SM.detailField("Sample", { value: sample, mono: true });
     const right =
       SM.detailField("Created", { value: SM.fmtDateTime(a.created_at) }) +
-      SM.detailField("Updated", { value: SM.fmtDateTime(a.updated_at) });
+      SM.detailField("Updated", { value: SM.fmtDateTime(a.updated_at) }) +
+      SM.detailField("Type", { value: SMMetricForm.typeLabel(a.type) });
     panel.innerHTML =
       '<div class="detailsTabPanel"><div class="detailGrid">' +
       '<div class="detailCol">' + left + "</div>" +

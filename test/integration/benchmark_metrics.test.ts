@@ -28,7 +28,7 @@ async function schemaOf(token: string, benchmarkId: string): Promise<{ metrics: 
 }
 
 describe("benchmark_metric — snapshot on link", () => {
-  it("links a STORED metric, appending a MetricDecl to the schema", async () => {
+  it("links an INTEGER metric, appending a MetricDecl to the schema", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
     const metric = await makeMetric(me.token, { label: "Throughput (req/s)", type: "INTEGER", unit: "req/s", format: "#,##0", description: "Requests per second" });
@@ -42,14 +42,13 @@ describe("benchmark_metric — snapshot on link", () => {
     expect(schema.derived).toEqual([]);
   });
 
-  it("links a DERIVED metric, appending a DerivedDecl with the compiled expression", async () => {
+  it("links a FORMULA metric, appending a DerivedDecl with the compiled expression", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
     const metric = await makeMetric(me.token, {
       label: "Skew",
-      type: "DECIMAL",
+      type: "FORMULA",
       unit: "ms",
-      kind: "DERIVED",
       // Minute-skew from primitives: created_at mod 60000.
       formula: {
         steps: [{ id: "A", kind: "OP", op: "MOD", a: { kind: "CREATED_AT" }, b: { kind: "NUMBER", value: 60000 } }],

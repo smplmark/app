@@ -83,8 +83,8 @@ describe("metricExprToJsonLogic", () => {
 });
 
 describe("parseMetric formula validation", () => {
-  const ok = (formula: unknown) => parseMetric({ label: "X", type: "DECIMAL", kind: "DERIVED", formula });
-  const bad = (formula: unknown) => () => parseMetric({ label: "X", type: "DECIMAL", kind: "DERIVED", formula });
+  const ok = (formula: unknown) => parseMetric({ label: "X", type: "FORMULA", formula });
+  const bad = (formula: unknown) => () => parseMetric({ label: "X", type: "FORMULA", formula });
 
   it("normalizes a well-formed multi-step formula (slugs metric names, coerces numbers)", () => {
     const m = ok({

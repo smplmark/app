@@ -532,8 +532,7 @@ const subjectType = registerEntity(
   }),
 );
 
-const metricType = z.enum(["INTEGER", "DECIMAL"]);
-const metricKind = z.enum(["STORED", "DERIVED"]);
+const metricType = z.enum(["INTEGER", "DECIMAL", "FORMULA"]);
 const MetricToken = z
   .object({
     kind: z.enum(["METRIC", "NUMBER", "CREATED_AT", "STEP"]).openapi({ description: "The operand type: `METRIC` — another metric's value; `NUMBER` — a literal number; `CREATED_AT` — the measurement's creation time in epoch milliseconds; `STEP` — the value of an earlier step." }),
@@ -569,12 +568,11 @@ const metric = registerEntity(
     name: z.string().openapi({ description: "The metric's identifier — the key it occupies in a measurement's metrics bag (snake_case: lowercase alphanumerics and underscores, unique within the account)." }),
     label: z.string().openapi({ description: "The metric's human-readable display name." }),
     description: z.string().nullable().openapi({ description: "An optional longer description of the metric." }),
-    type: metricType.openapi({ description: "The numeric kind: INTEGER (whole numbers) or DECIMAL (continuous)." }),
-    kind: metricKind.openapi({ description: "STORED — a value clients POST on each measurement; or DERIVED — computed on read from a formula." }),
+    type: metricType.openapi({ description: "What the metric is: INTEGER (a whole-number value clients POST on each measurement), DECIMAL (a continuous value clients POST), or FORMULA (computed on read from `formula`)." }),
     unit: z.string().nullable().openapi({ description: "The unit of measure — a short display label such as `ms`, `bytes`, `req/s`, or `%`; null when unset. Cosmetic; does not affect computation." }),
     format: z.string().nullable().openapi({ description: "An Excel-style number-format pattern for display, e.g. `#,##0.00` or `0.0%` (characters # 0 , . %); null uses a default for the type. Cosmetic." }),
-    formula: MetricFormula.nullable().openapi({ description: "The built-in derived formula (DERIVED metrics only); null for STORED." }),
-    expr: z.record(z.unknown()).nullable().openapi({ description: "The JSON Logic the formula compiles to — what the compute-on-read engine evaluates once the metric is attached to a benchmark; null for STORED.", type: "object" }),
+    formula: MetricFormula.nullable().openapi({ description: "The formula (FORMULA metrics only); null otherwise." }),
+    expr: z.record(z.unknown()).nullable().openapi({ description: "The JSON Logic the formula compiles to — what the compute-on-read engine evaluates once the metric is attached to a benchmark; null for INTEGER/DECIMAL metrics.", type: "object" }),
     created_at: dateTime("When the metric was created."),
     updated_at: dateTime("When the metric was last updated."),
   }),
@@ -582,11 +580,10 @@ const metric = registerEntity(
     name: z.string().optional().openapi({ description: "The metric's identifier. Normalized to snake_case (lowercase alphanumerics and underscores); derived from `label` when omitted; made unique within the account." }),
     label: z.string().max(200).openapi({ description: "The metric's display name. At most 200 characters." }),
     description: z.string().max(500).optional().openapi({ description: "An optional longer description. At most 500 characters." }),
-    type: metricType.openapi({ description: "The numeric kind: INTEGER (whole numbers) or DECIMAL (continuous)." }),
-    kind: metricKind.optional().openapi({ description: "STORED (the default) or DERIVED." }),
+    type: metricType.openapi({ description: "What the metric is: INTEGER (a whole-number value clients POST on each measurement), DECIMAL (a continuous value clients POST), or FORMULA (computed on read from `formula`)." }),
     unit: z.string().max(24).optional().openapi({ description: "The unit of measure — a short display label such as `ms`, `bytes`, `req/s`, or `%`. At most 24 characters. Cosmetic; does not affect computation." }),
     format: z.string().max(32).optional().openapi({ description: "An Excel-style number-format pattern for display, e.g. `#,##0.00` or `0.0%`. May use only the characters # 0 , . % and at most one decimal point. Cosmetic." }),
-    formula: MetricFormula.optional().openapi({ description: "Required for a DERIVED metric — the built-in formula to compute it." }),
+    formula: MetricFormula.optional().openapi({ description: "The formula to compute the metric. Required when `type` is FORMULA; ignored otherwise." }),
   }),
 );
 
@@ -1759,7 +1756,7 @@ registry.registerPath({
   tags: ["Metrics"],
   summary: "Create a metric",
   description:
-    "Creates a metric — a reusable definition (STORED value or DERIVED, computed on read). The name is normalized to snake_case and derived from the label when omitted. Requires an account-scoped credential.",
+    "Creates a metric — a reusable definition: an INTEGER or DECIMAL value clients POST on each measurement, or a FORMULA computed on read. The name is normalized to snake_case and derived from the label when omitted. Requires an account-scoped credential.",
   security: bearerSecurity,
   request: { body: domainBody(metric.Request, "The metric to create.") },
   responses: {
@@ -1802,7 +1799,7 @@ registry.registerPath({
   path: "/api/v1/metrics/{id}",
   tags: ["Metrics"],
   summary: "Update a metric",
-  description: "Updates a metric's label, description, type, kind, and formula. Its name is immutable.",
+  description: "Updates a metric's label, description, type, unit, format, and formula. Its name is immutable.",
   security: bearerSecurity,
   request: { params: metricIdParam, body: domainBody(metric.Request, "The updated metric.") },
   responses: {

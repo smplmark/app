@@ -1,21 +1,20 @@
 // Validate a client-supplied metric (create/update only — never a hot path). A metric has a snake_case
 // `name` (unique per account, the key it occupies in a measurement's metrics bag — normalized from the
-// label when omitted), a display `label`, an optional `description`, a semantic `type`, and a `kind`:
-// STORED (a value clients POST) or DERIVED (computed on read). A DERIVED metric carries a structured
-// `formula` — an ordered list of lettered steps (A, B, C…), each a binary operation (`a <op> b`) or a
-// unary function (`fn(a)`) over operands that are metrics, literal numbers, `created_at`, or earlier
-// steps — plus the `result` step that is the metric's value. `metricExprToJsonLogic` compiles it into
-// the JSON Logic expression the compute-on-read engine (src/logic) evaluates (ADR-022).
+// label when omitted), a display `label`, an optional `description`, and a `type`: INTEGER or DECIMAL
+// (a value clients POST on each measurement) or FORMULA (computed on read). A FORMULA metric carries a
+// structured `formula` — an ordered list of lettered steps (A, B, C…), each a binary operation
+// (`a <op> b`) or a unary function (`fn(a)`) over operands that are metrics, literal numbers,
+// `created_at`, or earlier steps — plus the `result` step that is the metric's value.
+// `metricExprToJsonLogic` compiles it into the JSON Logic expression the compute-on-read engine
+// (src/logic) evaluates (ADR-022).
 import { BadRequestError } from "../errors";
 import {
-  METRIC_KINDS,
   METRIC_STEP_FNS,
   METRIC_STEP_OPS,
   METRIC_TYPES,
   type DerivedDecl,
   type MetricDecl,
   type MetricFormula,
-  type MetricKind,
   type MetricStep,
   type MetricStepFn,
   type MetricStepOp,
@@ -42,7 +41,6 @@ function nonEmptyString(v: unknown, field: string): string {
   return v;
 }
 function isMetricType(v: unknown): v is MetricType { return typeof v === "string" && (METRIC_TYPES as readonly string[]).includes(v); }
-function isMetricKind(v: unknown): v is MetricKind { return typeof v === "string" && (METRIC_KINDS as readonly string[]).includes(v); }
 function isStepOp(v: unknown): v is MetricStepOp { return typeof v === "string" && (METRIC_STEP_OPS as readonly string[]).includes(v); }
 function isStepFn(v: unknown): v is MetricStepFn { return typeof v === "string" && (METRIC_STEP_FNS as readonly string[]).includes(v); }
 
@@ -51,7 +49,6 @@ export interface ParsedMetric {
   label: string;
   description: string | null;
   type: MetricType;
-  kind: MetricKind;
   unit: string | null;
   format: string | null;
   formula: MetricFormula | null;
@@ -85,7 +82,6 @@ export function parseMetric(attrs: Record<string, unknown>): ParsedMetric {
   const name = metricNameSlug(source);
   if (!name) throw new BadRequestError("name must contain at least one letter or number.");
   if (!isMetricType(attrs.type)) throw new BadRequestError(`type must be one of: ${METRIC_TYPES.join(", ")}.`);
-  const kind: MetricKind = isMetricKind(attrs.kind) ? attrs.kind : "STORED";
 
   let description: string | null = null;
   if (attrs.description !== undefined && attrs.description !== null) {
@@ -95,8 +91,8 @@ export function parseMetric(attrs: Record<string, unknown>): ParsedMetric {
     description = d || null;
   }
 
-  const formula = kind === "DERIVED" ? parseFormula(attrs.formula) : null;
-  return { name, label, description, type: attrs.type, kind, unit: parseUnit(attrs.unit), format: parseFormat(attrs.format), formula };
+  const formula = attrs.type === "FORMULA" ? parseFormula(attrs.formula) : null;
+  return { name, label, description, type: attrs.type, unit: parseUnit(attrs.unit), format: parseFormat(attrs.format), formula };
 }
 
 /** Validate one step operand. A STEP operand may only reference an id in `priorIds` — a step defined
@@ -131,11 +127,11 @@ function parseToken(input: unknown, field: string, priorIds: Set<string>): Metri
 
 function parseFormula(input: unknown): MetricFormula {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new BadRequestError("formula must be an object for a DERIVED metric.");
+    throw new BadRequestError("formula must be an object for a FORMULA metric.");
   }
   const f = input as Record<string, unknown>;
   if (!Array.isArray(f.steps) || f.steps.length === 0) {
-    throw new BadRequestError("formula.steps must be a non-empty array for a DERIVED metric.");
+    throw new BadRequestError("formula.steps must be a non-empty array for a FORMULA metric.");
   }
   const steps: MetricStep[] = [];
   const priorIds = new Set<string>();
@@ -219,8 +215,8 @@ export function parseStoredFormula(formula: string | null): MetricFormula | null
 
 /**
  * Snapshot a library metric into a measurement_schema entry (the copy taken when it's linked to a
- * benchmark). A STORED metric becomes a `MetricDecl` in `metrics[]`; a DERIVED metric becomes a
- * `DerivedDecl` in `derived[]` whose `expr` is the compiled JSON Logic. The metric's `name` is the
+ * benchmark). An INTEGER/DECIMAL metric becomes a `MetricDecl` in `metrics[]`; a FORMULA metric becomes
+ * a `DerivedDecl` in `derived[]` whose `expr` is the compiled JSON Logic. The metric's `name` is the
  * schema key (immutable, unique per account); `description` carries over as the cosmetic label. Exactly
  * one of `{ metric, derived }` is returned.
  */
@@ -228,7 +224,7 @@ export function metricSnapshot(row: MetricRow): { metric?: MetricDecl; derived?:
   const description = row.description ?? undefined;
   const unit = row.unit ?? undefined;
   const format = row.format ?? undefined;
-  if (row.kind === "DERIVED") {
+  if (row.type === "FORMULA") {
     const formula = parseStoredFormula(row.formula);
     const derived: DerivedDecl = {
       name: row.name,

@@ -1,6 +1,6 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
-import type { MetricKind, MetricRow, MetricType } from "../types";
+import type { MetricRow, MetricType } from "../types";
 import { isUniqueViolation } from "./d1";
 
 export interface CreateMetricInput {
@@ -9,10 +9,9 @@ export interface CreateMetricInput {
   label: string;
   description: string | null;
   type: MetricType;
-  kind: MetricKind;
   unit: string | null;
   format: string | null;
-  /** JSON string of a MetricFormula (DERIVED) or null (STORED). */
+  /** JSON string of a MetricFormula (FORMULA metrics) or null. */
   formula: string | null;
 }
 
@@ -25,7 +24,6 @@ export async function createMetric(db: D1Database, input: CreateMetricInput): Pr
     label: input.label,
     description: input.description,
     type: input.type,
-    kind: input.kind,
     unit: input.unit,
     format: input.format,
     formula: input.formula,
@@ -35,9 +33,9 @@ export async function createMetric(db: D1Database, input: CreateMetricInput): Pr
   try {
     await db
       .prepare(
-        "INSERT INTO metric (id, account_id, name, label, description, type, kind, unit, format, formula, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO metric (id, account_id, name, label, description, type, unit, format, formula, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
       )
-      .bind(row.id, row.account_id, row.name, row.label, row.description, row.type, row.kind, row.unit, row.format, row.formula, row.created_at, row.updated_at)
+      .bind(row.id, row.account_id, row.name, row.label, row.description, row.type, row.unit, row.format, row.formula, row.created_at, row.updated_at)
       .run();
   } catch (e) {
     if (isUniqueViolation(e)) {
@@ -63,7 +61,6 @@ const METRIC_COLUMNS: Record<string, string> = {
   name: "name",
   label: "label",
   type: "type",
-  kind: "kind",
   created_at: "created_at",
   updated_at: "updated_at",
 };
@@ -101,13 +98,12 @@ export interface UpdateMetricInput {
   label: string;
   description: string | null;
   type: MetricType;
-  kind: MetricKind;
   unit: string | null;
   format: string | null;
   formula: string | null;
 }
 
-/** Update a metric's label / description / type / kind / unit / format / formula. Its `name` is immutable. */
+/** Update a metric's label / description / type / unit / format / formula. Its `name` is immutable. */
 export async function updateMetric(db: D1Database, id: string, input: UpdateMetricInput): Promise<MetricRow | null> {
   const existing = await getMetricById(db, id);
   if (!existing) return null;
@@ -116,15 +112,14 @@ export async function updateMetric(db: D1Database, id: string, input: UpdateMetr
     label: input.label,
     description: input.description,
     type: input.type,
-    kind: input.kind,
     unit: input.unit,
     format: input.format,
     formula: input.formula,
     updated_at: Date.now(),
   };
   await db
-    .prepare("UPDATE metric SET label = ?, description = ?, type = ?, kind = ?, unit = ?, format = ?, formula = ?, updated_at = ? WHERE id = ?")
-    .bind(updated.label, updated.description, updated.type, updated.kind, updated.unit, updated.format, updated.formula, updated.updated_at, id)
+    .prepare("UPDATE metric SET label = ?, description = ?, type = ?, unit = ?, format = ?, formula = ?, updated_at = ? WHERE id = ?")
+    .bind(updated.label, updated.description, updated.type, updated.unit, updated.format, updated.formula, updated.updated_at, id)
     .run();
   return updated;
 }
