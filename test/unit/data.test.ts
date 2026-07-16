@@ -5,17 +5,20 @@ import { createAccount, updateAccount } from "../../src/data/accounts";
 import { getPrimaryMembershipForUser } from "../../src/data/account_users";
 import { createBenchmark, updateBenchmark } from "../../src/data/benchmarks";
 import { createSubject, updateSubject } from "../../src/data/subjects";
-import { createSubjectType } from "../../src/data/subject_types";
+import { createSubjectType, listSubjectTypes, updateSubjectType } from "../../src/data/subject_types";
+import { createMetric, listMetrics, updateMetric } from "../../src/data/metrics";
+import { createBenchmarkMetricLink, getBenchmarkMetricById, listBenchmarkMetrics } from "../../src/data/benchmark_metrics";
 import { createRun, endRun, invalidateRun, updateRun } from "../../src/data/runs";
 import { insertMeasurement, listMeasurements } from "../../src/data/measurements";
 import { createApiKey, listApiKeys } from "../../src/data/api_keys";
 import { createUser } from "../../src/data/users";
+import { slugifyKey } from "../../src/services/provision";
 import { parseDateRange } from "../../src/query/daterange";
 import { consumeVerification, createVerification } from "../../src/data/verifications";
 import type { AccountRow, BenchmarkRow, RunRow, MeasurementSchema, SubjectRow } from "../../src/types";
 
 // D1 (miniflare) enforces foreign keys, so every child needs a real parent row.
-const TABLES = ["measurement", "run", "subject", "benchmark", "subject_type", "publisher", "api_key", "email_verification", "account_user", "account", "user"];
+const TABLES = ["measurement", "run", "subject", "benchmark_metric", "benchmark", "subject_type", "metric", "publisher", "api_key", "email_verification", "account_user", "account", "user"];
 beforeEach(async () => {
   for (const t of TABLES) await env.DB.prepare(`DELETE FROM ${t}`).run();
 });
@@ -140,6 +143,75 @@ describe("listApiKeys with total", () => {
     });
     expect(res.rows.length).toBe(1);
     expect(res.total).toBe(1);
+  });
+});
+
+const metricInput = (account_id: string, name = "p95_ms") => ({
+  account_id, name, label: "P95", description: null, type: "INTEGER" as const, unit: null, format: null, formula: null,
+});
+
+describe("subject_type + metric data layer", () => {
+  it("rejects duplicate keys/names with 409 and rethrows FK violations", async () => {
+    const account = await createAccount(env.DB, { key: `d-${crypto.randomUUID()}`, name: "D" });
+    await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] });
+    await expectConflict(() => createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST2", fields: [] }));
+    await expect(
+      createSubjectType(env.DB, { account_id: "ghost-account", key: "x", name: "X", fields: [] }),
+    ).rejects.toThrow(/FOREIGN KEY/);
+
+    await createMetric(env.DB, metricInput(account.id));
+    await expectConflict(() => createMetric(env.DB, metricInput(account.id)));
+    await expect(createMetric(env.DB, metricInput("ghost-account"))).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("lists with a total when requested and returns null updating a missing row", async () => {
+    const account = await createAccount(env.DB, { key: `d-${crypto.randomUUID()}`, name: "D" });
+    await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] });
+    const st = await listSubjectTypes(env.DB, { account_id: account.id, sort, limit: 10, offset: 0, includeTotal: true });
+    expect(st.rows.length).toBe(1);
+    expect(st.total).toBe(1);
+    expect(await updateSubjectType(env.DB, "nope", { name: "x", fields: [] })).toBeNull();
+
+    await createMetric(env.DB, metricInput(account.id));
+    const m = await listMetrics(env.DB, { account_id: account.id, sort, limit: 10, offset: 0, includeTotal: true });
+    expect(m.rows.length).toBe(1);
+    expect(m.total).toBe(1);
+    expect(
+      await updateMetric(env.DB, "nope", { label: "x", description: null, type: "INTEGER", unit: null, format: null, formula: null }),
+    ).toBeNull();
+  });
+});
+
+describe("benchmark_metric link data layer", () => {
+  it("rejects a double-link with 409, rethrows FK violations, and lists with/without filters", async () => {
+    const { account, benchmark } = await chain();
+    const metric = await createMetric(env.DB, metricInput(account.id));
+    const schemaJson = JSON.stringify(schema);
+    const link = await createBenchmarkMetricLink(env.DB, { benchmark_id: benchmark.id, metric_id: metric.id, schemaJson });
+    await expectConflict(() => createBenchmarkMetricLink(env.DB, { benchmark_id: benchmark.id, metric_id: metric.id, schemaJson }));
+    await expect(
+      createBenchmarkMetricLink(env.DB, { benchmark_id: "ghost-benchmark", metric_id: metric.id, schemaJson }),
+    ).rejects.toThrow(/FOREIGN KEY/);
+
+    expect(await getBenchmarkMetricById(env.DB, link.id)).toEqual(link);
+    expect(await getBenchmarkMetricById(env.DB, "nope")).toBeNull();
+
+    const filtered = await listBenchmarkMetrics(env.DB, {
+      benchmarkId: benchmark.id, metricId: metric.id, sort, limit: 10, offset: 0, includeTotal: true,
+    });
+    expect(filtered.rows.length).toBe(1);
+    expect(filtered.total).toBe(1);
+    // No filter at all → the WHERE-less branch.
+    const all = await listBenchmarkMetrics(env.DB, { sort, limit: 10, offset: 0, includeTotal: false });
+    expect(all.rows.length).toBe(1);
+    expect(all.total).toBeUndefined();
+  });
+});
+
+describe("slugifyKey", () => {
+  it("drops the email domain and falls back to 'account' when nothing slugs through", () => {
+    expect(slugifyKey("Mike.Gorman@example.com")).toBe("mike-gorman");
+    expect(slugifyKey("@@@")).toBe("account");
   });
 });
 

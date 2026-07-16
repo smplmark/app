@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AppError,
   BadRequestError,
   ConflictError,
   NotFoundError,
@@ -48,6 +49,15 @@ describe("toErrorDocument", () => {
 
   it("maps a ConflictError", () => {
     expect(toErrorDocument(new ConflictError("dup")).status).toBe(409);
+  });
+
+  it("uses the title as the Error message and omits detail when unset", () => {
+    const err = new AppError(418, "Teapot");
+    expect(err.message).toBe("Teapot");
+    expect(toErrorDocument(err)).toEqual({
+      status: 418,
+      document: { errors: [{ status: "418", title: "Teapot" }] },
+    });
   });
 
   it("maps an unexpected (non-App) error to a 500", () => {

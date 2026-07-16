@@ -3,6 +3,7 @@ import {
   appUrl,
   devLoginEnabled,
   emailConfigured,
+  isAllowedCorsOrigin,
   oidcClient,
   oidcConfigured,
   requireAuthSecret,
@@ -15,6 +16,21 @@ describe("appUrl", () => {
   it("prefers APP_URL (trailing slash stripped) and falls back to the request origin", () => {
     expect(appUrl(env({ APP_URL: "https://x.test/" }), "http://ignored/y")).toBe("https://x.test");
     expect(appUrl(env(), "http://req.test/some/path")).toBe("http://req.test");
+  });
+});
+
+describe("isAllowedCorsOrigin", () => {
+  it("allows the site origins, local dev, and preview hosts; rejects everything else", () => {
+    expect(isAllowedCorsOrigin(undefined)).toBe(false);
+    expect(isAllowedCorsOrigin("")).toBe(false);
+    expect(isAllowedCorsOrigin("https://www.smplmark.org")).toBe(true);
+    expect(isAllowedCorsOrigin("https://smplmark.org")).toBe(true);
+    expect(isAllowedCorsOrigin("http://localhost:5173")).toBe(true);
+    expect(isAllowedCorsOrigin("http://127.0.0.1:8788")).toBe(true);
+    expect(isAllowedCorsOrigin("https://smplmark-app.preview.workers.dev")).toBe(true);
+    expect(isAllowedCorsOrigin("https://viewer.smplmark.org")).toBe(true);
+    expect(isAllowedCorsOrigin("https://evil.test")).toBe(false);
+    expect(isAllowedCorsOrigin("not a url")).toBe(false);
   });
 });
 
