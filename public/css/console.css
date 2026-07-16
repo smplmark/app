@@ -499,6 +499,21 @@
    ================================================================ */
 .toolbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0 0 0.75rem; }
 .toolbarSpacer { flex: 1; }
+
+/* ── List layout with a narrow filter rail (benchmarks list) ── */
+.listLayout { display: flex; gap: 1.25rem; align-items: flex-start; }
+.listRail { flex: 0 0 200px; display: grid; gap: 2px; position: sticky; top: calc(var(--topbar-height) + 1.5rem); }
+.listRailItem { appearance: none; border: 0; background: transparent; text-align: left; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-muted); padding: 0.55rem 0.85rem; border-radius: 8px; cursor: pointer; }
+.listRailItem:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.listRailItem.isActive { color: var(--accent-strong); background: var(--accent-soft); }
+.listMain { flex: 1; min-width: 0; }
+@media (max-width: 860px) {
+  .listLayout { flex-direction: column; align-items: stretch; }
+  .listRail { flex: none; position: static; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+}
+
+/* Segmented radios inside a toolbar (status filter) — align with the toolbar controls. */
+.toolbarRadios { align-self: center; margin-right: 0.25rem; }
 .toolbarSearch { display: flex; align-items: center; gap: 0.4rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.6rem; height: 38px; box-sizing: border-box; color: var(--text-muted); }
 .toolbarSearch input { border: none; background: transparent; outline: none; font-size: 0.85rem; color: var(--text); width: 180px; font-family: inherit; }
 .toolbarSearch input::placeholder { color: var(--text-muted); }

@@ -7,14 +7,19 @@
 (function () {
   const esc = SM.esc;
   const $ = (id) => document.getElementById(id);
-  let ACCOUNT_ID = null, CAN_WRITE = false;
+  let ACCOUNT_ID = null, CAN_WRITE = false, USER_ID = null;
   let ALL = [];
   let SEARCH = "";
   let TABLE = null;
+  // The left rail scopes the list; the status pills narrow it further; search applies on top of both.
+  const RAILS = [["all", "All benchmarks"], ["mine", "My benchmarks"], ["recent", "Recently created"]];
+  let RAIL = "all";
+  let STATUS = ""; // "" = all | PRIVATE (draft) | PUBLISHED
 
   SM.ready.then((id) => {
     ACCOUNT_ID = id.accountId;
     CAN_WRITE = id.canWrite;
+    USER_ID = (id.user && id.user.id) || null;
     load();
   }).catch(() => { $("load-error").innerHTML = '<div class="errorBanner"><p>Failed to load your account.</p></div>'; });
 
@@ -37,8 +42,19 @@
 
   function filtered() {
     const q = SEARCH.trim().toLowerCase();
-    if (!q) return ALL;
-    return ALL.filter((b) => { const a = b.attributes || {}; return (a.name || "").toLowerCase().includes(q) || (a.key || "").toLowerCase().includes(q); });
+    return ALL.filter((b) => {
+      const a = b.attributes || {};
+      if (RAIL === "mine" && (!USER_ID || a.created_by !== USER_ID)) return false;
+      if (STATUS && String(a.status || "").toUpperCase() !== STATUS) return false;
+      if (q && !((a.name || "").toLowerCase().includes(q) || (a.key || "").toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+
+  function whoLabel(uid) {
+    if (!uid) return "an API key";
+    if (USER_ID && uid === USER_ID) return "you";
+    return "another member";
   }
 
   function render() {
@@ -54,19 +70,58 @@
       return;
     }
     wireTopBar();
-    host.innerHTML = '<div id="bm-toolbar-mount"></div><div id="bm-table"></div>';
-    const bar = SM.toolbar({ placeholder: "Search benchmarks…", onSearch: (v) => { SEARCH = v; if (TABLE) TABLE.setRows(filtered()); }, onRefresh: () => load() });
+    host.innerHTML =
+      '<div class="listLayout">' +
+      '<nav class="listRail" id="bm-rail" aria-label="Benchmark filters"></nav>' +
+      '<div class="listMain"><div id="bm-toolbar-mount"></div><div id="bm-table"></div></div>' +
+      "</div>";
+    renderRail();
+
+    // Status filter: modern segmented radios, right-aligned next to the refresh icon.
+    const statusPill = (value, label) =>
+      '<label class="radioPill"><input type="radio" name="bm-status" value="' + value + '"' + (STATUS === value ? " checked" : "") + ' /><span class="radioDot"></span><span class="radioPillLabel">' + label + "</span></label>";
+    const statusFilterHtml =
+      '<div class="radioGroup toolbarRadios" role="radiogroup" aria-label="Filter by status">' +
+      statusPill("", "All") + statusPill("PRIVATE", "Draft") + statusPill("PUBLISHED", "Published") +
+      "</div>";
+    const bar = SM.toolbar({
+      placeholder: "Search benchmarks…",
+      onSearch: (v) => { SEARCH = v; if (TABLE) TABLE.setRows(filtered()); },
+      onRefresh: () => load(),
+      extraRight: statusFilterHtml,
+    });
     const input = bar.querySelector(".toolbarSearch input"); if (input) input.value = SEARCH;
+    bar.querySelectorAll('input[name="bm-status"]').forEach((r) =>
+      r.addEventListener("change", () => { STATUS = r.value; if (TABLE) TABLE.setRows(filtered()); }));
     $("bm-toolbar-mount").replaceWith(bar);
+    renderTable();
+  }
+
+  function renderRail() {
+    const rail = $("bm-rail");
+    rail.innerHTML = RAILS.map(([key, label]) =>
+      '<button type="button" class="listRailItem' + (RAIL === key ? " isActive" : "") + '" data-rail="' + key + '">' + esc(label) + "</button>").join("");
+    rail.querySelectorAll("[data-rail]").forEach((el) =>
+      el.addEventListener("click", () => {
+        if (el.dataset.rail === RAIL) return;
+        RAIL = el.dataset.rail;
+        renderRail();
+        renderTable(); // rebuilt so the rail's default sort applies (recent → newest first)
+      }));
+  }
+
+  function renderTable() {
     TABLE = SM.pagedTable($("bm-table"), {
       columns: [
         { key: "key", label: "Key", sortable: true, sortValue: (b) => (b.attributes || {}).key || "", render: (b) => "<code>" + esc((b.attributes || {}).key || "") + "</code>" },
         { key: "name", label: "Name", sortable: true, sortValue: (b) => (b.attributes || {}).name || "", render: (b) => esc((b.attributes || {}).name || "") },
         { key: "status", label: "Status", sortable: true, sortValue: (b) => String((b.attributes || {}).status || ""), render: statusCell },
+        { key: "created", label: "Created", sortable: true, sortValue: (b) => (b.attributes || {}).created_at || "", render: (b) => esc(SM.fmtDate((b.attributes || {}).created_at)) },
+        { key: "created_by", label: "Created by", sortable: true, sortValue: (b) => whoLabel((b.attributes || {}).created_by), render: (b) => esc(whoLabel((b.attributes || {}).created_by)) },
       ],
       rows: filtered(),
-      sort: { key: "key", dir: "asc" },
-      emptyText: "No matching benchmarks.",
+      sort: RAIL === "recent" ? { key: "created", dir: "desc" } : { key: "key", dir: "asc" },
+      emptyText: RAIL === "mine" ? "You haven’t created any matching benchmarks." : "No matching benchmarks.",
       onRowClick: (b) => { location.href = "/account/benchmarks/detail?id=" + encodeURIComponent(b.id); },
     });
   }

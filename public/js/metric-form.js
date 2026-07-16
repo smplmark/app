@@ -128,6 +128,22 @@
     return compileStep(result, byId, {});
   }
 
+  // The Unit + Format fields (shared markup — wireUnitFormat expects these exact control names).
+  function unitFormatFieldsHtml(unit, format) {
+    const presetVals = FORMAT_PRESETS.map((p) => p[0]);
+    const formatSel = !format ? "" : presetVals.indexOf(format) >= 0 ? format : "__custom__";
+    const custom = formatSel === "__custom__" ? format : "";
+    const formatOptions = FORMAT_PRESETS.map((p) => '<option value="' + esc(p[0]) + '"' + (p[0] === formatSel ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
+    return (
+      '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(unit || "") + '" />' +
+      '<p class="detailFieldHelp">What the metric measures. A display label — it doesn’t affect computation.</p></label>' +
+      '<div class="fieldModalBlock"><span class="detailFieldLabel">Format</span>' +
+      '<div class="mfFormatRow"><select name="mf-format-preset" class="mfSlotPick mfFormatPreset">' + formatOptions + "</select>" +
+      '<input name="mf-format-custom" type="text" class="mfSlotPick mfFormatCustom" autocomplete="off" spellcheck="false" placeholder="#,##0.00" maxlength="32" value="' + esc(custom) + '"' + (formatSel === "__custom__" ? "" : " hidden") + " /></div>" +
+      '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>'
+    );
+  }
+
   function radioPill(name, value, label, checked) {
     return '<label class="radioPill"><input type="radio" name="' + name + '" value="' + value + '"' + (checked ? " checked" : "") + ' /><span class="radioDot"></span><span class="radioPillLabel">' + esc(label) + "</span></label>";
   }
@@ -141,12 +157,7 @@
     const isFormula = initType === "FORMULA";
     const initUnit = attrs.unit || "";
     const initFormat = attrs.format || "";
-    const presetVals = FORMAT_PRESETS.map((p) => p[0]);
-    const initFormatSel = initFormat === "" ? "" : presetVals.indexOf(initFormat) >= 0 ? initFormat : "__custom__";
-    const initCustom = initFormatSel === "__custom__" ? initFormat : "";
-
     const typePills = TYPES.map((p) => radioPill("mf-type", p[0], p[1], p[0] === initType)).join("");
-    const formatOptions = FORMAT_PRESETS.map((p) => '<option value="' + esc(p[0]) + '"' + (p[0] === initFormatSel ? " selected" : "") + ">" + esc(p[1]) + "</option>").join("");
     const nameHelp = isNew
       ? "The identifier used in the API and a measurement’s JSON — lowercase letters, numbers, and underscores."
       : "The identifier used in the API and a measurement’s JSON. Fixed after creation.";
@@ -155,12 +166,7 @@
       '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input name="name" type="text" placeholder="throughput" autocomplete="off" spellcheck="false"' + (isNew ? "" : " disabled") + ' value="' + esc(attrs.name || "") + '" /><p class="fieldErrorMessage" hidden></p><p class="detailFieldHelp">' + nameHelp + "</p></label>" +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Label</span><input name="label" type="text" placeholder="Throughput" autocomplete="off" value="' + esc(attrs.label || "") + '" /><p class="fieldErrorMessage" hidden></p></label>' +
       '<label class="field"><span class="detailFieldLabel">Description</span><input name="description" type="text" placeholder="Optional — a note about this metric" autocomplete="off" value="' + esc(attrs.description || "") + '" /></label>' +
-      '<label class="field"><span class="detailFieldLabel">Unit</span><input name="unit" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ms, bytes, req/s" maxlength="24" value="' + esc(initUnit) + '" />' +
-      '<p class="detailFieldHelp">What the metric measures. A display label — it doesn’t affect computation.</p></label>' +
-      '<div class="fieldModalBlock"><span class="detailFieldLabel">Format</span>' +
-      '<div class="mfFormatRow"><select name="mf-format-preset" class="mfSlotPick mfFormatPreset">' + formatOptions + "</select>" +
-      '<input name="mf-format-custom" type="text" class="mfSlotPick mfFormatCustom" autocomplete="off" spellcheck="false" placeholder="#,##0.00" maxlength="32" value="' + esc(initCustom) + '"' + (initFormatSel === "__custom__" ? "" : " hidden") + " /></div>" +
-      '<p class="detailFieldHelp">How values display. <span class="mfSample">Sample: <b class="mfSampleVal"></b></span></p></div>';
+      unitFormatFieldsHtml(initUnit, initFormat);
 
     // The Details panel is a two-column grid (matching the view + the other detail pages): the editable
     // fields on the left; the read-only Created / Updated metadata with Type beneath it on the right, so
@@ -257,8 +263,22 @@
     // Open on the tab the caller asked for (e.g. Edit was clicked from the Formula tab in view mode).
     if (opts.initTab === "formula" && current("mf-type") === "FORMULA") showTab("formula");
 
-    // Format: a preset <select> plus a custom-pattern input (shown only for "Custom…"), with a live
-    // sample that reflects the current pattern, type default, and unit.
+    // Format + unit behaviors (shared with the create wizard).
+    wireUnitFormat(container, () => current("mf-type"));
+
+    // Name auto-derive from label (create only).
+    wireNameDerive(nameEl, labelEl, isNew);
+
+    // ── Steps builder ──
+    const builder = container.querySelector("#mf-builder");
+    wireFormulaBuilder(builder, state, opts.selfName);
+  }
+
+  // Unit combobox + format preset/custom select with a live sample. Expects the container to hold
+  // [name=unit], [name=mf-format-preset], [name=mf-format-custom], and .mfSampleVal (see
+  // unitFormatFieldsHtml / render). `getType` supplies the metric type the default format derives from.
+  // Stores the current-format reader on container.__mfFormat.
+  function wireUnitFormat(container, getType) {
     const unitEl = container.querySelector('[name="unit"]');
     // Unit presets via the shared themed popup (free text stays allowed — the popup hides on no match).
     SM.combobox(unitEl, { options: () => UNIT_PRESETS, emptyText: null });
@@ -268,9 +288,9 @@
     function formatValue() {
       return fmtPreset.value === "__custom__" ? fmtCustom.value.trim() : fmtPreset.value;
     }
-    container.__mfFormat = formatValue; // read by collect()
+    container.__mfFormat = formatValue; // read by collect() / the wizard
     function updateSample() {
-      const pattern = formatValue() || defaultFormatFor(current("mf-type"));
+      const pattern = formatValue() || defaultFormatFor(getType());
       const unit = unitEl.value.trim();
       const seed = /%/.test(pattern) ? 0.1234 : 1234.567;
       sampleEl.textContent = SM.formatNumber(seed, pattern) + (unit ? " " + unit : "");
@@ -283,24 +303,29 @@
     fmtCustom.addEventListener("input", updateSample);
     unitEl.addEventListener("input", updateSample);
     container.querySelectorAll('input[name="mf-type"]').forEach((r) => r.addEventListener("change", updateSample));
+    container.__mfUpdateSample = updateSample;
     updateSample();
+  }
 
-    // Name auto-derive from label (create only).
-    if (isNew) {
-      let nameEdited = false;
-      labelEl.addEventListener("input", () => { SM.clearFieldError(labelEl); if (!nameEdited) nameEl.value = metricNameSlug(labelEl.value); });
-      nameEl.addEventListener("input", () => {
-        nameEdited = true;
-        const cleaned = sanitizeName(nameEl.value);
-        if (cleaned !== nameEl.value) { const pos = nameEl.selectionStart; nameEl.value = cleaned; try { nameEl.setSelectionRange(pos, pos); } catch (_e) { /* ignore */ } }
-        SM.clearFieldError(nameEl);
-      });
-    } else {
+  // Name auto-derives from the label until the user edits it directly (create only).
+  function wireNameDerive(nameEl, labelEl, isNew) {
+    if (!isNew) {
       labelEl.addEventListener("input", () => SM.clearFieldError(labelEl));
+      return;
     }
+    let nameEdited = nameEl.value.trim() !== "" && nameEl.value !== metricNameSlug(labelEl.value);
+    labelEl.addEventListener("input", () => { SM.clearFieldError(labelEl); if (!nameEdited) nameEl.value = metricNameSlug(labelEl.value); });
+    nameEl.addEventListener("input", () => {
+      nameEdited = true;
+      const cleaned = sanitizeName(nameEl.value);
+      if (cleaned !== nameEl.value) { const pos = nameEl.selectionStart; nameEl.value = cleaned; try { nameEl.setSelectionRange(pos, pos); } catch (_e) { /* ignore */ } }
+      SM.clearFieldError(nameEl);
+    });
+  }
 
-    // ── Steps builder ──
-    const builder = container.querySelector("#mf-builder");
+  // The lettered-steps formula builder, wired into `builder` against `state` ({ metrics, formula }).
+  // Shared by the tabbed form and the create wizard (whose pages re-mount it against persistent state).
+  function wireFormulaBuilder(builder, state, selfName) {
 
     // One operand slot — an editable combobox (SM.combobox provides the themed popup). The popup lists
     // every metric, the built-in `created_at`, and the earlier steps (A, B…), grouped and filtered as
@@ -459,12 +484,15 @@
 
     renderBuilder();
 
-    // Load the account's other metric names for the operand pickers, then re-render.
+    // Load the account's other metric names for the operand pickers, then re-render. Skipped when the
+    // caller re-mounts the builder against already-loaded state (the wizard revisiting its page).
+    if (state.metricsLoaded) return;
     apiFetch("/api/v1/metrics?page[size]=1000").then((doc) => {
       state.metrics = ((doc && doc.data) || [])
         .map((r) => r.attributes || {})
-        .filter((m) => m.name && m.name !== opts.selfName)
+        .filter((m) => m.name && m.name !== selfName)
         .map((m) => ({ name: m.name, label: m.label || m.name }));
+      state.metricsLoaded = true;
       renderBuilder();
     }).catch(() => {});
   }
@@ -539,11 +567,165 @@
     return t ? t.getAttribute("data-mftab") : "details";
   }
 
+  // ── Create wizard ── a 2-3 page modal: (1) name + label + type, (2) description + unit + format,
+  // (3) the formula builder — page 3 exists only for a FORMULA metric. Values persist across pages
+  // (Back re-renders with what was entered). Finish POSTs /metrics, then awaits opts.onDone(created)
+  // — the caller links/navigates there; if onDone throws, the created metric is RETAINED so a retry
+  // never mints a duplicate (it only re-runs onDone). Options: title, description, submitLabel, onDone.
+  function openWizard(wopts) {
+    wopts = wopts || {};
+    const submitLabel = wopts.submitLabel || "Create metric";
+    const data = { name: "", label: "", type: "DECIMAL", description: "", unit: "", format: "" };
+    const fstate = { metrics: [], metricsLoaded: false, formula: normalizeFormula(null) }; // persists across page visits
+    let created = null; // survives a failed onDone so a retry doesn't re-create the metric
+    let busy = false;   // guards finish() re-entry (double-click, or Back + forward during the flight)
+    const m = SM.modal({
+      title: wopts.title || "New metric",
+      description: wopts.description || "Define a new metric.",
+      bodyHtml: '<div id="mw-root" class="form"></div>',
+      width: 640,
+    });
+    const root = m.panel.querySelector("#mw-root");
+    // Page navs are re-injected on every render, after SM.modal wired [data-close] — delegate instead.
+    root.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) m.close(); });
+
+    const pageCount = () => (data.type === "FORMULA" ? 3 : 2);
+    function dots(active) {
+      let out = '<div class="wzSteps" aria-hidden="true">';
+      for (let i = 0; i < pageCount(); i++) out += '<span class="wzDot' + (i === active ? " isActive" : "") + '"></span>';
+      return out + "</div>";
+    }
+    function nav(backFn, nextLabel) {
+      return '<div class="modalActions">' +
+        (backFn ? '<button type="button" class="button buttonSecondary buttonSmall" id="mw-back">Back</button>' : '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>') +
+        '<button type="button" class="button buttonPrimary buttonSmall" id="mw-next">' + esc(nextLabel) + "</button></div>";
+    }
+    function setMsg(text) {
+      const el = root.querySelector("#mw-msg");
+      el.textContent = text || "";
+      el.className = "form-status" + (text ? " is-error" : "");
+    }
+
+    // ── Page 1: name + label + type ──
+    function renderIdentity() {
+      const typePills = TYPES.map((p) => radioPill("mw-type", p[0], p[1], p[0] === data.type)).join("");
+      root.innerHTML =
+        '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input id="mw-name" type="text" placeholder="throughput" autocomplete="off" spellcheck="false" value="' + esc(data.name) + '" /><p class="fieldErrorMessage" hidden></p>' +
+        '<p class="detailFieldHelp">The identifier used in the API and a measurement’s JSON — lowercase letters, numbers, and underscores.</p></label>' +
+        '<label class="field"><span class="detailFieldLabel fieldRequired">Label</span><input id="mw-label" type="text" placeholder="Throughput" autocomplete="off" value="' + esc(data.label) + '" /><p class="fieldErrorMessage" hidden></p></label>' +
+        '<div class="fieldModalBlock"><span class="detailFieldLabel">Type</span><div class="radioGroup" role="radiogroup" aria-label="Metric type">' + typePills + "</div>" +
+        '<p class="detailFieldHelp">Integer / Decimal — a value clients POST on each measurement. Formula — computed on read from a formula you define.</p></div>' +
+        '<p class="form-status" id="mw-msg"></p>' +
+        dots(0) + nav(null, "Next");
+      const nameEl = root.querySelector("#mw-name");
+      const labelEl = root.querySelector("#mw-label");
+      nameEl.setAttribute("name", "name"); // wireNameDerive is selector-free, but keep parity with the form
+      wireNameDerive(nameEl, labelEl, true);
+      nameEl.addEventListener("input", () => { data.name = nameEl.value; });
+      labelEl.addEventListener("input", () => { data.label = labelEl.value; data.name = nameEl.value; });
+      root.querySelectorAll('input[name="mw-type"]').forEach((r) => r.addEventListener("change", () => {
+        data.type = r.value;
+        renderIdentity(); // the page count (dots) depends on the type
+      }));
+      root.querySelector("#mw-next").addEventListener("click", () => {
+        SM.clearFieldError(labelEl); SM.clearFieldError(nameEl);
+        data.label = labelEl.value.trim();
+        data.name = metricNameSlug(nameEl.value.trim() || data.label);
+        if (!data.label) { SM.setFieldError(labelEl, "A label is required."); labelEl.focus(); return; }
+        if (!data.name) { SM.setFieldError(nameEl, "Enter a name with letters or numbers."); nameEl.focus(); return; }
+        renderDisplay();
+      });
+      (data.label ? labelEl : nameEl).focus();
+    }
+
+    // ── Page 2: description + unit + format ──
+    function renderDisplay() {
+      root.innerHTML =
+        '<label class="field"><span class="detailFieldLabel">Description</span><input id="mw-desc" type="text" placeholder="Optional — a note about this metric" autocomplete="off" value="' + esc(data.description) + '" /></label>' +
+        unitFormatFieldsHtml(data.unit, data.format) +
+        '<p class="form-status" id="mw-msg"></p>' +
+        dots(1) + nav(renderIdentity, data.type === "FORMULA" ? "Next" : submitLabel);
+      wireUnitFormat(root, () => data.type);
+      const save = () => {
+        data.description = root.querySelector("#mw-desc").value.trim();
+        data.unit = root.querySelector('[name="unit"]').value.trim();
+        data.format = root.__mfFormat ? root.__mfFormat() : "";
+      };
+      root.querySelector("#mw-back").addEventListener("click", () => { save(); renderIdentity(); });
+      root.querySelector("#mw-next").addEventListener("click", () => {
+        save();
+        if (data.type === "FORMULA") renderFormulaPage();
+        else finish();
+      });
+      root.querySelector("#mw-desc").focus();
+    }
+
+    // ── Page 3 (FORMULA only): the steps builder ──
+    function renderFormulaPage() {
+      root.innerHTML =
+        '<div id="mw-builder" class="mfBuilder"></div>' +
+        '<p class="form-status" id="mw-msg"></p>' +
+        dots(2) + nav(renderDisplay, submitLabel);
+      wireFormulaBuilder(root.querySelector("#mw-builder"), fstate, null);
+      root.querySelector("#mw-back").addEventListener("click", renderDisplay);
+      root.querySelector("#mw-next").addEventListener("click", finish);
+    }
+
+    async function finish() {
+      if (busy) return;
+      if (data.type === "FORMULA") {
+        const bad = validateFormula(fstate.formula);
+        if (bad) { setMsg(bad); return; }
+      }
+      const attrs = { name: data.name, label: data.label, type: data.type };
+      if (data.description) attrs.description = data.description;
+      if (data.unit) attrs.unit = data.unit;
+      if (data.format) attrs.format = data.format;
+      if (data.type === "FORMULA") attrs.formula = fstate.formula;
+      busy = true;
+      const btn = root.querySelector("#mw-next"); btn.disabled = true;
+      const back = root.querySelector("#mw-back"); if (back) back.disabled = true;
+      setMsg("");
+      try {
+        if (!created) {
+          const doc = await apiFetch("/api/v1/metrics", { method: "POST", body: jsonapiBody("metric", attrs) });
+          created = doc && doc.data;
+        } else if ((created.attributes || {}).name !== attrs.name) {
+          // Retry after a failed onDone, and the user renamed via Back. Name is immutable on PUT, and
+          // the retained metric is still unlinked (onDone failed), so replace it outright.
+          await apiFetch("/api/v1/metrics/" + encodeURIComponent(created.id), { method: "DELETE" });
+          created = null;
+          const doc = await apiFetch("/api/v1/metrics", { method: "POST", body: jsonapiBody("metric", attrs) });
+          created = doc && doc.data;
+        } else {
+          // Retry after a failed onDone: other fields may have been edited via Back — sync the
+          // retained metric so the retry never links/opens a stale definition.
+          const doc = await apiFetch("/api/v1/metrics/" + encodeURIComponent(created.id), { method: "PUT", body: jsonapiBody("metric", attrs) });
+          created = (doc && doc.data) || created;
+        }
+        if (!root.isConnected) return; // closed (Escape/×) mid-create — leave the metric in the library, do nothing
+        if (wopts.onDone) await wopts.onDone(created);
+        m.close();
+      } catch (err) {
+        busy = false;
+        if (!root.isConnected) return; // closed mid-flight; nowhere to show the error
+        btn.disabled = false;
+        if (back) back.disabled = false;
+        const note = created ? " The metric was created — retrying won’t create a duplicate." : "";
+        setMsg(err.message + note);
+      }
+    }
+
+    renderIdentity();
+    return m;
+  }
+
   window.SMMetricForm = {
     render: render,
     wire: wire,
     collect: collect,
     activeTab: activeTab,
+    openWizard: openWizard,
     typePillHtml: typePillHtml,
     formulaText: formulaText,
     formulaJson: formulaJson,

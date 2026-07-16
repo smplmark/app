@@ -25,7 +25,10 @@
   }
 
   function openCreate() {
-    location.href = "/account/metrics/detail";
+    SMMetricForm.openWizard({
+      description: "Define a new metric for your library.",
+      onDone: (created) => { location.href = "/account/metrics/detail?id=" + encodeURIComponent(created.id); },
+    });
   }
 
   async function load() {
