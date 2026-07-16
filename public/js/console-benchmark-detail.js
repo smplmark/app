@@ -111,7 +111,10 @@
   }
   function setCount(key, n) { COUNTS[key] = n; updateTabBadges(); }
 
-  // Reload the benchmark then re-render (after a lifecycle action).
+  // Reload the benchmark then re-render (after a lifecycle action or a child link/unlink). Metric
+  // link/unlink rewrites measurement_schema server-side, so BM must be re-fetched after them — a stale
+  // copy would omit a just-linked metric from the Add-measurement form (and misrepresent the schema
+  // anywhere else BM is read).
   async function refresh() {
     const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID));
     BM = (doc && doc.data) || BM;
@@ -348,23 +351,28 @@
     if (!form.name.trim()) { SM.setFieldError(nameEl, "A name is required."); ok = false; }
     if (!form.subject_type) { SM.setFieldError(stSel, "Pick the type of subject this benchmark compares."); ok = false; }
     if (!ok) { (form.name.trim() ? stSel : nameEl).focus(); return; }
-    const a = BM.attributes || {};
-    // get-mutate-put: round-trip the FULL representation, changing only the edited fields — PUT is
-    // full-replace, so omitting measurement_schema / tags / category would reset them.
-    const attrs = {
-      key: a.key,
-      name: form.name.trim(),
-      description: form.description.trim() || null,
-      about: form.about.trim() || null,
-      methodology: form.methodology.trim() || null,
-      subject_type: form.subject_type,
-      measurement_schema: a.measurement_schema,
-      tags: a.tags || [],
-      category: a.category,
-    };
     const save = $("d-save"); save.disabled = true;
     setMsg("");
     try {
+      // get-mutate-put: round-trip the FULL representation, changing only the edited fields — PUT is
+      // full-replace, so omitting measurement_schema / tags / category would reset them. GET first:
+      // the copy from page load can be stale (metric link/unlink rewrites the schema server-side),
+      // and a stale round-trip drops or resurrects snapshots — or 409s against the freeze once
+      // published.
+      const freshDoc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID));
+      BM = (freshDoc && freshDoc.data) || BM;
+      const a = BM.attributes || {};
+      const attrs = {
+        key: a.key,
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        about: form.about.trim() || null,
+        methodology: form.methodology.trim() || null,
+        subject_type: form.subject_type,
+        measurement_schema: a.measurement_schema,
+        tags: a.tags || [],
+        category: a.category,
+      };
       const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID), { method: "PUT", body: jsonapiBody("benchmark", attrs) });
       BM = (doc && doc.data) || BM;
       exitEdit();
@@ -491,7 +499,7 @@
         if (!subjectId) { submit.disabled = false; SM.setFieldError(f.q, "No such subject. Create it on the Subjects page (choosing its type) first."); return; }
         await apiFetch("/api/v1/benchmark_subjects", { method: "POST", body: jsonapiBody("benchmark_subject", { benchmark: ID, subject: subjectId }) });
         m.close();
-        renderSubjects($("tab-panel"), $("tab-actions"));
+        refresh().catch((err2) => setMsg(err2.message, "error")); // modal is closed — report on the page
       } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
     });
   }
@@ -545,7 +553,7 @@
         await apiFetch("/api/v1/benchmark_subjects", { method: "POST", body: jsonapiBody("benchmark_subject", { benchmark: ID, subject: createdSubject.id }) });
         m.close();
         SM.toast("Subject created and linked.", { kind: "success" });
-        renderSubjects($("tab-panel"), $("tab-actions"));
+        refresh().catch((err2) => setMsg(err2.message, "error")); // modal is closed — report on the page
       } catch (err) {
         submit.disabled = false;
         const note = createdSubject ? " The subject was created — retrying will only retry the link." : "";
@@ -561,7 +569,7 @@
     setMsg("");
     try {
       await apiFetch("/api/v1/benchmark_subjects/" + encodeURIComponent(linkId), { method: "DELETE" });
-      renderSubjects($("tab-panel"), $("tab-actions"));
+      await refresh();
     } catch (err) { setMsg(err.message, "error"); }
   }
 
@@ -657,48 +665,25 @@
         if (!match) { submit.disabled = false; SM.setFieldError(f.q, "No such metric. Create it on the Metrics page first."); return; }
         await apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: ID, metric: match.id }) });
         m.close();
-        renderMetrics($("tab-panel"), $("tab-actions"));
+        refresh().catch((err2) => setMsg(err2.message, "error")); // modal is closed — report on the page
       } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
     });
   }
 
-  // ── New-metric modal: the full metric form (Details + Formula tabs via SMMetricForm) in a modal —
-  //    define a metric on the fly, then link it to this benchmark without leaving the page. ──
+  // ── New-metric wizard: define a metric on the fly (2-3 pages — identity, display, formula) and
+  //    link it to this benchmark without leaving the page. The wizard retains the created metric
+  //    across retries, so a failed link never mints a duplicate. ──
   function openNewMetricModal() {
-    const bodyHtml =
-      '<form class="form" id="new-metric-form" novalidate>' + SMMetricForm.render({}, { isNew: true }) + "</form>" +
-      '<p class="form-status" id="new-metric-msg" style="margin-top:0.5rem;"></p>';
-    const m = SM.modal({ title: "New metric", description: "Define a new metric and link it to this benchmark.", bodyHtml: bodyHtml, width: 720 });
-    const f = m.panel.querySelector("#new-metric-form");
-    const msg = m.panel.querySelector("#new-metric-msg");
-    // The metric form's tab row carries the actions (same slot the metric detail page uses).
-    let createdMetric = null; // survives a failed link so a retry doesn't mint a duplicate
-    const actions = f.querySelector("#mf-tab-actions");
-    actions.innerHTML =
-      '<button type="button" class="button buttonSecondary buttonSmall" id="nm-cancel">Cancel</button>' +
-      '<button type="button" class="button buttonPrimary buttonSmall" id="nm-save">Create &amp; link</button>';
-    SMMetricForm.wire(f, { isNew: true });
-    m.panel.querySelector("#nm-cancel").addEventListener("click", m.close);
-    m.panel.querySelector("#nm-save").addEventListener("click", async () => {
-      const res = SMMetricForm.collect(f, { isNew: true });
-      if (!res.ok) { msg.textContent = res.message || ""; msg.className = "form-status" + (res.message ? " is-error" : ""); return; }
-      const btn = m.panel.querySelector("#nm-save"); btn.disabled = true;
-      msg.textContent = ""; msg.className = "form-status";
-      try {
-        // The created id is retained across retries so a failed LINK never re-creates the metric.
-        if (!createdMetric) {
-          const doc = await apiFetch("/api/v1/metrics", { method: "POST", body: jsonapiBody("metric", res.attrs) });
-          createdMetric = doc && doc.data;
-        }
-        await apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: ID, metric: createdMetric.id }) });
-        m.close();
+    SMMetricForm.openWizard({
+      description: "Define a new metric and link it to this benchmark.",
+      submitLabel: "Create & link",
+      onDone: async (created) => {
+        await apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: ID, metric: created.id }) });
         SM.toast("Metric created and linked.", { kind: "success" });
-        renderMetrics($("tab-panel"), $("tab-actions"));
-      } catch (err) {
-        btn.disabled = false;
-        const note = createdMetric ? " The metric was created — retrying will only retry the link." : "";
-        msg.textContent = err.message + note; msg.className = "form-status is-error";
-      }
+        // Not awaited: the link succeeded, so a refresh failure must not keep the wizard open — its
+        // retry would re-POST the link and 409. Surface it on the page instead.
+        refresh().catch((err) => setMsg(err.message, "error"));
+      },
     });
   }
 
@@ -709,7 +694,7 @@
     setMsg("");
     try {
       await apiFetch("/api/v1/benchmark_metrics/" + encodeURIComponent(linkId), { method: "DELETE" });
-      renderMetrics($("tab-panel"), $("tab-actions"));
+      await refresh();
     } catch (err) { setMsg(err.message, "error"); }
   }
 

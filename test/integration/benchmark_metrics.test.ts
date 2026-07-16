@@ -5,6 +5,7 @@ import {
   apiDelete,
   apiGet,
   apiPost,
+  apiPut,
   bearer,
   addMember,
   linkMetric,
@@ -165,6 +166,98 @@ describe("benchmark_metric — publish freeze", () => {
     // Unlinking removes a frozen entry → 409.
     const del = await apiDelete(`/api/v1/benchmark_metrics/${preLink.id}`, bearer(me.token));
     expect(del.status).toBe(409);
+  });
+});
+
+// The console saves the Details form via full-replace PUT, round-tripping measurement_schema. These
+// pin the contract that forces a fresh GET before that PUT: link/unlink move the schema server-side,
+// and a stale round-trip silently drops (or resurrects) snapshots — or 409s against the freeze.
+describe("benchmark_metric — schema round-trip through benchmark PUT", () => {
+  const putBody = (attrs: Record<string, unknown>) => ({
+    data: { type: "benchmark", attributes: attrs },
+  });
+
+  it("a fresh get-mutate-put preserves a just-linked snapshot; a stale body drops it, stranding the link", async () => {
+    const me = await register();
+    const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
+    const metric = await makeMetric(me.token, { label: "Throughput", type: "DECIMAL" });
+    await linkMetric(me.token, bm.id, metric.id);
+
+    // Fresh round-trip: GET → change a cosmetic field → PUT the whole representation back.
+    const fresh = ((await (await apiGet(`/api/v1/benchmarks/${bm.id}`, bearer(me.token))).json()) as { data: Resource }).data.attributes;
+    const ok = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: fresh.subject_type, measurement_schema: fresh.measurement_schema }),
+      bearer(me.token),
+    );
+    expect(ok.status).toBe(200);
+    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name)).toEqual(["throughput"]);
+
+    // A stale body — the schema as loaded BEFORE the link — full-replaces the snapshot away while
+    // the link row lives on, orphaned.
+    const stale = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: fresh.subject_type, measurement_schema: EMPTY }),
+      bearer(me.token),
+    );
+    expect(stale.status).toBe(200);
+    expect((await schemaOf(me.token, bm.id)).metrics).toEqual([]);
+    const links = (await (await apiGet(`/api/v1/benchmark_metrics?filter[benchmark]=${bm.id}`, bearer(me.token))).json()) as { data: Resource[] };
+    expect(links.data).toHaveLength(1);
+  });
+
+  it("a stale round-trip after unlink resurrects an orphan schema entry that blocks re-linking", async () => {
+    const me = await register();
+    const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
+    const metric = await makeMetric(me.token, { label: "Throughput", type: "DECIMAL" });
+    const link = await linkMetric(me.token, bm.id, metric.id);
+    const staleSchema = await schemaOf(me.token, bm.id); // a client copy holding the snapshot
+
+    await apiDelete(`/api/v1/benchmark_metrics/${link.id}`, bearer(me.token));
+    const put = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: staleSchema }),
+      bearer(me.token),
+    );
+    expect(put.status).toBe(200);
+
+    // The resurrected entry has no link row behind it, and its name now blocks a re-link.
+    const relink = await apiPost(
+      "/api/v1/benchmark_metrics",
+      { data: { type: "benchmark_metric", attributes: { benchmark: bm.id, metric: metric.id } } },
+      bearer(me.token),
+    );
+    expect(relink.status).toBe(409);
+  });
+
+  it("after a post-publish link, a stale round-trip 409s against the freeze; a fresh one passes", async () => {
+    const me = await register();
+    const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
+    const first = await makeMetric(me.token, { label: "First", type: "DECIMAL" });
+    await linkMetric(me.token, bm.id, first.id);
+    await publish(me.token, me.user_id, bm.id);
+    const preAppend = await schemaOf(me.token, bm.id); // client copy from before the append
+
+    const second = await makeMetric(me.token, { label: "Second", type: "INTEGER" });
+    await linkMetric(me.token, bm.id, second.id); // append is allowed on a published benchmark
+
+    // Round-tripping the pre-append copy would REMOVE the appended entry → interpretation freeze.
+    const stale = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: preAppend }),
+      bearer(me.token),
+    );
+    expect(stale.status).toBe(409);
+
+    // The fresh representation carries both entries and saves cleanly.
+    const freshSchema = await schemaOf(me.token, bm.id);
+    const ok = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: freshSchema }),
+      bearer(me.token),
+    );
+    expect(ok.status).toBe(200);
+    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name).sort()).toEqual(["first", "second"]);
   });
 });
 
