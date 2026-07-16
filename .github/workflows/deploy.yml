@@ -25,7 +25,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # Coverage, not plain `npm test`: vitest's coverage thresholds (vitest.config.ts) only run —
+      # and only fail the build — under --coverage, so this is what makes the 90% gate enforce.
+      - run: npm run test:coverage
 
   deploy:
     needs: test
