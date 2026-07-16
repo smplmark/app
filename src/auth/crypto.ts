@@ -50,11 +50,18 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
 // ── passwords (PBKDF2-HMAC-SHA256) ───────────────────────────────────────────
 
-const PBKDF2_ITERATIONS = 210_000;
+// Total PBKDF2-HMAC-SHA256 work factor: OWASP's 2023 recommendation for this PRF. We can't ask
+// WebCrypto for it in one call — Cloudflare Workers rejects any deriveBits above MAX_PBKDF2_PER_CALL
+// iterations (a platform DoS guard; the call throws NotSupportedError), so we reach the total by
+// chaining capped rounds in pbkdf2Stretch. The stored `<iters>` field is this total; verification
+// re-derives the identical round split from it, so MAX_PBKDF2_PER_CALL must stay constant.
+const PBKDF2_ITERATIONS = 600_000;
+const MAX_PBKDF2_PER_CALL = 100_000;
 const PBKDF2_SALT_BYTES = 16;
 const PBKDF2_HASH_BYTES = 32;
 
-async function pbkdf2(
+/** One capped PBKDF2-HMAC-SHA256 block: `iterations` (≤ the Workers per-call limit) chained HMACs. */
+async function pbkdf2Block(
   password: string,
   salt: Uint8Array,
   iterations: number,
@@ -74,10 +81,34 @@ async function pbkdf2(
   return new Uint8Array(bits);
 }
 
+/**
+ * PBKDF2-HMAC-SHA256 stretched to `totalIterations` while keeping every deriveBits call within the
+ * Workers per-call cap. Rounds chain — round 0 uses `salt`, each later round is salted by the prior
+ * round's output — so an attacker must run all `totalIterations` HMACs sequentially per guess with no
+ * shortcut to the final block. The round split is a pure function of (totalIterations, cap), so
+ * verifyPassword reproduces it exactly from the stored total.
+ */
+async function pbkdf2Stretch(
+  password: string,
+  salt: Uint8Array,
+  totalIterations: number,
+): Promise<Uint8Array> {
+  let remaining = totalIterations;
+  let roundSalt = salt;
+  let out: Uint8Array = new Uint8Array(PBKDF2_HASH_BYTES);
+  while (remaining > 0) {
+    const iterations = Math.min(MAX_PBKDF2_PER_CALL, remaining);
+    out = await pbkdf2Block(password, roundSalt, iterations);
+    roundSalt = out;
+    remaining -= iterations;
+  }
+  return out;
+}
+
 /** Hash a password to a self-describing string: `pbkdf2$sha256$<iters>$<saltB64url>$<hashB64url>`. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(PBKDF2_SALT_BYTES));
-  const hash = await pbkdf2(password, salt, PBKDF2_ITERATIONS);
+  const hash = await pbkdf2Stretch(password, salt, PBKDF2_ITERATIONS);
   return `pbkdf2$sha256$${PBKDF2_ITERATIONS}$${bytesToBase64Url(salt)}$${bytesToBase64Url(hash)}`;
 }
 
@@ -100,7 +131,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   } catch {
     return false;
   }
-  const actual = await pbkdf2(password, salt, iterations);
+  const actual = await pbkdf2Stretch(password, salt, iterations);
   return timingSafeEqual(bytesToBase64Url(actual), bytesToBase64Url(expected));
 }
 

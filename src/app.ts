@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { WWW_HOST, appUrl, devLoginEnabled, isAllowedCorsOrigin } from "./config";
-import { NotFoundError } from "./errors";
+import { AppError, NotFoundError } from "./errors";
 import { errorResponse } from "./http/jsonapi";
 import type { AppBindings } from "./http/middleware";
 import { buildOpenApiDocument } from "./openapi/spec";
@@ -129,8 +129,13 @@ export function createApp() {
     c.html(scalarHtml("/api/openapi.json", c.env.DEV_WWW_ORIGIN || "https://www.smplmark.org")),
   );
 
-  // Any thrown AppError (and unexpected errors) render as a JSON:API error document.
-  app.onError((err) => errorResponse(err));
+  // Any thrown AppError (and unexpected errors) render as a JSON:API error document. AppErrors are
+  // expected client-facing outcomes; anything else is a server fault, so log it — otherwise the cause
+  // is swallowed into a bare "Internal Server Error" and is invisible in `wrangler tail`/Workers Logs.
+  app.onError((err) => {
+    if (!(err instanceof AppError)) console.error("Unhandled error:", err);
+    return errorResponse(err);
+  });
 
   // An unmatched API route is a JSON:API 404 (not the HTML 404 page).
   app.all("/api/*", () => errorResponse(new NotFoundError("No such endpoint.")));

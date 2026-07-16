@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   apiKeyPrefix,
   decryptSecret,
@@ -45,6 +45,24 @@ describe("password hashing", () => {
     expect(stored.startsWith("pbkdf2$sha256$")).toBe(true);
     expect(await verifyPassword("correct horse battery", stored)).toBe(true);
     expect(await verifyPassword("wrong", stored)).toBe(false);
+  });
+
+  it("keeps every PBKDF2 call within the Workers 100k-iteration cap", async () => {
+    // The prod signup 500 was a single deriveBits call at 210k iterations, which Cloudflare Workers
+    // rejects (>100k). hashPassword must reach its total by chaining capped rounds — guard that here,
+    // since the local/test runtime does not enforce the cap and would let a regression pass silently.
+    const spy = vi.spyOn(crypto.subtle, "deriveBits");
+    try {
+      await hashPassword("correct horse battery");
+      const iters = spy.mock.calls.map(
+        (call) => (call[0] as { iterations: number }).iterations,
+      );
+      expect(iters.length).toBeGreaterThan(1); // chained, not one oversized call
+      for (const n of iters) expect(n).toBeLessThanOrEqual(100_000);
+      expect(iters.reduce((a, b) => a + b, 0)).toBe(600_000); // total work preserved
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("rejects malformed stored hashes", async () => {
