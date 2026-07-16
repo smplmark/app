@@ -29,11 +29,28 @@
     $("new-benchmark").addEventListener("click", openCreateModal);
   }
 
+  let ROSTER = {};       // user_id → { name, email } from the account roster (Created-by column)
+  let SUBJECT_TYPES = {}; // subject_type id → display name
+
   async function load() {
     try {
-      const doc = await apiFetch("/api/v1/benchmarks?filter[account]=" + encodeURIComponent(ACCOUNT_ID));
+      const [doc, rosterDoc, typesDoc] = await Promise.all([
+        apiFetch("/api/v1/benchmarks?filter[account]=" + encodeURIComponent(ACCOUNT_ID)),
+        apiFetch("/api/v1/account_users").catch(() => null),
+        apiFetch("/api/v1/subject_types?page[size]=1000").catch(() => null),
+      ]);
       ALL = (doc && doc.data) || [];
       ALL.sort((a, z) => String((z.attributes || {}).created_at || "").localeCompare(String((a.attributes || {}).created_at || "")));
+      ROSTER = {};
+      (((rosterDoc && rosterDoc.data) || [])).forEach((r) => {
+        const ra = r.attributes || {};
+        if (ra.user) ROSTER[ra.user] = { name: ra.display_name || (ra.email ? ra.email.split("@")[0] : ""), email: ra.email || "" };
+      });
+      SUBJECT_TYPES = {};
+      (((typesDoc && typesDoc.data) || [])).forEach((t) => {
+        const ta = t.attributes || {};
+        SUBJECT_TYPES[t.id] = ta.name || ta.key || "";
+      });
       render();
     } catch (err) {
       $("bm-content").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
@@ -46,15 +63,26 @@
       const a = b.attributes || {};
       if (RAIL === "mine" && (!USER_ID || a.created_by !== USER_ID)) return false;
       if (STATUS && String(a.status || "").toUpperCase() !== STATUS) return false;
-      if (q && !((a.name || "").toLowerCase().includes(q) || (a.key || "").toLowerCase().includes(q))) return false;
+      if (q && !((a.name || "").toLowerCase().includes(q) || (a.key || "").toLowerCase().includes(q) || (a.description || "").toLowerCase().includes(q))) return false;
       return true;
     });
   }
 
-  function whoLabel(uid) {
-    if (!uid) return "an API key";
-    if (USER_ID && uid === USER_ID) return "you";
-    return "another member";
+  function creatorName(uid) {
+    if (!uid) return "API key";
+    const u = ROSTER[uid];
+    return (u && u.name) || "—";
+  }
+  function creatorCell(uid) {
+    if (!uid) return '<span class="muted">API key</span>';
+    const u = ROSTER[uid];
+    if (!u) return '<span class="muted">—</span>';
+    return '<span class="cellUser"><span data-avatar data-email="' + esc(u.email) + '" data-name="' + esc(u.name) + '"></span><span class="cellUserName">' + esc(u.name) + "</span></span>";
+  }
+  function hydrateAvatars(container) {
+    container.querySelectorAll("[data-avatar]").forEach((el) => {
+      el.replaceWith(SM.avatar(26, el.dataset.email, el.dataset.name));
+    });
   }
 
   function render() {
@@ -113,16 +141,21 @@
   function renderTable() {
     TABLE = SM.pagedTable($("bm-table"), {
       columns: [
-        { key: "key", label: "Key", sortable: true, sortValue: (b) => (b.attributes || {}).key || "", render: (b) => "<code>" + esc((b.attributes || {}).key || "") + "</code>" },
-        { key: "name", label: "Name", sortable: true, sortValue: (b) => (b.attributes || {}).name || "", render: (b) => esc((b.attributes || {}).name || "") },
+        { key: "name", label: "Name", sortable: true, sortValue: (b) => (b.attributes || {}).name || "", render: (b) => {
+          const a = b.attributes || {};
+          return '<div class="cellTitle">' + esc(a.name || "") + "</div>" +
+            (a.description ? '<div class="cellSub">' + esc(a.description) + "</div>" : "");
+        } },
+        { key: "subject_type", label: "Subject type", sortable: true, sortValue: (b) => SUBJECT_TYPES[(b.attributes || {}).subject_type] || "", render: (b) => esc(SUBJECT_TYPES[(b.attributes || {}).subject_type] || "—") },
         { key: "status", label: "Status", sortable: true, sortValue: (b) => String((b.attributes || {}).status || ""), render: statusCell },
         { key: "created", label: "Created", sortable: true, sortValue: (b) => (b.attributes || {}).created_at || "", render: (b) => esc(SM.fmtDate((b.attributes || {}).created_at)) },
-        { key: "created_by", label: "Created by", sortable: true, sortValue: (b) => whoLabel((b.attributes || {}).created_by), render: (b) => esc(whoLabel((b.attributes || {}).created_by)) },
+        { key: "created_by", label: "Created by", sortable: true, sortValue: (b) => creatorName((b.attributes || {}).created_by), render: (b) => creatorCell((b.attributes || {}).created_by) },
       ],
       rows: filtered(),
-      sort: RAIL === "recent" ? { key: "created", dir: "desc" } : { key: "key", dir: "asc" },
+      sort: RAIL === "recent" ? { key: "created", dir: "desc" } : { key: "name", dir: "asc" },
       emptyText: RAIL === "mine" ? "You haven’t created any matching benchmarks." : "No matching benchmarks.",
       onRowClick: (b) => { location.href = "/account/benchmarks/detail?id=" + encodeURIComponent(b.id); },
+      onRender: hydrateAvatars,
     });
   }
 

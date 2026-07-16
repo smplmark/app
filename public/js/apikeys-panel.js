@@ -26,7 +26,7 @@
       createDesc: "This key is scoped to this benchmark and its runs — nothing else in your account.",
     },
     RUN: {
-      empty: "Create a key scoped to this run — ideal for a beacon or CI job uploading measurements to just this run.",
+      empty: "Create a key scoped to this run.",
       createDesc: "This key is scoped to this run — it can upload measurements here and nothing else.",
     },
   };
@@ -38,12 +38,29 @@
     el.className = "form-status" + (text ? " is-" + (kind || "error") : "");
   }
 
+  // ── Plaintext reveal after create/rotate (the key stays viewable anytime from its details page) ──
+  function showReveal(keyValue) {
+    const m = SM.modal({
+      title: "API key created",
+      description: "Copy it below, or view it anytime from the key’s details.",
+      width: 640,
+      bodyHtml:
+        '<div class="keyReveal"><code id="apikeys-reveal-code"></code>' +
+        '<button type="button" class="button buttonSecondary buttonSmall" id="apikeys-reveal-copy">Copy</button></div>' +
+        '<div class="modalActions" style="margin-top:1rem;"><button type="button" class="button buttonPrimary buttonSmall" data-close>Done</button></div>',
+    });
+    m.panel.querySelector("#apikeys-reveal-code").textContent = keyValue;
+    const copyBtn = m.panel.querySelector("#apikeys-reveal-copy");
+    copyBtn.addEventListener("click", () => SM.copyText(keyValue).then(() => { copyBtn.textContent = "Copied"; }, () => { copyBtn.textContent = "Copy failed"; }));
+  }
+
   function mount(opts) {
     const host = opts.host;
     const actionsEl = opts.actions || null;
     const scopeType = opts.scopeType;
     const scopeRef = opts.scopeRef || null;
     const canAdmin = opts.canAdmin === true;
+    const compact = opts.compact === true; // inside a modal: plain-line empty state, no hero block
     const copy = COPY[scopeType] || COPY.ACCOUNT;
 
     let ALL = [];
@@ -83,10 +100,11 @@
     function render() {
       renderCreateAction();
       if (!ALL.length) {
-        host.innerHTML =
-          '<div class="emptyState"><div class="emptyIcon">' + SM.icon("apikeys", 40) + "</div>" +
-          "<h2>No API keys yet</h2><p>" + esc(copy.empty) + "</p>" +
-          (canAdmin ? '<button type="button" class="button buttonPrimary" data-apikeys-create-empty>Create key</button>' : "") + "</div>";
+        host.innerHTML = compact
+          ? '<p class="muted" style="margin:0.25rem 0 0;">No API keys yet. ' + esc(copy.empty) + "</p>"
+          : '<div class="emptyState"><div class="emptyIcon">' + SM.icon("apikeys", 40) + "</div>" +
+            "<h2>No API keys yet</h2><p>" + esc(copy.empty) + "</p>" +
+            (canAdmin ? '<button type="button" class="button buttonPrimary" data-apikeys-create-empty>Create key</button>' : "") + "</div>";
         const b = host.querySelector("[data-apikeys-create-empty]");
         if (b) b.addEventListener("click", openCreateModal);
         return;
@@ -196,22 +214,6 @@
       });
     }
 
-    // ── Plaintext reveal on create (the key stays viewable anytime from its details page) ──
-    function showReveal(keyValue) {
-      const m = SM.modal({
-        title: "API key created",
-        description: "Copy it below, or view it anytime from the key’s details.",
-        width: 640,
-        bodyHtml:
-          '<div class="keyReveal"><code id="apikeys-reveal-code"></code>' +
-          '<button type="button" class="button buttonSecondary buttonSmall" id="apikeys-reveal-copy">Copy</button></div>' +
-          '<div class="modalActions" style="margin-top:1rem;"><button type="button" class="button buttonPrimary buttonSmall" data-close>Done</button></div>',
-      });
-      m.panel.querySelector("#apikeys-reveal-code").textContent = keyValue;
-      const copyBtn = m.panel.querySelector("#apikeys-reveal-copy");
-      copyBtn.addEventListener("click", () => SM.copyText(keyValue).then(() => { copyBtn.textContent = "Copied"; }, () => { copyBtn.textContent = "Copy failed"; }));
-    }
-
     // ── Key detail + management modal (opened from a table row) ── view the key, rename, rotate, revoke,
     //    delete. The full plaintext key is fetched once and shown; PUT/revoke responses omit it, so it's
     //    carried across re-paints. Admin-only affordances gate on canAdmin.
@@ -304,5 +306,5 @@
     }
   }
 
-  window.SMApiKeys = { mount: mount };
+  window.SMApiKeys = { mount: mount, reveal: showReveal };
 })();

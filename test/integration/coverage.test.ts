@@ -32,6 +32,9 @@ describe("list params", () => {
     const me = await register();
     const b1 = await makeBenchmark(me.token, { key: "aaa", name: "Aaa" });
     await makeBenchmark(me.token, { key: "bbb", name: "Bbb" });
+    // Subjects and runs must exist before publishing — a published benchmark freezes both.
+    await makeSubject(me.token, b1.id, "tk");
+    await makeRun(me.token, b1.id);
     await publish(me.token, me.user_id, b1.id);
 
     const withTotal = await apiGet(
@@ -46,8 +49,6 @@ describe("list params", () => {
     const byKey = await apiGet("/api/v1/benchmarks?filter[key]=aaa");
     expect(((await byKey.json()) as { data: Resource[] }).data.length).toBe(1);
 
-    const t = await makeSubject(me.token, b1.id, "tk");
-    await makeRun(me.token, b1.id);
     const subjects = await apiGet(`/api/v1/subjects?filter[benchmark]=${b1.id}&filter[key]=tk&meta[total]=true&sort=-created_at`, bearer(me.token));
     expect(((await subjects.json()) as { data: Resource[] }).data.length).toBe(1);
     const runs = await apiGet(`/api/v1/runs?filter[benchmark]=${b1.id}&filter[key]=default&meta[total]=true&sort=key`, bearer(me.token));

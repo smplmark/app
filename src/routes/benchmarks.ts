@@ -38,6 +38,8 @@ import {
   setBenchmarkTags,
 } from "../data/tags";
 import { countLinksForBenchmark } from "../data/benchmark_subjects";
+import { countRunsForBenchmark } from "../data/runs";
+import { benchmarkHasMeasurements } from "../data/measurements";
 import { getSubjectTypeById } from "../data/subject_types";
 import { getUserById } from "../data/users";
 import {
@@ -274,9 +276,26 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
-  // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable.
+  // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable, and —
+  // since publishing now freezes the whole dataset — nothing may be added either. Only descriptions
+  // and unit labels (which assertFrozenCompatible ignores) remain editable.
   if (existing.status !== "PRIVATE") {
-    assertFrozenCompatible(parseMeasurementSchema(existing.measurement_schema), measurement_schema);
+    const frozen = parseMeasurementSchema(existing.measurement_schema);
+    assertFrozenCompatible(frozen, measurement_schema);
+    if (
+      measurement_schema.metrics.length !== frozen.metrics.length ||
+      measurement_schema.derived.length !== frozen.derived.length
+    ) {
+      throw new ConflictError(
+        "This benchmark is published; its metrics are frozen and no new ones can be added.",
+      );
+    }
+    // assertFrozenCompatible skips the chart when none existed — adding one is also an addition.
+    if ((frozen.chart ?? null) === null && (measurement_schema.chart ?? null) !== null) {
+      throw new ConflictError(
+        "This benchmark is published; its chart mapping is frozen and cannot be added.",
+      );
+    }
   }
 
   const row = await updateBenchmark(c.env.DB, existing.id, {
@@ -392,6 +411,23 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
   }
   if (!(await accountHasVerifiedUser(c.env.DB, existing.account_id))) {
     throw new ForbiddenError("Verify your email address before publishing a benchmark.");
+  }
+  // A published benchmark is a finished dataset: it must actually compare something (subjects) on
+  // something (metrics) with evidence (runs carrying measurements) before it can go public.
+  const missing: string[] = [];
+  const schema = parseMeasurementSchema(existing.measurement_schema);
+  if ((await countLinksForBenchmark(c.env.DB, existing.id)) === 0) missing.push("one subject");
+  if (schema.metrics.length + schema.derived.length === 0) missing.push("one metric");
+  if ((await countRunsForBenchmark(c.env.DB, existing.id)) === 0) missing.push("one run");
+  if (!(await benchmarkHasMeasurements(c.env.DB, existing.id))) missing.push("one measurement");
+  if (missing.length > 0) {
+    const list =
+      missing.length === 1
+        ? missing[0]
+        : missing.slice(0, -1).join(", ") + " and " + missing[missing.length - 1];
+    throw new ConflictError(
+      `This benchmark isn't ready to publish — it needs at least ${list}.`,
+    );
   }
 
   const attrs = await readAttributes(c).catch(() => ({}) as Record<string, unknown>);

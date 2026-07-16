@@ -409,7 +409,8 @@
   }
 
   async function renderSubjects(panel, actions) {
-    if (CAN_WRITE && actions) {
+    const priv = statusInfo().status === "PRIVATE"; // published => subjects are frozen
+    if (CAN_WRITE && priv && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-subject-btn">' + SM.icon("plus", 14) + " Add subject</button>";
       $("add-subject-btn").addEventListener("click", openAddSubjectModal);
     }
@@ -418,11 +419,11 @@
       { key: "key", label: "Key", sortable: true, sortValue: (t) => (t.attributes || {}).key || "", render: (t) => "<code>" + esc((t.attributes || {}).key || "") + "</code>" },
       { key: "name", label: "Name", sortable: true, sortValue: (t) => (t.attributes || {}).name || "", render: (t) => esc((t.attributes || {}).name || "") },
     ];
-    if (CAN_WRITE) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
+    if (CAN_WRITE && priv) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn unlink-subject" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).name || (t.attributes || {}).key || "") + '" title="Unlink subject" aria-label="Unlink subject">' + SM.icon("trash", 15) + "</button>" });
     const table = SM.pagedTable($("subjects-table"), {
       columns: cols, rows: [], sort: { key: "key", dir: "asc" }, emptyText: "No subjects linked yet.",
-      onRender: CAN_WRITE ? (c) => c.querySelectorAll(".unlink-subject").forEach((el) => el.addEventListener("click", () => unlinkSubject(el.dataset.link, el.dataset.name))) : undefined,
+      onRender: CAN_WRITE && priv ? (c) => c.querySelectorAll(".unlink-subject").forEach((el) => el.addEventListener("click", () => unlinkSubject(el.dataset.link, el.dataset.name))) : undefined,
     });
     try {
       const [linkedDoc, linksDoc] = await Promise.all([
@@ -578,7 +579,8 @@
   // measurement schema. The table is driven by the link rows joined to the account library (which
   // supplies each metric's name/label/type); unlink removes the snapshot (draft benchmarks only).
   async function renderMetrics(panel, actions) {
-    if (CAN_WRITE && actions) {
+    const priv = statusInfo().status === "PRIVATE"; // published => metrics are frozen
+    if (CAN_WRITE && priv && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-metric-btn">' + SM.icon("plus", 14) + " Add metric</button>";
       $("add-metric-btn").addEventListener("click", openAddMetricModal);
     }
@@ -588,12 +590,12 @@
       { key: "label", label: "Label", sortable: true, sortValue: (t) => (t.attributes || {}).label || "", render: (t) => esc((t.attributes || {}).label || "") },
       { key: "type", label: "Type", sortable: true, sortValue: (t) => (t.attributes || {}).type || "", render: (t) => SMMetricForm.typePillHtml((t.attributes || {}).type) },
     ];
-    if (CAN_WRITE) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
+    if (CAN_WRITE && priv) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn unlink-metric" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).label || (t.attributes || {}).name || "") + '" title="Unlink metric" aria-label="Unlink metric">' + SM.icon("trash", 15) + "</button>" });
     const table = SM.pagedTable($("metrics-table"), {
       columns: cols, rows: [], sort: { key: "name", dir: "asc" }, emptyText: "No metrics linked yet.",
       onRowClick: (t) => { location.href = "/account/metrics/detail?id=" + encodeURIComponent(t.id); },
-      onRender: CAN_WRITE ? (c) => c.querySelectorAll(".unlink-metric").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); unlinkMetric(el.dataset.link, el.dataset.name); })) : undefined,
+      onRender: CAN_WRITE && priv ? (c) => c.querySelectorAll(".unlink-metric").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); unlinkMetric(el.dataset.link, el.dataset.name); })) : undefined,
     });
     try {
       const [linksDoc, libDoc] = await Promise.all([
@@ -698,262 +700,241 @@
     } catch (err) { setMsg(err.message, "error"); }
   }
 
-  // ── Runs tab (master-detail: a run picker on the left, the selected run's measurements on the right) ──
-  let SEL_RUN = null;      // selected run id (persists across re-renders within the tab)
-  let RUNS = [];           // the benchmark's runs
-  let MEAS_SUBJECTS = {};  // subject_id → subject resource (name resolution + the add-measurement picker)
+  // ── Runs tab — a standard table of runs (measurements live on each run's page). Row click opens
+  //    the edit modal: name + start/end times are directly editable while the benchmark is a draft
+  //    (no End button — ending a run IS setting its end time), plus the run's API keys. ──
+  let RUNS = [];
 
   function runFlags(a) { return { invalidated: !!(a.invalidated || a.invalidated_at || a.invalidation_reason), ended: !!(a.ended_at || a.live === false) }; }
   function runStateSort(r) { const f = runFlags(r.attributes || {}); return f.invalidated ? "invalidated" : f.ended ? "ended" : "live"; }
   function runStatePill(r) { return SM.statusPill(runStateSort(r), runStateSort(r)); }
-  function measSchema() { return (BM.attributes || {}).measurement_schema || { metrics: [], derived: [] }; }
-  // The measurement's metric columns, in schema order: stored first, then derived (flagged for the view modal).
-  function schemaMetrics() {
-    const s = measSchema();
-    return (s.metrics || []).map((m) => ({ name: m.name, derived: false }))
-      .concat((s.derived || []).map((d) => ({ name: d.name, derived: true })));
+
+  // datetime-local <-> ISO: the picker works in the viewer's local time; the API stores UTC.
+  function dtLocalValue(v) {
+    if (!v) return "";
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
   }
-  function fmtNum(v) {
-    if (v == null || typeof v !== "number" || !isFinite(v)) return "—";
-    return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(4)));
+  function dtLocalToIso(v) {
+    if (!v) return null;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? undefined : d.toISOString();
   }
-  function subjectLabel(id) { const s = MEAS_SUBJECTS[id]; const a = (s && s.attributes) || {}; return a.name || a.key || id || "—"; }
-  function selectedRun() { return RUNS.find((r) => r.id === SEL_RUN) || null; }
 
   async function renderRuns(panel, actions) {
-    if (CAN_WRITE && actions) {
+    const priv = statusInfo().status === "PRIVATE";
+    if (CAN_WRITE && priv && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-run-btn">' + SM.icon("plus", 14) + " Add run</button>";
       $("add-run-btn").addEventListener("click", openAddRunModal);
     }
-    panel.innerHTML =
-      '<div class="runsLayout">' +
-      '<aside class="runsPane"><div class="runsPaneHead"><span class="runsPaneTitle">Runs</span></div>' +
-      '<div class="runsList" id="runs-list"><p class="measEmpty" style="padding:0.75rem;">Loading…</p></div></aside>' +
-      '<section class="runsMain" id="runs-main"></section></div>';
+    panel.innerHTML = '<div id="runs-table"></div><div id="runs-msg" class="form-status" style="margin-top:0.5rem;"></div>';
+    const table = SM.pagedTable($("runs-table"), {
+      columns: [
+        { key: "key", label: "Run ID", sortable: true, sortValue: (r) => (r.attributes || {}).key || "", render: (r) => "<code>" + esc((r.attributes || {}).key || "") + "</code>" },
+        { key: "name", label: "Name", sortable: true, sortValue: (r) => (r.attributes || {}).name || "", render: (r) => esc((r.attributes || {}).name || "—") },
+        { key: "state", label: "Status", sortable: true, sortValue: runStateSort, render: runStatePill },
+        { key: "started", label: "Started", sortable: true, sortValue: (r) => (r.attributes || {}).started_at || "", render: (r) => esc(SM.fmtDateTime((r.attributes || {}).started_at) || "—") },
+        { key: "ended", label: "Ended", sortable: true, sortValue: (r) => (r.attributes || {}).ended_at || "", render: (r) => esc(SM.fmtDateTime((r.attributes || {}).ended_at) || "—") },
+      ],
+      rows: [], sort: { key: "started", dir: "desc" }, emptyText: "No runs yet.",
+      onRowClick: (r) => openRunModal(r),
+    });
     try {
-      const [runsDoc, subjDoc] = await Promise.all([
-        apiFetch("/api/v1/runs?filter[benchmark]=" + encodeURIComponent(ID) + "&page[size]=1000"),
-        apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(ID) + "&page[size]=1000"),
-      ]);
-      RUNS = ((runsDoc && runsDoc.data) || []).slice().sort((a, z) => String((a.attributes || {}).key || "").localeCompare(String((z.attributes || {}).key || "")));
-      MEAS_SUBJECTS = {};
-      ((subjDoc && subjDoc.data) || []).forEach((s) => { MEAS_SUBJECTS[s.id] = s; });
+      const doc = await apiFetch("/api/v1/runs?filter[benchmark]=" + encodeURIComponent(ID) + "&page[size]=1000");
+      RUNS = (doc && doc.data) || [];
+      table.setRows(RUNS);
       setCount("runs", RUNS.length);
-      setCount("subjects", Object.keys(MEAS_SUBJECTS).length);
-      if (!RUNS.some((r) => r.id === SEL_RUN)) SEL_RUN = RUNS.length ? RUNS[0].id : null;
-      renderRunList();
-      renderMeasurementsPane();
     } catch (err) {
-      $("runs-main").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+      $("runs-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
     }
   }
 
-  function renderRunList() {
-    const host = $("runs-list");
-    if (!host) return;
-    if (!RUNS.length) { host.innerHTML = '<p class="measEmpty" style="padding:0.75rem;">No runs yet.</p>'; return; }
-    host.innerHTML = RUNS.map((r) => {
-      const a = r.attributes || {};
-      const on = r.id === SEL_RUN;
-      return '<button type="button" class="runItem' + (on ? " isActive" : "") + '" data-id="' + esc(r.id) + '">' +
-        '<span class="runItemName">' + esc(a.key || "") + "</span>" + runStatePill(r) + "</button>";
-    }).join("");
-    host.querySelectorAll(".runItem").forEach((el) => el.addEventListener("click", () => selectRun(el.dataset.id)));
-  }
-
-  function selectRun(id) {
-    if (id === SEL_RUN) return;
-    SEL_RUN = id;
-    renderRunList();
-    renderMeasurementsPane();
-  }
-
-  // Right pane: the selected run's header (state + run actions + Add measurement) and its measurements table.
-  async function renderMeasurementsPane() {
-    const host = $("runs-main");
-    if (!host) return;
-    const r = selectedRun();
-    if (!r) {
-      host.innerHTML = '<p class="measEmpty">' + (RUNS.length ? "Select a run to see its measurements." : "Add a run to start recording measurements.") + "</p>";
-      return;
-    }
-    const a = r.attributes || {};
-    const f = runFlags(a);
+  // ── Run modal — edit the run's fields (draft benchmarks only; the run ID is fixed at creation),
+  //    manage its API keys, and jump to its measurements. On a published benchmark the fields are
+  //    read-only and Invalidate is the only run action. ──
+  function openRunModal(run) {
+    const a = run.attributes || {};
     const priv = statusInfo().status === "PRIVATE";
-    const benchClosed = !!statusInfo().a.closed;
-    let runActs = "";
-    if (CAN_WRITE) {
-      if (!f.ended && !f.invalidated) runActs += '<button type="button" class="button buttonSecondary buttonSmall" id="r-end">End</button>';
-      if (!priv && !f.invalidated) runActs += '<button type="button" class="button buttonSecondary buttonSmall" id="r-invalidate">Invalidate</button>';
-      runActs += '<button type="button" class="button buttonDanger buttonSmall" id="r-delete">Delete run</button>';
-    }
-    const canAddMeas = CAN_WRITE && !f.ended && !benchClosed;
-    const addMeas = canAddMeas ? '<button type="button" class="button buttonPrimary buttonSmall" id="add-meas-btn">' + SM.icon("plus", 14) + " Add measurement</button>" : "";
-    const openRun = '<a class="button buttonSecondary buttonSmall" href="/account/runs/detail?id=' + encodeURIComponent(r.id) + '">Open run</a>';
-    host.innerHTML =
-      '<div class="measHead"><div class="measHeadText"><h2>' + esc(a.key || "Run") + "</h2>" + runStatePill(r) + "</div>" +
-      '<div class="measHeadActions">' + runActs + openRun + addMeas + "</div></div>" +
-      '<div id="meas-table"></div>' +
-      '<div id="meas-msg" class="form-status" style="margin-top:0.5rem;"></div>';
-
-    if (CAN_WRITE) {
-      const end = $("r-end"); if (end) end.addEventListener("click", () => endRun(r.id));
-      const inv = $("r-invalidate"); if (inv) inv.addEventListener("click", () => invalidateRun(r.id));
-      const del = $("r-delete"); if (del) del.addEventListener("click", () => deleteRun(r.id, a.key));
-      const addb = $("add-meas-btn"); if (addb) addb.addEventListener("click", openAddMeasurementModal);
-    }
-
-    const cols = [
-      { key: "subject", label: "Subject", sortable: true, sortValue: (m) => subjectLabel((m.attributes || {}).subject), render: (m) => esc(subjectLabel((m.attributes || {}).subject)) },
-    ];
-    schemaMetrics().forEach((mc) => cols.push({
-      key: "m_" + mc.name, label: mc.name, sortable: true,
-      sortValue: (m) => { const v = ((m.attributes || {}).metrics || {})[mc.name]; return typeof v === "number" ? v : ""; },
-      render: (m) => esc(fmtNum(((m.attributes || {}).metrics || {})[mc.name])),
-    }));
-    cols.push({ key: "created_at", label: "Recorded", sortable: true, sortValue: (m) => (m.attributes || {}).created_at || "", render: (m) => esc(SM.fmtDateTime((m.attributes || {}).created_at)) });
-    const canDelMeas = CAN_WRITE && priv; // measurements are append-only once published
-    if (canDelMeas) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (m) =>
-      '<button type="button" class="iconBtn meas-del" data-id="' + esc(m.id) + '" title="Delete measurement" aria-label="Delete measurement">' + SM.icon("trash", 15) + "</button>" });
-    const table = SM.pagedTable($("meas-table"), {
-      columns: cols, rows: [], sort: { key: "created_at", dir: "desc" }, emptyText: "No measurements in this run yet.",
-      onRowClick: (m) => openMeasurementModal(m),
-      onRender: canDelMeas ? (c) => c.querySelectorAll(".meas-del").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); deleteMeasurement(el.dataset.id); })) : undefined,
+    const canEdit = CAN_WRITE && priv;
+    const f = runFlags(a);
+    const dis = canEdit ? "" : " disabled";
+    const runHref = "/account/runs/detail?id=" + encodeURIComponent(run.id);
+    const fieldsHtml =
+      '<form class="form" id="run-form" novalidate>' +
+      '<div class="detailGrid"><div class="detailCol">' +
+      '<label class="field"><span class="detailFieldLabel">Run ID</span><input name="key" type="text" value="' + esc(a.key || "") + '" disabled /><p class="detailFieldHelp">Fixed once the run is created.</p></label>' +
+      '<label class="field"><span class="detailFieldLabel">Name</span><input name="name" type="text" autocomplete="off" placeholder="Optional — a label for this run" value="' + esc(a.name || "") + '"' + dis + " /></label>" +
+      "</div><div class=\"detailCol\">" +
+      '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="datetime-local" value="' + esc(dtLocalValue(a.started_at)) + '"' + dis + " /></label>" +
+      '<label class="field"><span class="detailFieldLabel">Ended at</span><input name="ended_at" type="datetime-local" value="' + esc(dtLocalValue(a.ended_at)) + '"' + dis + ' /><p class="detailFieldHelp">Leave blank while the run is still live.</p></label>' +
+      "</div></div>" +
+      '<p class="form-status" id="run-msg"></p></form>';
+    const keysHtml =
+      '<div class="runKeysBlock"><div class="runKeysHead"><span class="detailFieldLabel">API keys for this run</span><span id="run-keys-actions"></span></div>' +
+      '<div id="run-keys-host"></div></div>';
+    const actionsHtml =
+      '<div class="modalActions">' +
+      (canEdit ? '<button type="button" class="button buttonDanger buttonSmall" id="run-delete" style="margin-right:auto;">Delete run</button>' : "") +
+      (!priv && CAN_WRITE && !f.invalidated ? '<button type="button" class="button buttonSecondary buttonSmall" id="run-invalidate" style="margin-right:auto;">Invalidate</button>' : "") +
+      '<a class="buttonLink" href="' + runHref + '#measurements">View measurements</a>' +
+      '<button type="button" class="button buttonSecondary buttonSmall" data-close>' + (canEdit ? "Cancel" : "Close") + "</button>" +
+      (canEdit ? '<button type="button" class="button buttonPrimary buttonSmall" id="run-save">Save</button>' : "") +
+      "</div>";
+    const m = SM.modal({
+      title: "Run " + (a.key || ""),
+      description: canEdit
+        ? "Edit this run — its measurements live on the run page."
+        : priv ? "You have read-only access to this benchmark." : "This benchmark is published, so the run is frozen.",
+      bodyHtml: fieldsHtml + keysHtml + actionsHtml,
+      width: 680,
     });
-    try {
-      const doc = await apiFetch("/api/v1/measurements?filter[run]=" + encodeURIComponent(r.id) + "&page[size]=1000");
-      table.setRows((doc && doc.data) || []);
-    } catch (err) {
-      $("meas-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
-    }
-  }
+    const form = m.panel.querySelector("#run-form");
+    const msg = (t, kind) => { const el = m.panel.querySelector("#run-msg"); el.textContent = t || ""; el.className = "form-status" + (t ? " is-" + (kind || "error") : ""); };
 
-  // ── Add-measurement modal (pick a subject; enter a value for each stored metric — derived are computed) ──
-  async function openAddMeasurementModal() {
-    const r = selectedRun(); if (!r) return;
-    const stored = measSchema().metrics || [];
-    // The pick VALUE is the subject's key (what lands in the input); the label shows "name — key".
-    const subjOptions = Object.values(MEAS_SUBJECTS).map((s) => {
-      const a = s.attributes || {};
-      return { value: a.key || "", label: (a.name || "") + (a.key ? " — " + a.key : "") };
-    });
-    const metricFields = stored.map((m) => '<label class="field"><span class="detailFieldLabel">' + esc(m.name) + '</span><input data-metric="' + esc(m.name) + '" type="number" step="any" autocomplete="off" placeholder="optional" /></label>').join("");
-    const bodyHtml =
-      '<form class="form" id="add-meas-form" novalidate>' +
-      '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span><input name="subject" type="text" autocomplete="off" placeholder="Pick a subject to measure" /><p class="fieldErrorMessage" hidden></p></label>' +
-      (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : '<p class="detailFieldHelp">This benchmark has no stored metrics yet — add them on the Metrics tab to record values.</p>') +
-      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="text" autocomplete="off" placeholder="Defaults to now" /></label>' +
-      '<p class="form-status" id="add-meas-msg"></p>' +
-      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
-      '<button type="submit" class="button buttonPrimary buttonSmall">Add measurement</button></div></form>';
-    const m = SM.modal({ title: "Add measurement", description: "Record a measurement for a subject in run " + (r.attributes || {}).key + ".", bodyHtml: bodyHtml, width: 560 });
-    const f = m.panel.querySelector("#add-meas-form");
-    const msg = m.panel.querySelector("#add-meas-msg");
-    SM.combobox(f.subject, { options: () => subjOptions, emptyText: "No matches." });
-    f.subject.addEventListener("input", () => SM.clearFieldError(f.subject));
-    f.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      msg.textContent = ""; msg.className = "form-status";
-      SM.clearFieldError(f.subject);
-      const val = f.subject.value.trim();
-      if (!val) { SM.setFieldError(f.subject, "Pick a subject."); return; }
-      const lower = val.toLowerCase();
-      const list = Object.values(MEAS_SUBJECTS);
-      const match = list.find((s) => String((s.attributes || {}).key || "").toLowerCase() === lower) ||
-        list.find((s) => String((s.attributes || {}).name || "").toLowerCase() === lower);
-      if (!match) { SM.setFieldError(f.subject, "No such subject in this benchmark. Link it on the Subjects tab first."); return; }
-      const metrics = {};
-      f.querySelectorAll("[data-metric]").forEach((el) => { const v = el.value.trim(); if (v !== "") { const n = Number(v); if (isFinite(n)) metrics[el.getAttribute("data-metric")] = n; } });
-      const attrs = { run: r.id, subject: match.id };
-      if (Object.keys(metrics).length) attrs.metrics = metrics;
-      const c = f.created_at.value.trim(); if (c) attrs.created_at = c;
-      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+    SMApiKeys.mount({ host: m.panel.querySelector("#run-keys-host"), actions: m.panel.querySelector("#run-keys-actions"), scopeType: "RUN", scopeRef: run.id, canAdmin: CAN_ADMIN, compact: true });
+
+    const saveBtn = m.panel.querySelector("#run-save");
+    if (saveBtn) saveBtn.addEventListener("click", async () => {
+      msg("");
+      const started = dtLocalToIso(form.started_at.value);
+      const ended = dtLocalToIso(form.ended_at.value);
+      if (started === undefined || ended === undefined) { msg("Enter valid dates."); return; }
+      if (started && ended && new Date(ended) < new Date(started)) { msg("Ended at must not be earlier than Started at."); return; }
+      // Full-replace PUT: name/details are replaced, so details must round-trip from the resource.
+      // Timestamps are only sent when the picker value actually changed — the picker is minute-
+      // precision, so re-sending an untouched value would silently truncate stored seconds.
+      const attrs = { name: form.name.value.trim() || null, details: a.details ?? null };
+      if (form.started_at.value !== dtLocalValue(a.started_at)) attrs.started_at = started;
+      if (form.ended_at.value !== dtLocalValue(a.ended_at)) attrs.ended_at = ended;
+      saveBtn.disabled = true;
       try {
-        await apiFetch("/api/v1/measurements", { method: "POST", body: jsonapiBody("measurement", attrs) });
+        await apiFetch("/api/v1/runs/" + encodeURIComponent(run.id), { method: "PUT", body: jsonapiBody("run", attrs) });
         m.close();
-        renderMeasurementsPane();
-      } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+        SM.toast("Run saved.", { kind: "success" });
+        renderRuns($("tab-panel"), $("tab-actions"));
+      } catch (err) { saveBtn.disabled = false; msg(err.message); }
     });
+    const delBtn = m.panel.querySelector("#run-delete");
+    if (delBtn) delBtn.addEventListener("click", () => deleteRun(run.id, a.key, m));
+    const invBtn = m.panel.querySelector("#run-invalidate");
+    if (invBtn) invBtn.addEventListener("click", () => invalidateRun(run.id, m));
   }
 
-  // ── Measurement view modal (read-only — measurements are append-only; edit is delete + re-add) ──
-  function openMeasurementModal(meas) {
-    const a = meas.attributes || {};
-    const metrics = a.metrics || {};
-    const inSchema = new Set(schemaMetrics().map((mc) => mc.name));
-    const rows = schemaMetrics().map((mc) =>
-      '<div class="field"><span class="detailFieldLabel">' + esc(mc.name) + (mc.derived ? ' <span class="typePill kindDerived">derived</span>' : "") + '</span><span class="detailFieldValue isMono">' + esc(fmtNum(metrics[mc.name])) + "</span></div>").join("");
-    // Any metric keys present but not declared in the schema (open data) are shown too.
-    const extra = Object.keys(metrics).filter((k) => !inSchema.has(k)).map((k) =>
-      '<div class="field"><span class="detailFieldLabel">' + esc(k) + '</span><span class="detailFieldValue isMono">' + esc(fmtNum(metrics[k])) + "</span></div>").join("");
-    const metaBlock = (a.meta && Object.keys(a.meta).length)
-      ? '<div class="field"><span class="detailFieldLabel">Meta</span><pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:0.82rem;color:var(--text-muted);">' + esc(JSON.stringify(a.meta, null, 2)) + "</pre></div>"
-      : "";
-    const bodyHtml =
-      '<div class="stack">' +
-      '<div class="field"><span class="detailFieldLabel">Subject</span><span class="detailFieldValue">' + esc(subjectLabel(a.subject)) + "</span></div>" +
-      '<div class="field"><span class="detailFieldLabel">Recorded at</span><span class="detailFieldValue">' + esc(SM.fmtDateTime(a.created_at)) + "</span></div>" +
-      (rows || extra ? '<div class="subjectFormFields">' + rows + extra + "</div>" : "") +
-      metaBlock +
-      '<div class="modalActions"><button type="button" class="button buttonPrimary buttonSmall" data-close>Close</button></div></div>';
-    SM.modal({ title: "Measurement", description: "Values recorded for this subject in the run.", bodyHtml: bodyHtml, width: 520 });
-  }
-
-  async function deleteMeasurement(measId) {
-    const ok = await SM.confirm({ title: "Delete measurement?", message: "Delete this measurement? This can't be undone.", confirmLabel: "Delete" });
-    if (!ok) return;
-    try { await apiFetch("/api/v1/measurements/" + encodeURIComponent(measId), { method: "DELETE" }); renderMeasurementsPane(); }
-    catch (err) { const el = $("meas-msg"); if (el) { el.textContent = err.message; el.className = "form-status is-error"; } }
-  }
-
-  // ── Add-run modal (Run ID + Started at are optional; the server auto-generates / defaults them) ──
+  // ── Add-run modal — optionally mints a run-scoped API key in the same step; the key is revealed
+  //    after the modal closes. The created run is retained across retries so a failed key create
+  //    never duplicates the run. ──
   async function openAddRunModal() {
+    const keyOption = CAN_ADMIN
+      ? '<label class="checkField"><input type="checkbox" id="ar-mkkey" /> <span>Also create an API key for this run</span></label>' +
+        '<label class="field" id="ar-keyname-field" hidden><span class="detailFieldLabel fieldRequired">Key name</span><input name="keyname" type="text" autocomplete="off" value="Upload key" /><p class="detailFieldHelp">The key is scoped to this run only. You’ll see its value once the run is created.</p><p class="fieldErrorMessage" hidden></p></label>'
+      : "";
     const bodyHtml =
       '<form class="form" id="add-run-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel">Run ID</span><input name="key" type="text" autocomplete="off" placeholder="Auto-generated if left blank" /><p class="detailFieldHelp">A unique identifier for this run within the benchmark. Leave blank to auto-generate one.</p></label>' +
       '<label class="field"><span class="detailFieldLabel">Name</span><input name="name" type="text" autocomplete="off" placeholder="Optional — a label for this run" /></label>' +
-      '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="text" autocomplete="off" placeholder="Defaults to now" /><p class="detailFieldHelp">When the run started, e.g. 2026-01-01T00:00:00Z. Defaults to now if left blank.</p></label>' +
+      '<div class="detailGrid"><div class="detailCol">' +
+      '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="datetime-local" /><p class="detailFieldHelp">Defaults to now if left blank.</p></label>' +
+      '</div><div class="detailCol">' +
+      '<label class="field"><span class="detailFieldLabel">Ended at</span><input name="ended_at" type="datetime-local" /><p class="detailFieldHelp">Leave blank while the run is still live.</p></label>' +
+      "</div></div>" + keyOption +
       '<p class="form-status" id="add-run-msg"></p>' +
       '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add run</button></div></form>';
-    const m = SM.modal({ title: "Add run", description: "Record a new run for this benchmark.", bodyHtml: bodyHtml, width: 520 });
+    let createdRun = null; // survives a failed key create so a retry doesn't duplicate the run
+    let finished = false;  // distinguishes success-close from abandoning after the run was created
+    const m = SM.modal({
+      title: "Add run", description: "Record a new run for this benchmark.", bodyHtml: bodyHtml, width: 560,
+      onClose: () => { if (createdRun && !finished) renderRuns($("tab-panel"), $("tab-actions")); },
+    });
     const f = m.panel.querySelector("#add-run-form");
     const msg = m.panel.querySelector("#add-run-msg");
+    const mkkey = m.panel.querySelector("#ar-mkkey");
+    if (mkkey) mkkey.addEventListener("change", () => { m.panel.querySelector("#ar-keyname-field").hidden = !mkkey.checked; });
     f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       msg.textContent = ""; msg.className = "form-status";
+      const started = dtLocalToIso(f.started_at.value);
+      const ended = dtLocalToIso(f.ended_at.value);
+      if (started === undefined || ended === undefined) { msg.textContent = "Enter valid dates."; msg.className = "form-status is-error"; return; }
+      if (ended && !started) { msg.textContent = "Set Started at when recording an end time — a blank start defaults to now."; msg.className = "form-status is-error"; return; }
+      if (started && ended && new Date(ended) < new Date(started)) { msg.textContent = "Ended at must not be earlier than Started at."; msg.className = "form-status is-error"; return; }
+      const wantKey = !!(mkkey && mkkey.checked);
+      let keyName = "";
+      if (wantKey) {
+        const knEl = f.keyname; SM.clearFieldError(knEl);
+        keyName = knEl.value.trim();
+        if (!keyName) { SM.setFieldError(knEl, "A name for the key is required."); knEl.focus(); return; }
+      }
       const attrs = { benchmark: ID };
       const k = f.key.value.trim(); if (k) attrs.key = k;
       const n = f.name.value.trim(); if (n) attrs.name = n;
-      const s = f.started_at.value.trim(); if (s) attrs.started_at = s;
+      if (started) attrs.started_at = started;
+      if (ended) attrs.ended_at = ended;
       const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
       try {
-        await apiFetch("/api/v1/runs", { method: "POST", body: jsonapiBody("run", attrs) });
+        if (!createdRun) {
+          const doc = await apiFetch("/api/v1/runs", { method: "POST", body: jsonapiBody("run", attrs) });
+          createdRun = doc && doc.data;
+        }
+        let plaintext = null;
+        if (wantKey) {
+          const kd = await apiFetch("/api/v1/api_keys", { method: "POST", body: jsonapiBody("api_key", { name: keyName, scope_type: "RUN", scope_ref: createdRun.id }) });
+          plaintext = kd && kd.data && kd.data.attributes && kd.data.attributes.key;
+        }
+        finished = true;
         m.close();
         renderRuns($("tab-panel"), $("tab-actions"));
-      } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+        if (plaintext) SMApiKeys.reveal(plaintext);
+      } catch (err) {
+        submit.disabled = false;
+        const note = createdRun ? " The run was created — retrying will only retry the key." : "";
+        msg.textContent = err.message + note; msg.className = "form-status is-error";
+      }
     });
   }
-  async function endRun(id) {
-    setMsg("");
-    try { await apiFetch("/api/v1/runs/" + encodeURIComponent(id) + "/actions/end", { method: "POST" }); renderRuns($("tab-panel"), $("tab-actions")); }
-    catch (err) { setMsg(err.message, "error"); }
+
+  // Errors surface inside the still-open run modal when there is one — the page banner sits behind it.
+  function runModalMsg(parentModal, text) {
+    const el = parentModal && parentModal.panel.isConnected ? parentModal.panel.querySelector("#run-msg") : null;
+    if (el) { el.textContent = text; el.className = "form-status is-error"; }
+    else setMsg(text, "error");
   }
-  async function invalidateRun(id) {
+
+  async function invalidateRun(id, parentModal) {
     const reason = await SM.confirm({ title: "Invalidate run?", message: "Invalidated runs stay visible but are flagged. This can't be undone.", confirmLabel: "Invalidate", reason: { label: "Reason (optional)", placeholder: "Why is this run invalid?" } });
     if (reason === null) return;
     setMsg("");
     const attrs = {};
     if (reason) attrs.invalidation_reason = reason;
-    try { await apiFetch("/api/v1/runs/" + encodeURIComponent(id) + "/actions/invalidate", { method: "POST", body: jsonapiBody("run", attrs) }); renderRuns($("tab-panel"), $("tab-actions")); }
-    catch (err) { setMsg(err.message, "error"); }
+    try {
+      await apiFetch("/api/v1/runs/" + encodeURIComponent(id) + "/actions/invalidate", { method: "POST", body: jsonapiBody("run", attrs) });
+      if (parentModal) parentModal.close();
+      renderRuns($("tab-panel"), $("tab-actions"));
+    } catch (err) { runModalMsg(parentModal, err.message); }
   }
-  async function deleteRun(id, key) {
-    const ok = await SM.confirm({ title: "Delete run?", message: "Delete run <strong>" + esc(key || "") + "</strong> and its measurements? This can't be undone. A published benchmark only lets you delete a run that has no measurements — otherwise invalidate it.", confirmLabel: "Delete" });
+
+  // Deleting a run cascades to its measurements — count them first so the warning is honest.
+  async function deleteRun(id, key, parentModal) {
+    let count = null;
+    try {
+      const d = await apiFetch("/api/v1/measurements?filter[run]=" + encodeURIComponent(id) + "&meta[total]=true&page[size]=1");
+      count = (d && d.meta && d.meta.pagination && d.meta.pagination.total) || 0;
+    } catch (_e) { /* count unavailable — warn generically */ }
+    const message = count > 0
+      ? "Run <strong>" + esc(key || "") + "</strong> contains <strong>" + count + " measurement" + (count === 1 ? "" : "s") + "</strong>. Deleting the run permanently deletes them too. This can't be undone."
+      : count === 0
+        ? "Delete run <strong>" + esc(key || "") + "</strong>? This can't be undone."
+        : "Delete run <strong>" + esc(key || "") + "</strong> and any measurements it contains? This can't be undone.";
+    const ok = await SM.confirm({ title: "Delete run?", message: message, confirmLabel: "Delete" });
     if (!ok) return;
     setMsg("");
-    try { await apiFetch("/api/v1/runs/" + encodeURIComponent(id), { method: "DELETE" }); renderRuns($("tab-panel"), $("tab-actions")); }
-    catch (err) { setMsg(err.message, "error"); }
+    try {
+      await apiFetch("/api/v1/runs/" + encodeURIComponent(id), { method: "DELETE" });
+      if (parentModal) parentModal.close();
+      renderRuns($("tab-panel"), $("tab-actions"));
+    } catch (err) { runModalMsg(parentModal, err.message); }
   }
 
   // ── Lifecycle actions ──

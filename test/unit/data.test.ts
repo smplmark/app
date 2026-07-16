@@ -30,7 +30,7 @@ async function chain(): Promise<{ account: AccountRow; benchmark: BenchmarkRow; 
     account_id: account.id, key: "b", name: "B", description: null, about: null, methodology: null, subject_type: subjectType.id, measurement_schema: schema, category: "OTHER", created_by_user_id: null,
   });
   const subject = await createSubject(env.DB, { account_id: account.id, subject_type_id: subjectType.id, key: "t", name: "T", details: null });
-  const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null });
+  const run = await createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null, ended_at: null });
   return { account, benchmark, subject, run };
 }
 
@@ -52,7 +52,7 @@ describe("unique-violation → 409 on create", () => {
       createBenchmark(env.DB, { account_id: account.id, key: "b", name: "B2", description: null, about: null, methodology: null, subject_type: subject.subject_type_id as string, measurement_schema: schema, category: "OTHER", created_by_user_id: null }),
     );
     await expectConflict(() => createSubject(env.DB, { account_id: account.id, subject_type_id: subject.subject_type_id as string, key: "t", name: "T2", details: null }));
-    await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null }));
+    await expectConflict(() => createRun(env.DB, { benchmark_id: benchmark.id, key: "r", name: null, details: null, started_at: null, ended_at: null }));
   });
 });
 
@@ -65,7 +65,7 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
       createSubject(env.DB, { account_id: "ghost-account", subject_type_id: "ghost-type", key: "x", name: "X", details: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
     await expect(
-      createRun(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: null, details: null, started_at: null }),
+      createRun(env.DB, { benchmark_id: "ghost-benchmark", key: "x", name: null, details: null, started_at: null, ended_at: null }),
     ).rejects.toThrow(/FOREIGN KEY/);
   });
 
@@ -101,7 +101,7 @@ describe("update / lookup not-found paths return null", () => {
     expect(await updateAccount(env.DB, "nope", { name: "x", description: null, allow_personal_publish: 0 })).toBeNull();
     expect(await updateBenchmark(env.DB, "nope", { name: "x", description: null, about: null, methodology: null, subject_type: "st", measurement_schema: schema, category: "OTHER" })).toBeNull();
     expect(await updateSubject(env.DB, "nope", { name: "x", details: null })).toBeNull();
-    expect(await updateRun(env.DB, "nope", { name: "x", details: null, started_at: null })).toBeNull();
+    expect(await updateRun(env.DB, "nope", { name: "x", details: null, started_at: null, ended_at: null })).toBeNull();
     expect(await getPrimaryMembershipForUser(env.DB, "no-user")).toBeNull();
   });
 });

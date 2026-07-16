@@ -18,7 +18,7 @@ import {
 beforeEach(resetDb);
 
 describe("run + subject read visibility", () => {
-  it("covers anonymous, cross-account, and published reads", async () => {
+  it("covers anonymous, cross-account, and published reads; run edits freeze post-publish", async () => {
     const a = await register("a@example.com");
     const b = await makeBenchmark(a.token);
     const t = await makeSubject(a.token, b.id);
@@ -33,7 +33,7 @@ describe("run + subject read visibility", () => {
       (await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(other.token))).status,
     ).toBe(404);
 
-    // Publish → public reads succeed, including a PUT that only touches prose.
+    // Publish → public reads succeed, but runs are fully frozen: even a prose-only PUT 409s.
     await publish(a.token, a.user_id, b.id);
     expect((await apiGet(`/api/v1/runs/${r.id}`)).status).toBe(200);
     expect((await apiGet(`/api/v1/subjects/${t.id}`)).status).toBe(200);
@@ -42,7 +42,11 @@ describe("run + subject read visibility", () => {
       { data: { type: "run", attributes: { name: "renamed", details: { note: "x" } } } },
       bearer(a.token),
     );
-    expect(put.status).toBe(200);
+    expect(put.status).toBe(409);
+    const body = (await put.json()) as { errors: { detail: string }[] };
+    expect(body.errors[0].detail).toBe(
+      "This benchmark is published; its runs are frozen and cannot be changed.",
+    );
   });
 });
 

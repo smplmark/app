@@ -48,6 +48,9 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
+  if (benchmark.status !== "PRIVATE") {
+    throw new ConflictError("This benchmark is published; its subjects are frozen and no new ones can be added.");
+  }
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new subjects can be added.");
   }

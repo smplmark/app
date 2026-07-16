@@ -9,6 +9,7 @@ export interface CreateRunInput {
   name: string | null;
   details: unknown | null;
   started_at: number | null;
+  ended_at: number | null;
 }
 
 export async function createRun(
@@ -23,7 +24,7 @@ export async function createRun(
     name: input.name,
     details: jsonOrNull(input.details),
     started_at: input.started_at,
-    ended_at: null,
+    ended_at: input.ended_at,
     invalidated_at: null,
     invalidation_reason: null,
     invalidated_by_user_id: null,
@@ -33,7 +34,7 @@ export async function createRun(
   try {
     await db
       .prepare(
-        "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,NULL,NULL,NULL,NULL,?,?)",
+        "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)",
       )
       .bind(
         row.id,
@@ -42,6 +43,7 @@ export async function createRun(
         row.name,
         row.details,
         row.started_at,
+        row.ended_at,
         row.created_at,
         row.updated_at,
       )
@@ -144,6 +146,7 @@ export interface UpdateRunInput {
   name: string | null;
   details: unknown | null;
   started_at: number | null;
+  ended_at: number | null;
 }
 
 export async function updateRun(
@@ -158,11 +161,12 @@ export async function updateRun(
     name: input.name,
     details: jsonOrNull(input.details),
     started_at: input.started_at,
+    ended_at: input.ended_at,
     updated_at: Date.now(),
   };
   await db
-    .prepare("UPDATE run SET name=?, details=?, started_at=?, updated_at=? WHERE id=?")
-    .bind(updated.name, updated.details, updated.started_at, updated.updated_at, id)
+    .prepare("UPDATE run SET name=?, details=?, started_at=?, ended_at=?, updated_at=? WHERE id=?")
+    .bind(updated.name, updated.details, updated.started_at, updated.ended_at, updated.updated_at, id)
     .run();
   return updated;
 }
@@ -199,6 +203,8 @@ export async function invalidateRun(
 export async function deleteRunCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM measurement WHERE run_id = ?").bind(id),
+    // A run-scoped key authorizes nothing once its run is gone, and no list surfaces it — delete it too.
+    db.prepare("DELETE FROM api_key WHERE scope_type = 'RUN' AND scope_ref = ?").bind(id),
     db.prepare("DELETE FROM run WHERE id = ?").bind(id),
   ]);
 }

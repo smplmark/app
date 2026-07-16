@@ -12,9 +12,8 @@ import {
   runKeyExists,
   updateRun,
 } from "../data/runs";
-import { runHasMeasurements } from "../data/measurements";
 import { LIMITS } from "../limits";
-import { ConflictError, NotFoundError } from "../errors";
+import { BadRequestError, ConflictError, NotFoundError } from "../errors";
 import {
   optionalStringOrNull,
   parseEpochMs,
@@ -71,6 +70,24 @@ function createStartedAt(attrs: Record<string, unknown>): number | null {
   return parseEpochMs(attrs.started_at, "started_at");
 }
 
+function optionalEndedAt(attrs: Record<string, unknown>): number | null {
+  if (!("ended_at" in attrs) || attrs.ended_at === null) return null;
+  return parseEpochMs(attrs.ended_at, "ended_at");
+}
+
+function assertChronological(started_at: number | null, ended_at: number | null): void {
+  if (started_at !== null && ended_at !== null && ended_at < started_at) {
+    throw new BadRequestError("ended_at must not be earlier than started_at.");
+  }
+}
+
+/** A published (or withdrawn) benchmark's runs are immutable — no additions, edits, or deletions. */
+function assertRunsMutable(benchmark: BenchmarkRow): void {
+  if (benchmark.status !== "PRIVATE") {
+    throw new ConflictError("This benchmark is published; its runs are frozen and cannot be changed.");
+  }
+}
+
 /** Resolve the run key: use the supplied one, or auto-generate a unique `run-<hex>` when omitted. */
 async function resolveRunKey(
   db: D1Database,
@@ -100,6 +117,7 @@ runs.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
+  assertRunsMutable(benchmark);
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new runs can be added.");
   }
@@ -107,6 +125,8 @@ runs.post("/", requireAuth, async (c) => {
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
   const started_at = createStartedAt(attrs);
+  const ended_at = optionalEndedAt(attrs);
+  assertChronological(started_at, ended_at);
   if ((await countRunsForBenchmark(c.env.DB, benchmark.id)) >= LIMITS.runsPerBenchmark) {
     throw new ConflictError(
       `This benchmark has reached the limit of ${LIMITS.runsPerBenchmark} runs.`,
@@ -118,6 +138,7 @@ runs.post("/", requireAuth, async (c) => {
     name,
     details,
     started_at,
+    ended_at,
   });
   return resourceResponse(serializeRun(row), { status: 201 });
 });
@@ -178,31 +199,28 @@ runs.get("/:id", optionalAuth, async (c) => {
 runs.put("/:id", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
+  assertRunsMutable(benchmark);
   const attrs = await readAttributes(c);
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
-  // started_at is factual: omitting it keeps the current value (so a prose-only edit never disturbs it);
-  // send an explicit value or null to change it. It feeds relative-time derived metrics, so it is frozen
-  // once published.
+  // The timestamps are factual: omitting one keeps the current value (so a prose-only edit never
+  // disturbs it); send an explicit value or null to change or clear it. Clearing ended_at returns
+  // the run to live.
   const started_at = "started_at" in attrs ? optionalStartedAt(attrs) : run.started_at;
-  if (benchmark.status !== "PRIVATE" && started_at !== run.started_at) {
-    throw new ConflictError(
-      "A run's started_at is frozen once its benchmark is published.",
-    );
-  }
-  const row = await updateRun(c.env.DB, run.id, { name, details, started_at });
+  const ended_at = "ended_at" in attrs ? optionalEndedAt(attrs) : run.ended_at;
+  assertChronological(started_at, ended_at);
+  const row = await updateRun(c.env.DB, run.id, { name, details, started_at, ended_at });
   return resourceResponse(serializeRun(row as RunRow));
 });
 
 runs.delete("/:id", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  // A draft benchmark's runs are freely deletable. On a published benchmark, data is append-only — but
-  // an empty run (no measurements) holds no published data, so deleting it destroys nothing; a run that
-  // carries measurements must be invalidated instead (kept for the record).
-  if (benchmark.status !== "PRIVATE" && (await runHasMeasurements(c.env.DB, run.id))) {
+  // A private benchmark's runs are freely deletable (measurements cascade). A published benchmark is
+  // frozen — a run that no longer stands must be invalidated instead (kept for the record).
+  if (benchmark.status !== "PRIVATE") {
     throw new ConflictError(
-      "This run has measurements on a published benchmark and cannot be deleted. Invalidate it instead.",
+      "This benchmark is published; its runs are frozen and cannot be deleted. Invalidate the run instead.",
     );
   }
   await deleteRunCascade(c.env.DB, run.id);
@@ -212,9 +230,12 @@ runs.delete("/:id", requireAuth, async (c) => {
 runs.post("/:id/actions/end", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
+  assertRunsMutable(benchmark);
   if (run.ended_at !== null) {
     throw new ConflictError("This run has already ended.");
   }
+  // A run whose started_at is in the future can't be ended "now" — that would invert the interval.
+  assertChronological(run.started_at, Date.now());
   const row = await endRun(c.env.DB, run.id, Date.now());
   return resourceResponse(serializeRun(row as RunRow));
 });

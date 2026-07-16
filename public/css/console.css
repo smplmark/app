@@ -422,6 +422,18 @@
 /* Name-with-avatar cell */
 .cellUser { display: inline-flex; align-items: center; gap: 0.6rem; min-width: 0; }
 .cellUserName { font-weight: 600; color: var(--text); }
+
+/* ── Stacked title + sub-line table cell (benchmarks list name column) ── */
+.cellTitle { font-weight: 600; }
+.cellSub { font-size: 0.82rem; color: var(--text-muted); margin-top: 2px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── API-keys block inside the run modal ── */
+.runKeysBlock { margin: 1.1rem 0 0.4rem; border-top: 1px solid var(--border); padding-top: 0.9rem; }
+.runKeysHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+
+/* ── Checkbox row in forms (add-run key option) ── */
+.checkField { display: flex; align-items: center; gap: 0.5rem; font-size: 0.92rem; color: var(--text); cursor: pointer; margin: 0.35rem 0; }
+.checkField input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
 .cellUser .muted { font-weight: 400; }
 
 /* Sortable column header */

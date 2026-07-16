@@ -85,8 +85,11 @@ measurements.post("/", requireAuth, async (c) => {
     throw new ConflictError("The subject is not linked to the run's benchmark.");
   }
   assertBenchmarkEditable(benchmark);
-  // The append-only door is open by default, but closed things are actually closed: an ended run
-  // and a closed benchmark refuse new measurements.
+  // Measurements land while the benchmark is private; publishing freezes the whole dataset. A closed
+  // benchmark and an ended run also refuse new measurements.
+  if (benchmark.status !== "PRIVATE") {
+    throw new ConflictError("This benchmark is published; its data is frozen and no new measurements can be added.");
+  }
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new measurements can be added.");
   }

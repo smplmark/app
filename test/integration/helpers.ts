@@ -345,11 +345,37 @@ export async function allowPersonalPublish(benchmarkId: string): Promise<void> {
 }
 
 /**
- * Publish a benchmark under the author's personal identity: verify the owner's email, mark ready, and
- * enable the account's personal-publish opt-in, then publish. Mirrors the common author-driven path.
+ * Ensure the benchmark clears the publish readiness gate (>=1 subject, metric, run, measurement) by
+ * creating whatever is missing. Metrics come from the schema, which makeBenchmark's SKEW_SCHEMA
+ * already satisfies. Idempotent: existing content is reused, seeds get unique keys.
+ */
+export async function seedPublishable(token: string, benchmarkId: string): Promise<void> {
+  const h = bearer(token);
+  const hex = () => crypto.randomUUID().slice(0, 8);
+  const list = async (url: string): Promise<Resource[]> =>
+    (((await (await apiGet(url, h)).json()) as { data: Resource[] }).data);
+
+  let subjects = await list(`/api/v1/subjects?filter[benchmark]=${benchmarkId}&page[size]=1`);
+  if (subjects.length === 0) {
+    const s = await makeAccountSubject(token, `seed-${hex()}`);
+    await linkSubject(token, benchmarkId, s.id);
+    subjects = [s];
+  }
+  const runs = await list(`/api/v1/runs?filter[benchmark]=${benchmarkId}&page[size]=100`);
+  let liveRun = runs.find((r) => r.attributes.ended_at === null && !r.attributes.invalidated);
+  if (!liveRun) liveRun = await makeRun(token, benchmarkId, { key: `seed-${hex()}` });
+  const meas = await list(`/api/v1/measurements?filter[benchmark]=${benchmarkId}&page[size]=1`);
+  if (meas.length === 0) await makeMeasurement(token, liveRun.id, subjects[0].id);
+}
+
+/**
+ * Publish a benchmark under the author's personal identity: verify the owner's email, seed any
+ * missing readiness content, mark ready, and enable the account's personal-publish opt-in, then
+ * publish. Mirrors the common author-driven path.
  */
 export async function publish(token: string, userId: string, benchmarkId: string): Promise<Resource> {
   await markVerified(userId);
+  await seedPublishable(token, benchmarkId);
   await markReady(token, benchmarkId);
   await allowPersonalPublish(benchmarkId);
   const res = await apiPost(`/api/v1/benchmarks/${benchmarkId}/actions/publish`, undefined, bearer(token));

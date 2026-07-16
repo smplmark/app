@@ -21,6 +21,20 @@ export async function runHasMeasurements(db: D1Database, runId: string): Promise
   return r !== null;
 }
 
+/** Does any run of this benchmark carry a measurement? Gates publishing. */
+export async function benchmarkHasMeasurements(
+  db: D1Database,
+  benchmarkId: string,
+): Promise<boolean> {
+  const r = await db
+    .prepare(
+      "SELECT 1 AS x FROM measurement JOIN run ON run.id = measurement.run_id WHERE run.benchmark_id = ? LIMIT 1",
+    )
+    .bind(benchmarkId)
+    .first<{ x: number }>();
+  return r !== null;
+}
+
 /** Load one measurement by its rowid (for authz + delete). */
 export async function getMeasurementById(
   db: D1Database,

@@ -9,11 +9,15 @@ import {
   linkSubject,
   makeAccountSubject,
   makeBenchmark,
+  makeMeasurement,
+  makeRun,
+  makeSubject,
   markReady,
   markVerified,
   publish,
   register,
   resetDb,
+  seedPublishable,
   SKEW_SCHEMA,
   type Resource,
   makeSubjectType,
@@ -120,6 +124,7 @@ describe("publish gate + lifecycle", () => {
   it("blocks publishing until the owner's email is verified", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id); // clear the readiness gate; must precede mark_ready
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     const blocked = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, undefined, bearer(me.token));
@@ -138,6 +143,7 @@ describe("publish gate + lifecycle", () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id); // clear the readiness gate
     await allowPersonalPublish(b.id);
     // A benchmark is created as a draft; publishing it directly succeeds (two-stage lifecycle).
     expect(b.attributes.draft).toBe(true);
@@ -146,6 +152,40 @@ describe("publish gate + lifecycle", () => {
     const published = ((await res.json()) as { data: Resource }).data;
     expect(published.attributes.status).toBe("PUBLISHED");
     expect(published.attributes.draft).toBe(false);
+  });
+
+  it("refuses to publish an empty benchmark, listing every missing piece", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    // Empty measurement_schema → even the metric requirement is unmet.
+    const b = await makeBenchmark(me.token, { measurement_schema: { metrics: [], derived: [] } });
+    await allowPersonalPublish(b.id);
+    const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, undefined, bearer(me.token));
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { errors: { detail: string }[] };
+    expect(body.errors[0].detail).toBe(
+      "This benchmark isn't ready to publish — it needs at least one subject, one metric, one run and one measurement.",
+    );
+  });
+
+  it("publishes only once a subject, run, and measurement all exist (readiness gate)", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    const b = await makeBenchmark(me.token); // SKEW_SCHEMA satisfies the metric requirement
+    await allowPersonalPublish(b.id);
+    const subject = await makeSubject(me.token, b.id); // create + link
+    const run = await makeRun(me.token, b.id);
+
+    const blocked = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, undefined, bearer(me.token));
+    expect(blocked.status).toBe(409);
+    const body = (await blocked.json()) as { errors: { detail: string }[] };
+    expect(body.errors[0].detail).toBe(
+      "This benchmark isn't ready to publish — it needs at least one measurement.",
+    );
+
+    await makeMeasurement(me.token, run.id, subject.id);
+    const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, undefined, bearer(me.token));
+    expect(ok.status).toBe(200);
   });
 
   it("publish is a one-way door (re-publish → 409)", async () => {
@@ -187,7 +227,7 @@ describe("publish gate + lifecycle", () => {
   });
 });
 
-describe("interpretation freeze + append-only", () => {
+describe("interpretation freeze (full freeze after publish)", () => {
   it("allows cosmetic edits but freezes the semantic core after publish", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
@@ -217,6 +257,25 @@ describe("interpretation freeze + append-only", () => {
       bearer(me.token),
     );
     expect(frozen.status).toBe(409);
+
+    // Appending a new metric is frozen too — the additive-freeze era is over.
+    const appended = await apiPut(
+      `/api/v1/benchmarks/${b.id}`,
+      putBody({
+        name: "Renamed",
+        subject_type: st,
+        measurement_schema: {
+          ...SKEW_SCHEMA,
+          derived: [...SKEW_SCHEMA.derived, { name: "extra_ms", unit: "ms", expr: { "+": [1, 1] } }],
+        },
+      }),
+      bearer(me.token),
+    );
+    expect(appended.status).toBe(409);
+    const appendedBody = (await appended.json()) as { errors: { detail: string }[] };
+    expect(appendedBody.errors[0].detail).toBe(
+      "This benchmark is published; its metrics are frozen and no new ones can be added.",
+    );
   });
 
   it("forbids deleting a published benchmark but allows deleting a private one", async () => {

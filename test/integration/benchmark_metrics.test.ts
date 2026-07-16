@@ -1,5 +1,6 @@
 // Benchmark ↔ metric M:N link — snapshot-on-link into the benchmark's measurement_schema, the
-// append-only publish freeze, list scoping, and the "can't delete a linked metric" guard.
+// full post-publish freeze (no appends, no removals), list scoping, and the "can't delete a
+// linked metric" guard.
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   apiDelete,
@@ -146,24 +147,31 @@ describe("benchmark_metric — snapshot on link", () => {
 });
 
 describe("benchmark_metric — publish freeze", () => {
-  it("allows linking (append) on a published benchmark but forbids unlinking", async () => {
+  it("forbids linking a new metric on a published benchmark and forbids unlinking", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
     const first = await makeMetric(me.token, { label: "First", type: "DECIMAL" });
     const preLink = await linkMetric(me.token, bm.id, first.id);
     await publish(me.token, me.user_id, bm.id);
 
-    // Linking a NEW metric after publish is an append → allowed.
+    // Publishing freezes the metric set outright — even a pure append is rejected.
     const second = await makeMetric(me.token, { label: "Second", type: "INTEGER" });
     const link = await apiPost(
       "/api/v1/benchmark_metrics",
       { data: { type: "benchmark_metric", attributes: { benchmark: bm.id, metric: second.id } } },
       bearer(me.token),
     );
-    expect(link.status).toBe(201);
-    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name).sort()).toEqual(["first", "second"]);
+    expect(link.status).toBe(409);
+    const body = (await link.json()) as { errors: Array<{ detail: string }> };
+    expect(body.errors[0].detail).toBe(
+      "This benchmark is published; its metrics are frozen and no new ones can be added.",
+    );
+    // The schema is untouched — no snapshot appended, no link row created.
+    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name)).toEqual(["first"]);
+    const links = (await (await apiGet(`/api/v1/benchmark_metrics?filter[benchmark]=${bm.id}`, bearer(me.token))).json()) as { data: Resource[] };
+    expect(links.data).toHaveLength(1);
 
-    // Unlinking removes a frozen entry → 409.
+    // Unlinking removes a frozen entry → 409 (unchanged).
     const del = await apiDelete(`/api/v1/benchmark_metrics/${preLink.id}`, bearer(me.token));
     expect(del.status).toBe(409);
   });
@@ -230,34 +238,55 @@ describe("benchmark_metric — schema round-trip through benchmark PUT", () => {
     expect(relink.status).toBe(409);
   });
 
-  it("after a post-publish link, a stale round-trip 409s against the freeze; a fresh one passes", async () => {
+  it("post-publish, an unchanged round-trip passes but schema appends and removals 409", async () => {
     const me = await register();
     const bm = await makeBenchmark(me.token, { measurement_schema: EMPTY });
     const first = await makeMetric(me.token, { label: "First", type: "DECIMAL" });
     await linkMetric(me.token, bm.id, first.id);
     await publish(me.token, me.user_id, bm.id);
-    const preAppend = await schemaOf(me.token, bm.id); // client copy from before the append
+    const frozen = await schemaOf(me.token, bm.id);
 
-    const second = await makeMetric(me.token, { label: "Second", type: "INTEGER" });
-    await linkMetric(me.token, bm.id, second.id); // append is allowed on a published benchmark
-
-    // Round-tripping the pre-append copy would REMOVE the appended entry → interpretation freeze.
-    const stale = await apiPut(
-      `/api/v1/benchmarks/${bm.id}`,
-      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: preAppend }),
-      bearer(me.token),
-    );
-    expect(stale.status).toBe(409);
-
-    // The fresh representation carries both entries and saves cleanly.
-    const freshSchema = await schemaOf(me.token, bm.id);
+    // Round-tripping the schema UNCHANGED (cosmetic rename) still saves cleanly.
     const ok = await apiPut(
       `/api/v1/benchmarks/${bm.id}`,
-      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: freshSchema }),
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: frozen }),
       bearer(me.token),
     );
     expect(ok.status).toBe(200);
-    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name).sort()).toEqual(["first", "second"]);
+
+    // Description edits inside an existing entry remain allowed (assertFrozenCompatible ignores them).
+    const described = { ...frozen, metrics: [{ ...frozen.metrics[0], description: "Latency, described." }] };
+    const cosmetic = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: described }),
+      bearer(me.token),
+    );
+    expect(cosmetic.status).toBe(200);
+    expect((await schemaOf(me.token, bm.id)).metrics[0].description).toBe("Latency, described.");
+
+    // APPENDING a new entry via PUT is no longer allowed — the metric set is frozen at publish.
+    const appended = { ...frozen, metrics: [...frozen.metrics, { name: "second", type: "INTEGER" }] };
+    const append = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: appended }),
+      bearer(me.token),
+    );
+    expect(append.status).toBe(409);
+    const appendBody = (await append.json()) as { errors: Array<{ detail: string }> };
+    expect(appendBody.errors[0].detail).toBe(
+      "This benchmark is published; its metrics are frozen and no new ones can be added.",
+    );
+
+    // REMOVING an entry (a stale pre-link copy) still 409s against the interpretation freeze.
+    const removal = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      putBody({ name: "Renamed", subject_type: bm.attributes.subject_type, measurement_schema: EMPTY }),
+      bearer(me.token),
+    );
+    expect(removal.status).toBe(409);
+
+    // Nothing changed server-side beyond the cosmetic description edit.
+    expect((await schemaOf(me.token, bm.id)).metrics.map((m) => m.name)).toEqual(["first"]);
   });
 });
 

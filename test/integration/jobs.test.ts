@@ -5,11 +5,12 @@ import {
   apiGet,
   apiPost,
   bearer,
+  makeBenchmark,
   markVerified,
   register,
   resetDb,
   type Resource,
-  makeSubjectType,
+  seedPublishable,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -85,13 +86,10 @@ describe("domain-recheck job run", () => {
     const publisher = await verifiedPublisher(me.token);
 
     // publish a benchmark under that publisher so we can assert the snapshot is untouched
-    const bench = ((await (
-      await apiPost(
-        "/api/v1/benchmarks",
-        { data: { type: "benchmark", attributes: { key: "b", name: "B", subject_type: (await makeSubjectType(me.token)).id } } },
-        bearer(me.token),
-      )
-    ).json()) as { data: Resource }).data;
+    // (seed a subject/run/measurement first — the readiness gate requires them, and a
+    // marked-ready benchmark rejects further writes)
+    const bench = await makeBenchmark(me.token, { key: "b", name: "B" });
+    await seedPublishable(me.token, bench.id);
     await apiPost(`/api/v1/benchmarks/${bench.id}/actions/mark_ready`, undefined, bearer(me.token));
     const pub = await apiPost(
       `/api/v1/benchmarks/${bench.id}/actions/publish`,

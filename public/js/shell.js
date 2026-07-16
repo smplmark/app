@@ -454,6 +454,8 @@
     // each instance listens on document, so guard on being the last overlay in the DOM.
     function onKey(e) {
       if (e.key !== "Escape") return;
+      // A confirm dialog stacked on top owns the Escape — cancelling it must not also close us.
+      if (document.querySelector(".deleteConfirmOverlay")) return;
       const overlays = document.querySelectorAll(".modalOverlay");
       if (overlays[overlays.length - 1] !== overlay) return;
       close();

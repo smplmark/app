@@ -13,6 +13,7 @@ import {
   bearer,
   makeAccountSubject,
   makeBenchmark,
+  makeMeasurement,
   makeRun,
   makeSubject,
   markReady,
@@ -21,6 +22,7 @@ import {
   publish,
   register,
   resetDb,
+  seedPublishable,
   SKEW_SCHEMA,
   type Registered,
   type Resource,
@@ -186,6 +188,7 @@ describe("publish preconditions", () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id); // fully ready, so the 403 is about the key, not readiness
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     const { key } = await mintKey(me.token, { scope_type: "ACCOUNT" });
@@ -194,11 +197,63 @@ describe("publish preconditions", () => {
   });
 });
 
+describe("publish readiness gate", () => {
+  const READY_PREFIX = "This benchmark isn't ready to publish — it needs at least ";
+
+  async function tryPublish(token: string, benchmarkId: string): Promise<{ status: number; detail?: string }> {
+    const res = await apiPost(`/api/v1/benchmarks/${benchmarkId}/actions/publish`, publishBody(), bearer(token));
+    if (res.status === 409) {
+      const body = (await res.json()) as { errors: { detail?: string }[] };
+      return { status: res.status, detail: body.errors[0]?.detail };
+    }
+    return { status: res.status };
+  }
+
+  it("409s an empty benchmark, naming all four missing pieces", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    // an empty schema too, so even the metric leg of the gate is unmet
+    const b = await makeBenchmark(me.token, { measurement_schema: { metrics: [], derived: [] } });
+    await markReady(me.token, b.id);
+    await allowPersonalPublish(b.id);
+    const { status, detail } = await tryPublish(me.token, b.id);
+    expect(status).toBe(409);
+    expect(detail).toBe(`${READY_PREFIX}one subject, one metric, one run and one measurement.`);
+  });
+
+  it("names exactly the missing pieces when some are present", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    const b = await makeBenchmark(me.token); // SKEW_SCHEMA → the metric leg is satisfied
+    await makeSubject(me.token, b.id, "s1"); // …and so is the subject leg
+    await markReady(me.token, b.id);
+    await allowPersonalPublish(b.id);
+    const { status, detail } = await tryPublish(me.token, b.id);
+    expect(status).toBe(409);
+    expect(detail).toBe(`${READY_PREFIX}one run and one measurement.`);
+  });
+
+  it("publishes once a subject, metric, run, and measurement all exist (200)", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    const b = await makeBenchmark(me.token); // SKEW_SCHEMA supplies the metric
+    const s = await makeSubject(me.token, b.id, "s1");
+    const run = await makeRun(me.token, b.id);
+    await makeMeasurement(me.token, run.id, s.id, { metrics: { skew_ms: 1 } });
+    await markReady(me.token, b.id);
+    await allowPersonalPublish(b.id);
+    const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(), bearer(me.token));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: Resource }).data.attributes.status).toBe("PUBLISHED");
+  });
+});
+
 describe("personal publish", () => {
   it("is gated by the account opt-in", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id); // clear the readiness gate before the freeze
     await markReady(me.token, b.id);
 
     // opt-in off → 403
@@ -220,6 +275,7 @@ describe("personal publish", () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id);
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody("self"), bearer(me.token));
@@ -227,22 +283,27 @@ describe("personal publish", () => {
     expect((((await ok.json()) as { data: Resource }).data.attributes.published_as as { kind: string }).kind).toBe("PERSONAL");
   });
 
-  it("resumes append-only ingest after publishing (a live run keeps accepting measurements)", async () => {
+  it("freezes ingest after publishing (even a live run rejects new measurements)", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
     const t = await makeSubject(me.token, b.id, "t");
     const run = await makeRun(me.token, b.id); // live (no ended_at)
+    await makeMeasurement(me.token, run.id, t.id, { metrics: { skew_ms: 1 } }); // clears the readiness gate
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(), bearer(me.token))).status).toBe(200);
-    // published + append-only resumed → ingest to the live run works again
+    // published → the whole dataset is frozen; even the still-live run rejects new measurements
     const ing = await apiPost(
       "/api/v1/measurements",
       { data: { type: "measurement", attributes: { run: run.id, subject: t.id, metrics: { skew_ms: 5 } } } },
       bearer(me.token),
     );
-    expect(ing.status).toBe(201);
+    expect(ing.status).toBe(409);
+    const errors = ((await ing.json()) as { errors: { detail?: string }[] }).errors;
+    expect(errors[0].detail).toBe(
+      "This benchmark is published; its data is frozen and no new measurements can be added.",
+    );
   });
 
   it("lets an author who has since become a viewer no longer mark ready", async () => {
@@ -265,6 +326,7 @@ describe("personal publish", () => {
     await markVerified(owner.user_id);
     const { memberToken: author } = await addMember(owner.token, owner.account_id, "author2@example.com", "MEMBER");
     const bench = await makeBenchmark(author, { key: "theirs" });
+    await seedPublishable(author, bench.id);
     await markReady(author, bench.id);
     await allowPersonalPublish(bench.id);
     // the owner is an admin but NOT the author → personal publish 403
@@ -280,6 +342,7 @@ describe("organization publish", () => {
     await markVerified(me.user_id);
     const publisher = await verifiedPublisher(me.token);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id);
     await markReady(me.token, b.id);
 
     const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
@@ -296,15 +359,19 @@ describe("organization publish", () => {
     await markVerified(me.user_id);
     const publisher = await createPublisher(me.token, "unverified.com"); // PENDING, never verified
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id); // isolate the domain gate from the readiness gate
     await markReady(me.token, b.id);
     const res = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
     expect(res.status).toBe(409);
+    const errors = ((await res.json()) as { errors: { detail?: string }[] }).errors;
+    expect(errors[0].detail).toBe("This publisher's domain is not verified.");
   });
 
   it("404s org publish against an unknown / cross-tenant publisher", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id);
     await markReady(me.token, b.id);
     // unknown publisher id
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody("ghost"), bearer(me.token))).status).toBe(404);
@@ -320,6 +387,7 @@ describe("organization publish", () => {
     const publisher = await verifiedPublisher(owner.token);
     const { memberToken: member } = await addMember(owner.token, owner.account_id, "m@example.com", "MEMBER");
     const bench = await makeBenchmark(member, { key: "memberbench" });
+    await seedPublishable(member, bench.id);
     await markReady(member, bench.id);
     const res = await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(publisher.id), bearer(member));
     expect(res.status).toBe(403);
@@ -337,6 +405,7 @@ describe("withdraw authority mirrors publish", () => {
     const publisher = await verifiedPublisher(owner.token);
     const { memberToken: member } = await addMember(owner.token, owner.account_id, "wm@example.com", "MEMBER");
     const bench = await makeBenchmark(member, { key: "orgbench" });
+    await seedPublishable(member, bench.id);
     await markReady(member, bench.id);
     // owner (admin) publishes it under the org
     expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(publisher.id), bearer(owner.token))).status).toBe(200);
@@ -351,6 +420,7 @@ describe("withdraw authority mirrors publish", () => {
     await markVerified(owner.user_id);
     const { memberToken: author, user: authorUser } = await addMember(owner.token, owner.account_id, "pa@example.com", "MEMBER");
     const bench = await makeBenchmark(author, { key: "personalbench" });
+    await seedPublishable(author, bench.id);
     await markReady(author, bench.id);
     await allowPersonalPublish(bench.id);
     expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(), bearer(author))).status).toBe(200);
@@ -371,6 +441,7 @@ describe("withdraw authority mirrors publish", () => {
     await markVerified(owner.user_id);
     const { memberToken: author } = await addMember(owner.token, owner.account_id, "pauthor@example.com", "MEMBER");
     const bench = await makeBenchmark(author, { key: "adminwithdraw" });
+    await seedPublishable(author, bench.id);
     await markReady(author, bench.id);
     await allowPersonalPublish(bench.id);
     expect((await apiPost(`/api/v1/benchmarks/${bench.id}/actions/publish`, publishBody(), bearer(author))).status).toBe(200);
@@ -388,6 +459,7 @@ describe("the public record is frozen", () => {
     const publisher = await verifiedPublisher(me.token);
 
     const b1 = await makeBenchmark(me.token, { key: "first" });
+    await seedPublishable(me.token, b1.id);
     await markReady(me.token, b1.id);
     expect((await apiPost(`/api/v1/benchmarks/${b1.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(200);
 
@@ -408,6 +480,7 @@ describe("the public record is frozen", () => {
 
     // And a NEW publish under the same publisher is now blocked.
     const b2 = await makeBenchmark(me.token, { key: "second" });
+    await seedPublishable(me.token, b2.id);
     await markReady(me.token, b2.id);
     expect((await apiPost(`/api/v1/benchmarks/${b2.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(409);
   });
@@ -417,6 +490,7 @@ describe("the public record is frozen", () => {
     await markVerified(me.user_id);
     const publisher = await verifiedPublisher(me.token);
     const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id);
     await markReady(me.token, b.id);
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token))).status).toBe(200);
 

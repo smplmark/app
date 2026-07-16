@@ -627,7 +627,7 @@ const run = registerEntity(
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the run, or null.", type: "object" }),
     started_at: dateTime("When the run started, or null if not yet started.").nullable(),
     ended_at: dateTime("When the run ended, or null if still live.").nullable(),
-    live: z.boolean().openapi({ description: "Whether the run is still accepting measurements." }),
+    live: z.boolean().openapi({ description: "Whether the run is live (has not ended). Only a live run on an unpublished, open benchmark accepts new measurements." }),
     invalidated: z.boolean().openapi({ description: "Whether the run has been marked invalid and excluded from results." }),
     invalidated_at: dateTime("When the run was invalidated, or null.").nullable(),
     invalidation_reason: z.string().nullable().openapi({ description: "The stated reason the run was invalidated, or null." }),
@@ -640,7 +640,8 @@ const run = registerEntity(
     key: z.string().max(100).optional().openapi({ description: "The run's human-readable identifier, unique within its benchmark. At most 100 characters. Auto-generated if omitted." }),
     name: z.string().max(200).optional().openapi({ description: "The run's display name. At most 200 characters." }),
     details: z.record(z.unknown()).optional().openapi({ description: "Arbitrary structured metadata about the run.", type: "object" }),
-    started_at: dateTime("When the run started. Defaults to the time of creation.").optional(),
+    started_at: dateTime("When the run started. On create, omitting it defaults to the time of creation (pass null for no start time); on update, omitting it keeps the current value and null clears it.").optional(),
+    ended_at: dateTime("When the run ended; must not be earlier than started_at. On create, omit (or pass null) for a live run; on update, omitting it keeps the current value and null clears it, returning the run to live.").optional(),
   }),
 );
 
@@ -1431,8 +1432,8 @@ registry.registerPath({
 });
 
 for (const [action, summary, description] of [
-  ["close", "Close a benchmark", "Marks the benchmark complete: no new subjects, runs, or measurements may be added. Existing data stays public and append-only. Reversible via actions/reopen."],
-  ["reopen", "Reopen a benchmark", "Clears the complete mark so new subjects, runs, and measurements may be added again."],
+  ["close", "Close a benchmark", "Marks the benchmark complete: no new subjects, runs, or measurements may be added. Existing data stays visible. Reversible via actions/reopen."],
+  ["reopen", "Reopen a benchmark", "Clears the complete mark. On a private benchmark, new subjects, runs, and measurements may then be added again; a published benchmark stays frozen regardless."],
 ] as const) {
   registry.registerPath({
     method: "post",
@@ -1469,11 +1470,14 @@ registry.registerPath({
   path: "/api/v1/benchmarks/{id}",
   tags: ["Benchmarks"],
   summary: "Update a benchmark",
+  description:
+    "Replaces the benchmark's editable fields. Once published, the measurement schema is frozen — metrics, derived expressions, and the chart mapping cannot be added, changed, or removed; only descriptive text (name, description, about, methodology, tags, category) and schema descriptions/unit labels remain editable.",
   security: bearerSecurity,
   request: { params: benchmarkIdParam, body: domainBody(benchmark.Request, "The updated benchmark.") },
   responses: {
     "200": domainResponse(benchmark.Response, "The updated benchmark."),
     ...commonErrors,
+    "409": errorJson("The benchmark is published and the update would change its frozen measurement schema, or its subject type is pinned by linked subjects."),
   },
 });
 
@@ -1538,7 +1542,7 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "Publish a benchmark",
   description:
-    "Makes the benchmark and its data publicly readable, attributing it either to a verified publisher domain (pass publisher, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must be marked ready first, and requires a signed-in user — API keys cannot publish.",
+    "Makes the benchmark and its data publicly readable, attributing it either to a verified publisher domain (pass publisher, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must contain at least one subject, one metric, one run, and one measurement. Publishing freezes the benchmark's data. Requires a signed-in user — API keys cannot publish.",
   security: bearerSecurity,
   request: {
     params: benchmarkIdParam,
@@ -1562,7 +1566,7 @@ registry.registerPath({
   responses: {
     "200": domainResponse(benchmark.Response, "The published benchmark."),
     ...commonErrors,
-    "409": errorJson("The benchmark cannot be published from its current state, or the chosen publisher's domain is not verified."),
+    "409": errorJson("The benchmark cannot be published from its current state, is missing required content (at least one subject, metric, run, and measurement), or the chosen publisher's domain is not verified."),
   },
 });
 
@@ -1841,7 +1845,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(benchmarkSubject.Response, "The created link."),
     ...commonErrors,
-    "409": errorJson("The subject is already linked to this benchmark, does not belong to the benchmark's account, or the benchmark has reached its subject limit."),
+    "409": errorJson("The subject is already linked to this benchmark, does not belong to the benchmark's account, the benchmark has reached its subject limit, or the benchmark is published or closed and accepts no new subjects."),
   },
 });
 
@@ -1896,7 +1900,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(benchmarkMetric.Response, "The created link."),
     ...commonErrors,
-    "409": errorJson("The metric is already linked to this benchmark, its name is already defined on the benchmark, it does not belong to the benchmark's account, or the benchmark has reached its metric limit."),
+    "409": errorJson("The metric is already linked to this benchmark, its name is already defined on the benchmark, it does not belong to the benchmark's account, the benchmark has reached its metric limit, or the benchmark is published or closed and accepts no new metrics."),
   },
 });
 
@@ -1949,7 +1953,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(run.Response, "The created run."),
     ...commonErrors,
-    "409": errorJson("A run with that key already exists in the benchmark, or the benchmark has reached its run limit."),
+    "409": errorJson("A run with that key already exists in the benchmark, the benchmark has reached its run limit, or the benchmark is published or closed and accepts no new runs."),
   },
 });
 
@@ -1992,7 +1996,7 @@ registry.registerPath({
   responses: {
     "200": domainResponse(run.Response, "The updated run."),
     ...commonErrors,
-    "409": errorJson("The run's started_at is frozen once its benchmark is published."),
+    "409": errorJson("The benchmark is published; its runs are frozen and cannot be changed."),
   },
 });
 
@@ -2006,7 +2010,7 @@ registry.registerPath({
   responses: {
     "204": { description: "The run was deleted." },
     ...commonErrors,
-    "409": errorJson("Published benchmark data is append-only; a run cannot be deleted. Invalidate it instead."),
+    "409": errorJson("The benchmark is published; its runs are frozen and cannot be deleted. Invalidate the run instead."),
   },
 });
 
@@ -2021,7 +2025,7 @@ registry.registerPath({
   responses: {
     "200": domainResponse(run.Response, "The ended run."),
     ...commonErrors,
-    "409": errorJson("The run cannot be ended from its current state."),
+    "409": errorJson("The run has already ended, or its benchmark is published and its runs are frozen."),
   },
 });
 
@@ -2071,7 +2075,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(measurement.Response, "The recorded measurement, with derived metrics computed."),
     ...commonErrors,
-    "409": errorJson("The run and subject belong to different benchmarks, or the benchmark/subject is closed or the run has ended."),
+    "409": errorJson("The run and subject belong to different benchmarks, the benchmark is published or closed, or the run has ended."),
   },
 });
 

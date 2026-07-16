@@ -159,11 +159,10 @@ function canonical(value: unknown): string {
 }
 
 /**
- * Enforce the interpretation freeze, ADDITIVELY: once a benchmark is PUBLISHED/WITHDRAWN, every
- * existing metric (name+type), derived value (name+expr), and the chart mapping are immutable —
- * but NEW metrics and derived values may be appended (continuous publishers grow their schema;
- * old measurements simply lack the new keys, which reads as null). A chart may be added where none
- * existed; an existing chart never changes. Cosmetic unit/description labels stay editable.
+ * Enforce the interpretation freeze: once a benchmark is PUBLISHED/WITHDRAWN, every existing metric
+ * (name+type), derived value (name+expr), and the chart mapping are immutable. This check alone is
+ * additive (it ignores new entries) — the benchmark PUT route layers a no-additions check on top, so
+ * post-publish the schema is fully frozen. Cosmetic unit/description labels stay editable.
  */
 export function assertFrozenCompatible(
   oldSchema: MeasurementSchema,
@@ -171,7 +170,7 @@ export function assertFrozenCompatible(
 ): void {
   const frozen = () =>
     new ConflictError(
-      "The interpretation of a published benchmark is frozen: existing metrics, derived expressions, and the chart mapping cannot be changed or removed (new ones may be added). Only descriptions and unit labels may be edited.",
+      "A published benchmark's schema is frozen: its metrics, derived expressions, and chart mapping cannot be changed or removed. Only descriptions and unit labels may be edited.",
     );
   const newMetrics = new Map(newSchema.metrics.map((m) => [m.name, m]));
   for (const old of oldSchema.metrics) {

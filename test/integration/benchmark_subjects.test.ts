@@ -104,11 +104,15 @@ describe("benchmark_subjects (the M:N link)", () => {
     expect(((await remaining.json()) as { data: Resource[] }).data.length).toBe(0);
   });
 
-  it("blocks linking while a benchmark is marked ready, and unlinking after publish", async () => {
+  it("blocks linking while marked ready, and freezes subjects (link + unlink) after publish", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeAccountSubject(me.token, "t");
     const linkRes = ((await (await link(me.token, b.id, t.id)).json()) as { data: Resource }).data;
+    // Satisfy the publish readiness gate up front — a marked-ready benchmark rejects writes,
+    // so the run + measurement must exist before mark_ready.
+    const run = await makeRun(me.token, b.id);
+    await makeMeasurement(me.token, run.id, t.id);
 
     const t2 = await makeAccountSubject(me.token, "t2");
     await markReady(me.token, b.id);
@@ -116,7 +120,14 @@ describe("benchmark_subjects (the M:N link)", () => {
     expect((await link(me.token, b.id, t2.id)).status).toBe(409);
 
     await publish(me.token, me.user_id, b.id);
-    // Published data is append-only → the existing link can't be removed.
+    // Post-publish full freeze → no new subjects can be linked.
+    const frozenLink = await link(me.token, b.id, t2.id);
+    expect(frozenLink.status).toBe(409);
+    const frozenBody = (await frozenLink.json()) as { errors: { detail: string }[] };
+    expect(frozenBody.errors[0].detail).toBe(
+      "This benchmark is published; its subjects are frozen and no new ones can be added.",
+    );
+    // The existing link can't be removed either.
     expect((await apiDelete(`/api/v1/benchmark_subjects/${linkRes.id}`, bearer(me.token))).status).toBe(409);
   });
 
@@ -129,6 +140,10 @@ describe("benchmark_subjects (the M:N link)", () => {
     await linkSubject(me.token, priv.id, t.id);
     const pub = await makeBenchmark(me.token, { key: "pub" });
     await linkSubject(me.token, pub.id, t.id);
+    // Create the readiness content (run + measurement) explicitly so publish's auto-seeding stays a
+    // no-op and this test controls exactly which links exist.
+    const runPub = await makeRun(me.token, pub.id);
+    await makeMeasurement(me.token, runPub.id, t.id);
     await publish(me.token, me.user_id, pub.id);
 
     const anon = await apiGet(`/api/v1/benchmark_subjects?filter[subject]=${t.id}`);
