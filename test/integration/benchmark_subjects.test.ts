@@ -104,7 +104,7 @@ describe("benchmark_subjects (the M:N link)", () => {
     expect(((await remaining.json()) as { data: Resource[] }).data.length).toBe(0);
   });
 
-  it("blocks linking while marked ready, and freezes subjects (link + unlink) after publish", async () => {
+  it("blocks linking while marked ready; post-publish linking stays open but unlinking is blocked", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeAccountSubject(me.token, "t");
@@ -120,15 +120,14 @@ describe("benchmark_subjects (the M:N link)", () => {
     expect((await link(me.token, b.id, t2.id)).status).toBe(409);
 
     await publish(me.token, me.user_id, b.id);
-    // Post-publish full freeze → no new subjects can be linked.
-    const frozenLink = await link(me.token, b.id, t2.id);
-    expect(frozenLink.status).toBe(409);
-    const frozenBody = (await frozenLink.json()) as { errors: { detail: string }[] };
-    expect(frozenBody.errors[0].detail).toBe(
-      "This benchmark is published; its subjects are frozen and no new ones can be added.",
+    // Post-publish, linking a new subject is an append to the public record → 201.
+    expect((await link(me.token, b.id, t2.id)).status).toBe(201);
+    // Unlinking would cascade away the subject's published measurements → still blocked.
+    const unlink = await apiDelete(`/api/v1/benchmark_subjects/${linkRes.id}`, bearer(me.token));
+    expect(unlink.status).toBe(409);
+    expect(((await unlink.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
+      "A published benchmark's subjects can't be unlinked — that would delete their published measurements. Invalidate the affected runs instead.",
     );
-    // The existing link can't be removed either.
-    expect((await apiDelete(`/api/v1/benchmark_subjects/${linkRes.id}`, bearer(me.token))).status).toBe(409);
   });
 
   // A shared subject may span a private and a public benchmark; filter[subject] must not leak the

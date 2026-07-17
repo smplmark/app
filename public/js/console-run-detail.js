@@ -1,17 +1,18 @@
 "use strict";
 
 // Run detail (/account/runs/detail?id=…) — a conforming detail page for a single run: a DetailHeader
-// with the run's key + status, and three tabs — Details (the run's info), Measurements (the run's
-// recorded data, addable while the benchmark is a draft), and API Keys (keys scoped to this run, for
-// CI uploads). The API-key scope is implicit here, so creating one never asks the user for a scope or
-// id. The run's fields (name, start/end) are edited from its benchmark's Runs tab.
+// with the run's key + status, and four tabs — Details (the run's info), Measurements (the run's
+// recorded data, addable and correctable; on a published benchmark every change is recorded in the
+// history), History (the run's audit trail), and API Keys (keys scoped to this run, for CI uploads).
+// The API-key scope is implicit here, so creating one never asks the user for a scope or id. The
+// run's fields (name, start/end) are edited from its benchmark's Runs tab.
 // Depends on api.js + shell.js (SM helpers) + apikeys-panel.js.
 
 (function () {
   const esc = SM.esc;
   const $ = (id) => document.getElementById(id);
   const ID = new URLSearchParams(location.search).get("id") || "";
-  const TABS = ["details", "measurements", "apikeys"];
+  const TABS = ["details", "measurements", "history", "apikeys"];
 
   let RUN = null;
   let BENCH = null; // the parent benchmark (breadcrumb, measurement schema, freeze state)
@@ -75,7 +76,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.key || "Run", decorations: statusPill(a), secondaryId: a.name || "" }) +
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
-      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("apikeys", "API Keys") + "</nav>" +
+      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>';
 
@@ -96,6 +97,7 @@
     $("tab-actions").innerHTML = "";
     if (tab === "apikeys") renderApiKeys();
     else if (tab === "measurements") renderMeasurements();
+    else if (tab === "history") renderHistory();
     else renderDetails();
   }
 
@@ -131,8 +133,10 @@
       '<p class="detailFieldHelp" style="margin-top:1rem;">Edit this run (name, start and end times) from its benchmark’s Runs tab.</p></div>';
   }
 
-  // ── Measurements tab — the run's recorded data. Addable/deletable only while the parent benchmark
-  //    is a draft (published data is frozen); a closed benchmark or an ended run also refuses adds. ──
+  // ── Measurements tab — the run's recorded data. Measurements may be added and corrected at any
+  //    lifecycle stage (post-publish changes are recorded in the history; appending to an ended run
+  //    gets its own history entry). Deletion is draft-only — published data never silently vanishes.
+  //    Only the benchmark's closed signal refuses new data. ──
   function benchAttrs() { return (BENCH && BENCH.attributes) || {}; }
   function measSchema() { return benchAttrs().measurement_schema || { metrics: [], derived: [] }; }
   function schemaMetrics() {
@@ -156,8 +160,7 @@
     }
     const ba = benchAttrs();
     const priv = String(ba.status || "").toUpperCase() === "PRIVATE";
-    const ended = !!(a.ended_at || a.live === false);
-    const canAdd = CAN_WRITE && priv && !ba.closed && !ended;
+    const canAdd = CAN_WRITE && !ba.closed;
     const canDel = CAN_WRITE && priv;
     if (canAdd) {
       $("tab-actions").innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-meas-btn">' + SM.icon("plus", 14) + " Add measurement</button>";
@@ -242,7 +245,8 @@
     });
   }
 
-  // ── Measurement view modal (read-only — measurements are append-only; edit is delete + re-add) ──
+  // ── Measurement view modal — values, plus "Correct…" for writers (edit-in-place; on a published
+  //    benchmark the correction is recorded in the history with before/after). ──
   function openMeasurementModal(meas) {
     const a = meas.attributes || {};
     const metrics = a.metrics || {};
@@ -260,8 +264,101 @@
       '<div class="field"><span class="detailFieldLabel">Recorded at</span><span class="detailFieldValue">' + esc(SM.fmtDateTime(a.created_at)) + "</span></div>" +
       (rows || extra ? '<div class="subjectFormFields">' + rows + extra + "</div>" : "") +
       metaBlock +
-      '<div class="modalActions"><button type="button" class="button buttonPrimary buttonSmall" data-close>Close</button></div></div>';
-    SM.modal({ title: "Measurement", description: "Values recorded for this subject in the run.", bodyHtml: bodyHtml, width: 520 });
+      '<div class="modalActions">' +
+      (CAN_WRITE ? '<button type="button" class="button buttonSecondary buttonSmall" id="meas-correct" style="margin-right:auto;">Correct…</button>' : "") +
+      '<button type="button" class="button buttonPrimary buttonSmall" data-close>Close</button></div></div>';
+    const m = SM.modal({ title: "Measurement", description: "Values recorded for this subject in the run.", bodyHtml: bodyHtml, width: 520 });
+    const correct = m.panel.querySelector("#meas-correct");
+    if (correct) correct.addEventListener("click", () => { m.close(); openCorrectMeasurementModal(meas); });
+  }
+
+  // ── Correct-measurement modal — full-replace of stored metric values and the recorded-at time.
+  //    Derived values recompute; the run and subject are fixed. ──
+  function openCorrectMeasurementModal(meas) {
+    const a = meas.attributes || {};
+    const metrics = a.metrics || {};
+    const priv = String(benchAttrs().status || "").toUpperCase() === "PRIVATE";
+    const stored = measSchema().metrics || [];
+    const metricFields = stored.map((mm) => {
+      const v = metrics[mm.name];
+      const val = typeof v === "number" && isFinite(v) ? String(v) : "";
+      return '<label class="field"><span class="detailFieldLabel">' + esc(mm.name) + '</span><input data-metric="' + esc(mm.name) + '" type="number" step="any" autocomplete="off" value="' + esc(val) + '" placeholder="optional" /></label>';
+    }).join("");
+    const bodyHtml =
+      '<form class="form" id="correct-meas-form" novalidate>' +
+      '<div class="field"><span class="detailFieldLabel">Subject</span><span class="detailFieldValue">' + esc(subjectLabel(a.subject)) + "</span></div>" +
+      (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : "") +
+      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="text" autocomplete="off" value="' + esc(a.created_at || "") + '" /></label>' +
+      '<p class="form-status" id="correct-meas-msg"></p>' +
+      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<button type="submit" class="button buttonPrimary buttonSmall">Save correction</button></div></form>';
+    const m = SM.modal({
+      title: "Correct measurement",
+      description: priv
+        ? "Replace this measurement’s values."
+        : "Replace this measurement’s values. This benchmark is published, so the correction is recorded in its public history with the values before and after.",
+      bodyHtml: bodyHtml,
+      width: 560,
+    });
+    const f = m.panel.querySelector("#correct-meas-form");
+    const msg = m.panel.querySelector("#correct-meas-msg");
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      msg.textContent = ""; msg.className = "form-status";
+      // Full-replace PUT: seed with the measurement's out-of-schema stored values first — a
+      // metric unlinked after this measurement was recorded leaves its stored value on the row,
+      // and a correction must not silently erase it. Derived names are excluded (computed on
+      // read, never stored); the schema's stored metrics then come from the form inputs.
+      const newMetrics = {};
+      const schemaNames = new Set(schemaMetrics().map((mc) => mc.name));
+      Object.entries((a.metrics || {})).forEach(([k, v]) => { if (!schemaNames.has(k) && typeof v === "number" && isFinite(v)) newMetrics[k] = v; });
+      f.querySelectorAll("[data-metric]").forEach((el) => { const v = el.value.trim(); if (v !== "") { const n = Number(v); if (isFinite(n)) newMetrics[el.getAttribute("data-metric")] = n; } });
+      // meta round-trips unchanged; created_at is sent as edited.
+      const attrs = {};
+      if (Object.keys(newMetrics).length) attrs.metrics = newMetrics;
+      if (a.meta && Object.keys(a.meta).length) attrs.meta = a.meta;
+      const c = f.created_at.value.trim(); if (c) attrs.created_at = c;
+      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+      try {
+        await apiFetch("/api/v1/measurements/" + encodeURIComponent(meas.id), { method: "PUT", body: jsonapiBody("measurement", attrs) });
+        m.close();
+        SM.toast("Measurement corrected.", { kind: "success" });
+        renderMeasurements();
+      } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+    });
+  }
+
+  // ── History tab — this run's audit trail. ──
+  function eventLabel(t) {
+    const labels = {
+      "run.created": "Created", "run.edited": "Edited", "run.ended": "Ended", "run.reopened": "Reopened",
+      "run.appended": "Appended after end", "run.invalidated": "Invalidated",
+    };
+    return labels[t] || t;
+  }
+  function actorLabel(actor) {
+    if (!actor) return "—";
+    if (actor.label) return actor.label;
+    if (actor.type === "API_KEY") return "an API key";
+    return actor.type ? String(actor.type).toLowerCase() : "—";
+  }
+  async function renderHistory() {
+    $("tab-panel").innerHTML = '<div class="detailsTabPanel"><div id="history-table"></div></div>';
+    const table = SM.pagedTable($("history-table"), {
+      columns: [
+        { key: "when", label: "When", sortable: true, sortValue: (e) => (e.attributes || {}).occurred_at || "", render: (e) => esc(fmtDateTime((e.attributes || {}).occurred_at)) },
+        { key: "event", label: "Event", sortable: true, sortValue: (e) => (e.attributes || {}).event_type || "", render: (e) => esc(eventLabel((e.attributes || {}).event_type)) },
+        { key: "description", label: "What happened", sortable: false, render: (e) => esc((e.attributes || {}).description || "") },
+        { key: "actor", label: "By", sortable: false, render: (e) => esc(actorLabel((e.attributes || {}).actor)) },
+      ],
+      rows: [], sort: { key: "when", dir: "desc" }, emptyText: "No history recorded yet.",
+    });
+    try {
+      const doc = await apiFetch("/api/v1/runs/" + encodeURIComponent(ID) + "/history");
+      table.setRows((doc && doc.data) || []);
+    } catch (err) {
+      $("history-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
   }
 
   async function deleteMeasurement(measId) {

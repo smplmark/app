@@ -627,7 +627,7 @@ const run = registerEntity(
     details: z.record(z.unknown()).nullable().openapi({ description: "Arbitrary structured metadata about the run, or null.", type: "object" }),
     started_at: dateTime("When the run started, or null if not yet started.").nullable(),
     ended_at: dateTime("When the run ended, or null if still live.").nullable(),
-    live: z.boolean().openapi({ description: "Whether the run is live (has not ended). Only a live run on an unpublished, open benchmark accepts new measurements." }),
+    live: z.boolean().openapi({ description: "Whether the run is live (has not ended). An ended run still accepts measurements; on a published benchmark such a late addition is recorded in the public change history." }),
     invalidated: z.boolean().openapi({ description: "Whether the run has been marked invalid and excluded from results." }),
     invalidated_at: dateTime("When the run was invalidated, or null.").nullable(),
     invalidation_reason: z.string().nullable().openapi({ description: "The stated reason the run was invalidated, or null." }),
@@ -665,7 +665,7 @@ const measurement = registerEntity(
   z.object({
     run: idRef("The run (occasion) to attach the measurement to."),
     subject: idRef("The subject being measured. Must be linked to the same benchmark as the run."),
-    created_at: dateTime("When the measurement occurred. Defaults to the time of ingest.").optional(),
+    created_at: dateTime("When the measurement occurred. On create, defaults to the time of ingest; on a correction (PUT), omitting it keeps the recorded time.").optional(),
     metrics: z
       .record(z.number())
       .optional()
@@ -1433,7 +1433,7 @@ registry.registerPath({
 
 for (const [action, summary, description] of [
   ["close", "Close a benchmark", "Marks the benchmark complete: no new subjects, runs, or measurements may be added. Existing data stays visible. Reversible via actions/reopen."],
-  ["reopen", "Reopen a benchmark", "Clears the complete mark. On a private benchmark, new subjects, runs, and measurements may then be added again; a published benchmark stays frozen regardless."],
+  ["reopen", "Reopen a benchmark", "Clears the complete mark, so new subjects, runs, and measurements may be added again."],
 ] as const) {
   registry.registerPath({
     method: "post",
@@ -1471,13 +1471,13 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "Update a benchmark",
   description:
-    "Replaces the benchmark's editable fields. Once published, the measurement schema is frozen — metrics, derived expressions, and the chart mapping cannot be added, changed, or removed; only descriptive text (name, description, about, methodology, tags, category) and schema descriptions/unit labels remain editable.",
+    "Replaces the benchmark's editable fields. A published benchmark remains editable — including its measurement schema — and every change to it is recorded in the benchmark's public change history, attributed to its publisher.",
   security: bearerSecurity,
   request: { params: benchmarkIdParam, body: domainBody(benchmark.Request, "The updated benchmark.") },
   responses: {
     "200": domainResponse(benchmark.Response, "The updated benchmark."),
     ...commonErrors,
-    "409": errorJson("The benchmark is published and the update would change its frozen measurement schema, or its subject type is pinned by linked subjects."),
+    "409": errorJson("The benchmark's subject type is pinned by linked subjects, or it is marked ready for publishing."),
   },
 });
 
@@ -1486,11 +1486,14 @@ registry.registerPath({
   path: "/api/v1/benchmarks/{id}",
   tags: ["Benchmarks"],
   summary: "Delete a benchmark",
+  description:
+    "Permanently deletes a private benchmark and its runs and measurements. A published (or withdrawn) benchmark can never be deleted this way — the public record must not vanish; withdraw it instead, or file a takedown request for removal by smplmark operators.",
   security: bearerSecurity,
   request: { params: benchmarkIdParam },
   responses: {
     "204": { description: "The benchmark was deleted." },
     ...commonErrors,
+    "409": errorJson("The benchmark is published or withdrawn (withdraw or request a takedown instead), or it is marked ready for publishing."),
   },
 });
 
@@ -1542,7 +1545,7 @@ registry.registerPath({
   tags: ["Benchmarks"],
   summary: "Publish a benchmark",
   description:
-    "Makes the benchmark and its data publicly readable, attributing it either to a verified publisher domain (pass publisher, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must contain at least one subject, one metric, one run, and one measurement. Publishing freezes the benchmark's data. Requires a signed-in user — API keys cannot publish.",
+    "Makes the benchmark and its data publicly readable, attributing it either to a verified publisher domain (pass publisher, admin only) or to the author personally (omit it, when the account allows personal publishing). The benchmark must contain at least one subject, one metric, one run, and one measurement. A published benchmark stays editable, but every change becomes part of its public change history. Requires a signed-in user — API keys cannot publish.",
   security: bearerSecurity,
   request: {
     params: benchmarkIdParam,
@@ -1575,7 +1578,8 @@ registry.registerPath({
   path: "/api/v1/benchmarks/{id}/actions/withdraw",
   tags: ["Benchmarks"],
   summary: "Withdraw a benchmark",
-  description: "Removes a published benchmark from public view.",
+  description:
+    "Marks a published benchmark as withdrawn. The benchmark and its data remain publicly readable for the record, flagged as withdrawn with the supplied reason — withdrawal is a visible retraction, not a deletion.",
   security: bearerSecurity,
   request: {
     params: benchmarkIdParam,
@@ -1845,7 +1849,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(benchmarkSubject.Response, "The created link."),
     ...commonErrors,
-    "409": errorJson("The subject is already linked to this benchmark, does not belong to the benchmark's account, the benchmark has reached its subject limit, or the benchmark is published or closed and accepts no new subjects."),
+    "409": errorJson("The subject is already linked to this benchmark, does not belong to the benchmark's account, is of a different subject type, the benchmark has reached its subject limit, or the benchmark is closed."),
   },
 });
 
@@ -1872,13 +1876,13 @@ registry.registerPath({
   tags: ["Subjects"],
   summary: "Unlink a subject from a benchmark",
   description:
-    "Removes a subject from a benchmark and deletes the measurements it had under that benchmark's runs. The subject itself survives (it is account-owned). Only allowed while the benchmark is a draft; a published benchmark's subject set is frozen.",
+    "Removes a subject from a benchmark and deletes the measurements it had under that benchmark's runs. The subject itself survives (it is account-owned). Only allowed while the benchmark is private: on a published benchmark this would delete published measurements, so invalidate the affected runs instead.",
   security: bearerSecurity,
   request: { params: benchmarkSubjectIdParam },
   responses: {
     "204": { description: "The link was removed." },
     ...commonErrors,
-    "409": errorJson("Published benchmark data is append-only; the subject cannot be unlinked."),
+    "409": errorJson("The benchmark is published; unlinking would delete published measurements. Invalidate the affected runs instead."),
   },
 });
 
@@ -1894,13 +1898,13 @@ registry.registerPath({
   tags: ["Metrics"],
   summary: "Link a metric to a benchmark",
   description:
-    "Links a metric from the account's library to a benchmark, copying its definition into the benchmark's measurement schema (a stored value, or a derived value with its computed expression). Adding a metric is an append, so it is allowed while the benchmark is a draft or already published — but not while it is marked ready or closed.",
+    "Links a metric from the account's library to a benchmark, copying its definition into the benchmark's measurement schema (a stored value, or a derived value with its computed expression). Allowed while the benchmark is a draft or already published — but not while it is marked ready or closed. On a published benchmark the link is recorded in the public change history as a change to the benchmark's metric set.",
   security: bearerSecurity,
   request: { body: domainBody(benchmarkMetric.Request, "The benchmark and metric to link.") },
   responses: {
     "201": domainResponse(benchmarkMetric.Response, "The created link."),
     ...commonErrors,
-    "409": errorJson("The metric is already linked to this benchmark, its name is already defined on the benchmark, it does not belong to the benchmark's account, the benchmark has reached its metric limit, or the benchmark is published or closed and accepts no new metrics."),
+    "409": errorJson("The metric is already linked to this benchmark, its name is already defined on the benchmark, it does not belong to the benchmark's account, the benchmark has reached its metric limit, or the benchmark is closed."),
   },
 });
 
@@ -1927,13 +1931,13 @@ registry.registerPath({
   tags: ["Metrics"],
   summary: "Unlink a metric from a benchmark",
   description:
-    "Removes a metric from a benchmark, dropping its definition from the benchmark's measurement schema. Existing measurement data is retained but the metric is no longer part of the benchmark. Only allowed while the benchmark is a draft; a published benchmark's metric set is frozen.",
+    "Removes a metric from a benchmark, dropping its definition from the benchmark's measurement schema. Existing measurement data is retained but the metric is no longer part of the benchmark. On a published benchmark the removal is recorded in the public change history as a change to the benchmark's metric set.",
   security: bearerSecurity,
   request: { params: benchmarkMetricIdParam },
   responses: {
     "204": { description: "The link was removed." },
     ...commonErrors,
-    "409": errorJson("Published benchmark data is append-only; the metric cannot be unlinked."),
+    "409": errorJson("The metric is referenced by the benchmark's chart mapping; update the chart before unlinking it."),
   },
 });
 
@@ -1953,7 +1957,7 @@ registry.registerPath({
   responses: {
     "201": domainResponse(run.Response, "The created run."),
     ...commonErrors,
-    "409": errorJson("A run with that key already exists in the benchmark, the benchmark has reached its run limit, or the benchmark is published or closed and accepts no new runs."),
+    "409": errorJson("A run with that key already exists in the benchmark, the benchmark has reached its run limit, or the benchmark is closed."),
   },
 });
 
@@ -1991,12 +1995,14 @@ registry.registerPath({
   path: "/api/v1/runs/{id}",
   tags: ["Runs"],
   summary: "Update a run",
+  description:
+    "Replaces the run's name, details, and timestamps. Clearing ended_at returns the run to live. On a published benchmark the edit is recorded in the public change history.",
   security: bearerSecurity,
   request: { params: runIdParam, body: domainBody(run.Request, "The updated run.") },
   responses: {
     "200": domainResponse(run.Response, "The updated run."),
     ...commonErrors,
-    "409": errorJson("The benchmark is published; its runs are frozen and cannot be changed."),
+    "409": errorJson("The benchmark is marked ready for publishing."),
   },
 });
 
@@ -2005,12 +2011,14 @@ registry.registerPath({
   path: "/api/v1/runs/{id}",
   tags: ["Runs"],
   summary: "Delete a run",
+  description:
+    "Permanently deletes a run and its measurements while the benchmark is private. A published benchmark's runs can never be deleted — the public record must not vanish; invalidate the run instead (a visible retraction that keeps the data reachable).",
   security: bearerSecurity,
   request: { params: runIdParam },
   responses: {
     "204": { description: "The run was deleted." },
     ...commonErrors,
-    "409": errorJson("The benchmark is published; its runs are frozen and cannot be deleted. Invalidate the run instead."),
+    "409": errorJson("The benchmark is published (invalidate the run instead) or marked ready for publishing."),
   },
 });
 
@@ -2019,13 +2027,14 @@ registry.registerPath({
   path: "/api/v1/runs/{id}/actions/end",
   tags: ["Runs"],
   summary: "End a run",
-  description: "Marks the run as no longer live; it stops accepting new measurements.",
+  description:
+    "Marks the run as no longer live. Measurements may still be added afterwards; on a published benchmark a late addition is recorded in the public change history as an append to the ended run.",
   security: bearerSecurity,
   request: { params: runIdParam },
   responses: {
     "200": domainResponse(run.Response, "The ended run."),
     ...commonErrors,
-    "409": errorJson("The run has already ended, or its benchmark is published and its runs are frozen."),
+    "409": errorJson("The run has already ended."),
   },
 });
 
@@ -2070,12 +2079,35 @@ registry.registerPath({
   path: "/api/v1/measurements",
   tags: ["Measurements"],
   summary: "Record a measurement",
+  description:
+    "Records one measurement of a subject under a run. Allowed while the benchmark is a draft or already published; on a published benchmark the addition is recorded in the public change history.",
   security: bearerSecurity,
   request: { body: domainBody(measurement.Request, "The measurement to record.") },
   responses: {
     "201": domainResponse(measurement.Response, "The recorded measurement, with derived metrics computed."),
     ...commonErrors,
-    "409": errorJson("The run and subject belong to different benchmarks, the benchmark is published or closed, or the run has ended."),
+    "409": errorJson("The run and subject belong to different benchmarks, or the benchmark is closed."),
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v1/measurements/{id}",
+  tags: ["Measurements"],
+  summary: "Correct a measurement",
+  description:
+    "Corrects a measurement in place, replacing its created_at, metrics, and meta (its run and subject are fixed). On a published benchmark the correction is recorded in the public change history with the values before and after, so the record stays honest without the error standing.",
+  security: bearerSecurity,
+  request: {
+    params: z.object({
+      id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the measurement." }),
+    }),
+    body: domainBody(measurement.Request, "The corrected measurement."),
+  },
+  responses: {
+    "200": domainResponse(measurement.Response, "The corrected measurement, with derived metrics recomputed."),
+    ...commonErrors,
+    "409": errorJson("The benchmark is marked ready for publishing."),
   },
 });
 
@@ -2120,7 +2152,7 @@ registry.registerPath({
   tags: ["Measurements"],
   summary: "Delete a measurement",
   description:
-    "Removes a single measurement. Measurements are append-only once their benchmark is published; deletion is only allowed while the benchmark is a draft. On a published benchmark, invalidate the whole run instead.",
+    "Removes a single measurement while the benchmark is a draft. A published measurement can never be deleted — the public record must not vanish; correct it in place (PUT) or invalidate its run instead.",
   security: bearerSecurity,
   request: {
     params: z.object({
@@ -2130,7 +2162,7 @@ registry.registerPath({
   responses: {
     "204": { description: "The measurement was deleted." },
     ...commonErrors,
-    "409": errorJson("The measurement's benchmark is published; measurements there are append-only."),
+    "409": errorJson("The measurement's benchmark is published; correct the measurement in place or invalidate its run instead."),
   },
 });
 
@@ -2227,6 +2259,191 @@ registry.registerPath({
   },
 });
 
+// ── History (the change record behind every benchmark) ──────────────────────
+
+const HistoryActor = z
+  .object({
+    type: z
+      .string()
+      .nullable()
+      .openapi({ description: "Who acted: USER, API_KEY, OPERATOR, PUBLIC (an anonymous visitor, e.g. a takedown requester), or — on redacted views — PUBLISHER (individual identities are never shown publicly)." }),
+    id: z
+      .string()
+      .nullable()
+      .openapi({ description: "The actor's identifier. Null on the public view." }),
+    label: z
+      .string()
+      .nullable()
+      .openapi({ description: "A display label for the actor: the publisher identity on the public view; the member's email or key on the account view." }),
+  })
+  .openapi("HistoryActor", { description: "The actor a history event is attributed to." });
+
+const HistoryEventAttributes = registry.register(
+  "HistoryEvent",
+  z
+    .object({
+      event_type: z
+        .string()
+        .openapi({ description: "What happened, e.g. \"benchmark.published\", \"benchmark.edited\", \"measurement.corrected\", \"run.invalidated\", \"benchmark.withdrawn\"." }),
+      resource_type: z
+        .string()
+        .openapi({ description: "The kind of resource the event is about: benchmark, run, measurement, subject, or takedown_request." }),
+      resource_id: idRef("The id of the resource the event is about."),
+      benchmark: idRef("The benchmark the event belongs to.").nullable(),
+      occurred_at: dateTime("When the change happened."),
+      description: z
+        .string()
+        .nullable()
+        .openapi({ description: "One human-readable sentence describing the change." }),
+      actor: HistoryActor,
+      changes: jsonObject(
+        "What changed, keyed by field, each entry carrying the value before and after — enough to see exactly how the record moved.",
+      ).nullable(),
+      semantic_core: z
+        .boolean()
+        .openapi({ description: "True when the change altered how the benchmark's numbers are computed or read (its metric set, derived expressions, or chart mapping) rather than descriptive text." }),
+      visibility: z
+        .string()
+        .openapi({ description: "\"public\" for events shown on the public history; \"internal\" for events visible only to the owning account." }),
+    })
+    .openapi({ description: "One recorded change to a benchmark, run, measurement, or subject." }),
+);
+
+const HistoryEventResource = registry.register(
+  "HistoryEventResource",
+  z
+    .object({
+      id: z.string().openapi({ description: "The unique identifier of the history event." }),
+      type: z.literal("history_event").openapi({ description: "Always \"history_event\"." }),
+      attributes: HistoryEventAttributes,
+    })
+    .openapi({ description: "A single history event resource object." }),
+);
+
+const HistoryEventListResponse = registry.register(
+  "HistoryEventListResponse",
+  z
+    .object({
+      data: z
+        .array(HistoryEventResource)
+        .openapi({ description: "The events, newest first." }),
+      meta: z
+        .object({
+          count: z.number().int().openapi({ description: "The number of events returned." }),
+        })
+        .openapi({ description: "Collection details." }),
+    })
+    .openapi({ description: "A benchmark, run, or subject's change history, newest first." }),
+);
+
+const historyDescription = (scope: string) =>
+  `The ${scope}'s change history, newest first. Anyone can read a published benchmark's history — it shows the public events (published, edited, corrected, appended, invalidated, withdrawn) attributed to the publisher identity. The owning account additionally sees pre-publish events and the acting member or key on each event. History may be empty on deployments without a configured audit store.`;
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/benchmarks/{id}/history",
+  tags: ["Benchmarks"],
+  summary: "Get a benchmark's change history",
+  description: historyDescription("benchmark") + " Includes events for the benchmark's runs and measurements.",
+  request: { params: benchmarkIdParam },
+  responses: {
+    "200": domainResponse(HistoryEventListResponse, "The benchmark's history."),
+    "404": errorJson("The requested resource was not found."),
+    "503": errorJson("History is temporarily unavailable."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/runs/{id}/history",
+  tags: ["Runs"],
+  summary: "Get a run's change history",
+  description: historyDescription("run"),
+  request: { params: runIdParam },
+  responses: {
+    "200": domainResponse(HistoryEventListResponse, "The run's history."),
+    "404": errorJson("The requested resource was not found."),
+    "503": errorJson("History is temporarily unavailable."),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/subjects/{id}/history",
+  tags: ["Subjects"],
+  summary: "Get a subject's change history",
+  description:
+    "The subject's change history, newest first, visible to the owning account. Subjects are account-level resources, so their events never appear on the public history.",
+  request: { params: subjectIdParam },
+  responses: {
+    "200": domainResponse(HistoryEventListResponse, "The subject's history."),
+    "404": errorJson("The requested resource was not found."),
+    "503": errorJson("History is temporarily unavailable."),
+  },
+});
+
+// ── Takedown requests ────────────────────────────────────────────────────────
+
+const takedownRequestAttributes = z
+  .object({
+    benchmark: idRef("The published benchmark the request is about."),
+    requester_name: z.string().openapi({ description: "The requester's name." }),
+    requester_email: z.string().openapi({ description: "The requester's email address, used to follow up on the request." }),
+    reason: z.string().openapi({ description: "Why the benchmark should be removed (e.g. it contains personal data or infringing content)." }),
+  })
+  .openapi({ description: "A request that smplmark operators remove a published benchmark." });
+
+const TakedownRequestResponseSchema = registry.register(
+  "TakedownRequestResponse",
+  z
+    .object({
+      data: z
+        .object({
+          id: z.string().openapi({ description: "The unique identifier of the takedown request." }),
+          type: z.literal("takedown_request").openapi({ description: "Always \"takedown_request\"." }),
+          attributes: registry.register(
+            "TakedownRequest",
+            takedownRequestAttributes.extend({
+              status: z.string().openapi({ description: "The request's state: OPEN until operators resolve it." }),
+              created_at: dateTime("When the request was filed."),
+            }),
+          ),
+        })
+        .openapi({ description: "A single takedown-request resource object." }),
+    })
+    .openapi({ description: "A response wrapping the filed takedown request." }),
+);
+
+const TakedownRequestRequestSchema = registry.register(
+  "TakedownRequestRequest",
+  z
+    .object({
+      data: z
+        .object({
+          type: z.literal("takedown_request").openapi({ description: "Always \"takedown_request\"." }),
+          attributes: takedownRequestAttributes,
+        })
+        .openapi({ description: "The takedown request to file." }),
+    })
+    .openapi({ description: "A request body carrying a takedown request." }),
+);
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/takedown_requests",
+  tags: ["Takedown requests"],
+  summary: "Request removal of a published benchmark",
+  description:
+    "Files a request that smplmark operators remove a published benchmark (for example, one containing personal data or infringing content). This does not change the benchmark: operators review each request and perform the removal themselves. Unauthenticated and rate-limited; the requester's identity is shared only with operators, never published.",
+  request: { body: domainBody(TakedownRequestRequestSchema, "The takedown request to file.") },
+  responses: {
+    "201": domainResponse(TakedownRequestResponseSchema, "The filed request."),
+    "400": errorJson("The request was malformed."),
+    "404": errorJson("The requested resource was not found."),
+    "429": errorJson("Rate limit exceeded."),
+  },
+});
+
 // ── Document assembly ────────────────────────────────────────────────────────
 
 /**
@@ -2260,6 +2477,7 @@ export function buildOpenApiDocument(serverUrl: string): Record<string, unknown>
       { name: "Runs" },
       { name: "Subject types" },
       { name: "Subjects" },
+      { name: "Takedown requests" },
       { name: "Users" },
     ],
   });

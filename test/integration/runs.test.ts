@@ -29,9 +29,8 @@ async function errorDetail(res: Response): Promise<string> {
   return ((await res.json()) as { errors: { detail: string }[] }).errors[0].detail;
 }
 
-const FROZEN_CHANGED = "This benchmark is published; its runs are frozen and cannot be changed.";
-const FROZEN_DELETE =
-  "This benchmark is published; its runs are frozen and cannot be deleted. Invalidate the run instead.";
+const DELETE_BLOCKED =
+  "A published benchmark's runs can't be deleted — the public record must not vanish. Invalidate the run instead.";
 
 describe("run liveness + actions", () => {
   it("creates a run under a benchmark", async () => {
@@ -278,7 +277,7 @@ describe("run liveness + actions", () => {
   });
 });
 
-describe("post-publish run freeze + delete rules", () => {
+describe("post-publish run rules (editable, never deletable)", () => {
   /** A published benchmark with two runs: one carrying a measurement, one empty. Content is created
    *  explicitly (not via seedPublishable) so the tests control exactly which runs exist. */
   async function publishedWithRuns(token: string, userId: string) {
@@ -291,7 +290,7 @@ describe("post-publish run freeze + delete rules", () => {
     return { b, t, withData, empty };
   }
 
-  it("freezes runs entirely once published: PUT 409s even for a no-op update", async () => {
+  it("keeps runs editable once published: PUT succeeds, including timestamp changes and reopening", async () => {
     const me = await register();
     const started = Date.UTC(2026, 6, 1, 0, 0, 0);
     const b = await makeBenchmark(me.token);
@@ -300,23 +299,40 @@ describe("post-publish run freeze + delete rules", () => {
     await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
     await publish(me.token, me.user_id, b.id);
 
-    // Even round-tripping the same started_at is refused — runs are fully frozen post-publish.
+    // Round-tripping the same started_at is a clean no-op update.
     const same = await apiPut(
       `/api/v1/runs/${r.id}`,
       { data: { type: "run", attributes: { name: "n", started_at: new Date(started).toISOString() } } },
       bearer(me.token),
     );
-    expect(same.status).toBe(409);
-    expect(await errorDetail(same)).toBe(FROZEN_CHANGED);
+    expect(same.status).toBe(200);
 
-    // Changing it is of course frozen too.
+    // Changing it succeeds too — the edit becomes part of the audited public record.
     const changed = await apiPut(
       `/api/v1/runs/${r.id}`,
       { data: { type: "run", attributes: { name: "n", started_at: started + 1000 } } },
       bearer(me.token),
     );
-    expect(changed.status).toBe(409);
-    expect(await errorDetail(changed)).toBe(FROZEN_CHANGED);
+    expect(changed.status).toBe(200);
+    expect(
+      Date.parse(((await changed.json()) as { data: Resource }).data.attributes.started_at as string),
+    ).toBe(started + 1000);
+
+    // Ending via PUT and clearing ended_at back to live (reopening) both work post-publish.
+    const ended = await apiPut(
+      `/api/v1/runs/${r.id}`,
+      { data: { type: "run", attributes: { name: "n", ended_at: started + 60_000 } } },
+      bearer(me.token),
+    );
+    expect(ended.status).toBe(200);
+    expect(((await ended.json()) as { data: Resource }).data.attributes.live).toBe(false);
+    const reopened = await apiPut(
+      `/api/v1/runs/${r.id}`,
+      { data: { type: "run", attributes: { name: "n", ended_at: null } } },
+      bearer(me.token),
+    );
+    expect(reopened.status).toBe(200);
+    expect(((await reopened.json()) as { data: Resource }).data.attributes.live).toBe(true);
   });
 
   it("deletes a draft benchmark's run freely (even with measurements), cascading its scoped keys", async () => {
@@ -334,33 +350,33 @@ describe("post-publish run freeze + delete rules", () => {
     const me = await register();
     const { withData, empty } = await publishedWithRuns(me.token, me.user_id);
 
-    // The run carrying measurements is frozen → 409 (invalidate instead).
+    // The run carrying measurements can't vanish from the public record → 409 (invalidate instead).
     const del = await apiDelete(`/api/v1/runs/${withData.id}`, bearer(me.token));
     expect(del.status).toBe(409);
-    expect(await errorDetail(del)).toBe(FROZEN_DELETE);
+    expect(await errorDetail(del)).toBe(DELETE_BLOCKED);
 
-    // Even a run with no measurements is frozen once the benchmark is published.
+    // Even a run with no measurements is delete-blocked once the benchmark is published.
     const delEmpty = await apiDelete(`/api/v1/runs/${empty.id}`, bearer(me.token));
     expect(delEmpty.status).toBe(409);
-    expect(await errorDetail(delEmpty)).toBe(FROZEN_DELETE);
+    expect(await errorDetail(delEmpty)).toBe(DELETE_BLOCKED);
   });
 
-  it("on a published benchmark, run creation and actions/end 409 as frozen", async () => {
+  it("on a published benchmark, run creation and actions/end remain open", async () => {
     const me = await register();
     const { b, withData } = await publishedWithRuns(me.token, me.user_id);
 
-    // No new runs can be added.
+    // New runs can still be added — the public record grows, it doesn't freeze.
     const create = await apiPost(
       "/api/v1/runs",
       { data: { type: "run", attributes: { benchmark: b.id, key: "late" } } },
       bearer(me.token),
     );
-    expect(create.status).toBe(409);
-    expect(await errorDetail(create)).toBe(FROZEN_CHANGED);
+    expect(create.status).toBe(201);
+    expect(((await create.json()) as { data: Resource }).data.attributes.key).toBe("late");
 
-    // Ending a still-live run is refused too — the run set is fully frozen.
+    // Ending a still-live run works too.
     const end = await apiPost(`/api/v1/runs/${withData.id}/actions/end`, undefined, bearer(me.token));
-    expect(end.status).toBe(409);
-    expect(await errorDetail(end)).toBe(FROZEN_CHANGED);
+    expect(end.status).toBe(200);
+    expect(((await end.json()) as { data: Resource }).data.attributes.live).toBe(false);
   });
 });

@@ -32,7 +32,8 @@ describe("list params", () => {
     const me = await register();
     const b1 = await makeBenchmark(me.token, { key: "aaa", name: "Aaa" });
     await makeBenchmark(me.token, { key: "bbb", name: "Bbb" });
-    // Subjects and runs must exist before publishing — a published benchmark freezes both.
+    // Create the subject and run explicitly (with known keys) so publish's auto-seeding stays a
+    // no-op and the filter[key] lookups below stay deterministic.
     await makeSubject(me.token, b1.id, "tk");
     await makeRun(me.token, b1.id);
     await publish(me.token, me.user_id, b1.id);

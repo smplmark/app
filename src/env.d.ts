@@ -24,6 +24,18 @@ interface SmplmarkSecrets {
   /** Shared secret authorizing the Smpl Jobs system triggers (e.g. the publisher-domain re-check). */
   JOBS_TRIGGER_SECRET?: string;
   /**
+   * Smpl Audit API key (sk_api_*, Bearer) for the audit trail behind the History tabs. Unset →
+   * audit writes are a logged no-op and history reads return empty; every mutation still works.
+   */
+  SMPL_AUDIT_API_KEY?: string;
+  /** Smpl Audit host override for the local loop (default https://audit.smplkit.com). */
+  SMPL_AUDIT_BASE_URL?: string;
+  /**
+   * Named audit environment, required only when the key is multi-environment-scoped (a
+   * single-environment key implies it). Leave unset for a single-environment key.
+   */
+  SMPL_AUDIT_ENVIRONMENT?: string;
+  /**
    * Local-loop only (.dev.vars): where marketing-path redirects (/about, /benchmarks…) point,
    * e.g. http://localhost:8787. Unset in production → https://www.smplmark.org.
    */

@@ -17,6 +17,7 @@ const ctx = (scope_type: ScopeType, scope_ref: string | null = null, account_id 
   user_id: null,
   role: null,
   session_id: null,
+  api_key_id: "k1",
 });
 
 const session = (role: Role, user_id = "u1", account_id = "acc"): AuthContext => ({
@@ -27,6 +28,7 @@ const session = (role: Role, user_id = "u1", account_id = "acc"): AuthContext =>
   user_id,
   role,
   session_id: "s1",
+  api_key_id: null,
 });
 
 describe("covers", () => {

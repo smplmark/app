@@ -439,9 +439,12 @@ export async function withdrawBenchmark(
 }
 
 /**
- * Hard-delete a PRIVATE benchmark and its whole subtree (the route guarantees PRIVATE). Subjects are
- * NOT deleted — they are account-owned and may be linked to other benchmarks; only this benchmark's
- * links (and the measurements under its runs) go away.
+ * Hard-delete a benchmark and its whole subtree. Two callers: the publisher's DELETE (the route
+ * guarantees PRIVATE) and the operator-only takedown (any status). Subjects are NOT deleted — they
+ * are account-owned and may be linked to other benchmarks; only this benchmark's links (and the
+ * measurements under its runs) go away. Scoped API keys authorize nothing once their subtree is
+ * gone, and metric links must not orphan (a dangling link makes its metric permanently
+ * undeletable), so both are cleaned up here too.
  */
 export async function deleteBenchmarkCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
@@ -450,9 +453,16 @@ export async function deleteBenchmarkCascade(db: D1Database, id: string): Promis
         "DELETE FROM measurement WHERE run_id IN (SELECT id FROM run WHERE benchmark_id = ?)",
       )
       .bind(id),
+    db
+      .prepare(
+        "DELETE FROM api_key WHERE scope_type = 'RUN' AND scope_ref IN (SELECT id FROM run WHERE benchmark_id = ?)",
+      )
+      .bind(id),
     db.prepare("DELETE FROM run WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark_subject WHERE benchmark_id = ?").bind(id),
+    db.prepare("DELETE FROM benchmark_metric WHERE benchmark_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark_tag WHERE benchmark_id = ?").bind(id),
+    db.prepare("DELETE FROM api_key WHERE scope_type = 'BENCHMARK' AND scope_ref = ?").bind(id),
     db.prepare("DELETE FROM benchmark WHERE id = ?").bind(id),
   ]);
 }

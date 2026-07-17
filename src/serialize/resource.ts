@@ -375,6 +375,90 @@ export function serializeMeasurement(
   return { type: "measurement", id: String(row.id), attributes };
 }
 
+/**
+ * The publisher-facing display label for a benchmark's attribution — what the PUBLIC History shows
+ * as the actor instead of an individual user or key (never an email or user id). Falls back to the
+ * account's URL slug for unpublished rows (covered-caller surfaces only).
+ */
+export function publisherLabel(row: BenchmarkRow & { publisher_slug: string }): string {
+  const publishedAs = buildPublishedAs(row);
+  if (publishedAs !== null) {
+    if (publishedAs.kind === "ORGANIZATION") return publishedAs.domain as string;
+    if (publishedAs.kind === "INGESTED") return publishedAs.source_name as string;
+    return (publishedAs.display_name as string | null) ?? row.publisher_slug;
+  }
+  return row.publisher_slug;
+}
+
+/**
+ * One audit event from Smpl Audit, rendered for a History tab. Two views: the console (covered
+ * caller) sees the real actor; the public view passes `redact` and the actor collapses to the
+ * publisher identity — individual emails and user ids never reach the public surface.
+ */
+export function serializeHistoryEvent(
+  ev: {
+    id: string;
+    event_type: string;
+    resource_type: string;
+    resource_id: string;
+    occurred_at: string;
+    description: string | null;
+    actor_type: string | null;
+    actor_id: string | null;
+    actor_label: string | null;
+    visibility: "public" | "internal";
+    benchmark_id: string | null;
+    changes: Record<string, { before: unknown; after: unknown }> | null;
+    semantic_core: boolean;
+  },
+  redact: { publisher_label: string } | null,
+): ResourceObject {
+  const actor =
+    redact !== null
+      ? { type: "PUBLISHER", id: null, label: redact.publisher_label }
+      : { type: ev.actor_type, id: ev.actor_id, label: ev.actor_label };
+  return {
+    type: "history_event",
+    id: ev.id,
+    attributes: {
+      event_type: ev.event_type,
+      resource_type: ev.resource_type,
+      resource_id: ev.resource_id,
+      benchmark: ev.benchmark_id,
+      occurred_at: ev.occurred_at,
+      description: ev.description,
+      actor,
+      changes: ev.changes,
+      semantic_core: ev.semantic_core,
+      visibility: ev.visibility,
+    },
+  };
+}
+
+/** A takedown request as echoed back to its (possibly anonymous) submitter. */
+export function serializeTakedownRequest(row: {
+  id: string;
+  benchmark_id: string;
+  requester_name: string;
+  requester_email: string;
+  reason: string;
+  status: string;
+  created_at: number;
+}): ResourceObject {
+  return {
+    type: "takedown_request",
+    id: row.id,
+    attributes: {
+      benchmark: row.benchmark_id,
+      requester_name: row.requester_name,
+      requester_email: row.requester_email,
+      reason: row.reason,
+      status: row.status,
+      created_at: iso(row.created_at),
+    },
+  };
+}
+
 /** The external-source catalog entry (importer-maintained; see GET /api/v1/external_sources). */
 export function serializeExternalSource(row: ExternalSourceRow): ResourceObject {
   return {

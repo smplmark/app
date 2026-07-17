@@ -40,6 +40,7 @@ async function resolve(c: AppContext, token: string): Promise<AuthContext> {
       user_id: claims.sub,
       role: claims.role,
       session_id: claims.jti,
+      api_key_id: null,
     };
   }
   // A soft-deleted account is blocked here — its tokens (session or API key) simply stop resolving.

@@ -428,6 +428,29 @@ export interface RunRow {
   updated_at: number;
 }
 
+/** Takedown-request lifecycle: OPEN until an operator fulfills (or otherwise closes) it. */
+export type TakedownRequestStatus = "OPEN" | "RESOLVED";
+
+/**
+ * A request that a published benchmark be truly removed (legal/PII), filed from the public page or
+ * the console and routed to smplmark operators. Never a self-serve delete: an operator fulfills it
+ * via the system takedown endpoint. benchmark_id is a soft pointer (no FK) — the row must survive
+ * the benchmark's deletion as the record of why it was removed.
+ */
+export interface TakedownRequestRow {
+  id: string;
+  benchmark_id: string;
+  /** Snapshotted at filing so the request stays legible after the benchmark is removed. */
+  benchmark_key: string;
+  publisher_slug: string;
+  requester_name: string;
+  requester_email: string;
+  reason: string;
+  status: TakedownRequestStatus;
+  resolved_at: number | null;
+  created_at: number;
+}
+
 export interface MeasurementRow {
   /** rowid — database-assigned INTEGER; stringified on the wire. */
   id: number;
@@ -451,28 +474,29 @@ export type JsonLogicRule = unknown;
 export interface MetricDecl {
   name: string;
   type: string;
-  /** Cosmetic — editable after publish. */
+  /** Cosmetic display label. */
   unit?: string;
-  /** Excel-style number-format pattern for display. Cosmetic — editable after publish. */
+  /** Excel-style number-format pattern for display. Cosmetic. */
   format?: string;
-  /** Human-readable description, surfaced on the benchmark page. Cosmetic — editable after publish. */
+  /** Human-readable description, surfaced on the benchmark page. Cosmetic. */
   description?: string;
 }
 
 /** A numeric value computed on read from a JSON Logic expression against the widened context. */
 export interface DerivedDecl {
   name: string;
-  /** Cosmetic — editable after publish. */
+  /** Cosmetic display label. */
   unit?: string;
-  /** Excel-style number-format pattern for display. Cosmetic — editable after publish. */
+  /** Excel-style number-format pattern for display. Cosmetic. */
   format?: string;
-  /** Semantic core — frozen on publish. */
+  /** Semantic core — a post-publish change is allowed but flagged in the audited History. */
   expr: JsonLogicRule;
-  /** Human-readable description, surfaced on the benchmark page. Cosmetic — editable after publish. */
+  /** Human-readable description, surfaced on the benchmark page. Cosmetic. */
   description?: string;
 }
 
-/** How the site's chart should render this benchmark by default. Semantic core — frozen on publish. */
+/** How the site's chart should render this benchmark by default. Semantic core — a post-publish
+ *  change is allowed but flagged in the audited History. */
 export type XKind = "TIME" | "NUMBER" | "CATEGORY";
 export const X_KINDS: readonly XKind[] = ["TIME", "NUMBER", "CATEGORY"];
 
@@ -510,4 +534,6 @@ export interface AuthContext {
   role: Role | null;
   /** The session id (jti), for SESSION credentials; null for API_KEY. Used by logout. */
   session_id: string | null;
+  /** The key id, for API_KEY credentials; null for SESSION. Identifies the actor in audit events. */
+  api_key_id: string | null;
 }

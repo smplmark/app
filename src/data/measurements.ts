@@ -51,6 +51,18 @@ export async function deleteMeasurement(db: D1Database, id: number): Promise<voi
   await db.prepare("DELETE FROM measurement WHERE id = ?").bind(id).run();
 }
 
+/** Correct a measurement in place (edit-with-audit; the route records before/after). */
+export async function updateMeasurement(
+  db: D1Database,
+  id: number,
+  input: { created_at: number; metrics: string | null; meta: string | null },
+): Promise<void> {
+  await db
+    .prepare("UPDATE measurement SET created_at=?, metrics=?, meta=? WHERE id=?")
+    .bind(input.created_at, input.metrics, input.meta, id)
+    .run();
+}
+
 /** Insert a measurement; returns the database-assigned rowid. */
 export async function insertMeasurement(
   db: D1Database,

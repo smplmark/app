@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { DerivedContext } from "../../src/logic/derived";
 import {
+  publisherLabel,
   serializeAccount,
   serializeAccountMembership,
   serializeAccountUser,
   serializeApiKey,
   serializeBenchmark,
+  serializeHistoryEvent,
   serializeInvitation,
   serializeMeasurement,
   serializePublisher,
   serializeRun,
   serializeSubject,
+  serializeTakedownRequest,
   serializeUser,
 } from "../../src/serialize/resource";
 import type { BenchmarkRowWithPublisher } from "../../src/data/benchmarks";
@@ -328,5 +331,124 @@ describe("serializeMeasurement", () => {
   it("omits metrics for a bare measurement under an empty schema", () => {
     const out = serializeMeasurement(base, { metrics: [], derived: [] }, ctx);
     expect(out.attributes).not.toHaveProperty("metrics");
+  });
+});
+
+describe("publisherLabel", () => {
+  const priv: BenchmarkRowWithPublisher = {
+    id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
+    description: null, about: null, methodology: null, subject_type: null, status: "PRIVATE",
+    published_at: null, withdrawn_at: null, withdrawal_reason: null,
+    measurement_schema: "{}",
+    created_by_user_id: "u1", draft: 1,
+    published_by_user_id: null, published_as_kind: null, published_identity_id: null,
+    attribution_snapshot: null, category: "OTHER",
+    search_text: "", views_total: 0, closed_at: null,
+    created_at: T0, updated_at: T0,
+  };
+
+  it("uses the verified domain for an ORGANIZATION publish", () => {
+    const row = {
+      ...priv, status: "PUBLISHED" as const, published_as_kind: "ORGANIZATION" as const,
+      attribution_snapshot: JSON.stringify({ domain: "acme.com", icon: "monogram" }),
+    };
+    expect(publisherLabel(row)).toBe("acme.com");
+  });
+
+  it("uses the source name for an INGESTED publish", () => {
+    const row = {
+      ...priv, status: "PUBLISHED" as const, published_as_kind: "INGESTED" as const,
+      attribution_snapshot: JSON.stringify({
+        source_name: "Blender Open Data", source_url: "https://x", license: "CC0", retrieved_at: T0,
+      }),
+    };
+    expect(publisherLabel(row)).toBe("Blender Open Data");
+  });
+
+  it("uses the personal display name, falling back to the account slug when unset", () => {
+    const row = {
+      ...priv, status: "PUBLISHED" as const, published_as_kind: "PERSONAL" as const,
+      attribution_snapshot: JSON.stringify({ display_name: "Ada", email_sha256: "h" }),
+    };
+    expect(publisherLabel(row)).toBe("Ada");
+    expect(
+      publisherLabel({ ...row, attribution_snapshot: JSON.stringify({ display_name: null, email_sha256: "h" }) }),
+    ).toBe("acme");
+  });
+
+  it("falls back to the account slug for an unpublished row", () => {
+    expect(publisherLabel(priv)).toBe("acme");
+  });
+});
+
+describe("serializeHistoryEvent", () => {
+  const ev = {
+    id: "ev1",
+    event_type: "benchmark.edited",
+    resource_type: "benchmark",
+    resource_id: "b1",
+    occurred_at: ISO0,
+    description: "Benchmark edited.",
+    actor_type: "USER",
+    actor_id: "u1",
+    actor_label: "ada@acme.com",
+    visibility: "public" as const,
+    benchmark_id: "b1",
+    changes: { name: { before: "Old", after: "New" } },
+    semantic_core: false,
+  };
+
+  it("surfaces the real actor and changes on the account (unredacted) view", () => {
+    const out = serializeHistoryEvent(ev, null);
+    expect(out.type).toBe("history_event");
+    expect(out.id).toBe("ev1");
+    expect(out.attributes).toEqual({
+      event_type: "benchmark.edited",
+      resource_type: "benchmark",
+      resource_id: "b1",
+      benchmark: "b1",
+      occurred_at: ISO0,
+      description: "Benchmark edited.",
+      actor: { type: "USER", id: "u1", label: "ada@acme.com" },
+      changes: { name: { before: "Old", after: "New" } },
+      semantic_core: false,
+      visibility: "public",
+    });
+  });
+
+  it("collapses the actor to the publisher identity on the redacted (public) view", () => {
+    const out = serializeHistoryEvent(ev, { publisher_label: "acme.com" });
+    expect(out.attributes.actor).toEqual({ type: "PUBLISHER", id: null, label: "acme.com" });
+    // Everything else still renders — the public view hides who, never what.
+    expect(out.attributes.changes).toEqual(ev.changes);
+  });
+
+  it("passes through null description/changes and the semantic-core flag", () => {
+    const out = serializeHistoryEvent(
+      { ...ev, description: null, changes: null, semantic_core: true, actor_type: null, actor_id: null, actor_label: null, benchmark_id: null },
+      null,
+    );
+    expect(out.attributes.description).toBeNull();
+    expect(out.attributes.changes).toBeNull();
+    expect(out.attributes.benchmark).toBeNull();
+    expect(out.attributes.semantic_core).toBe(true);
+    expect(out.attributes.actor).toEqual({ type: null, id: null, label: null });
+  });
+});
+
+describe("serializeTakedownRequest", () => {
+  it("echoes the filed request with an ISO created_at", () => {
+    const out = serializeTakedownRequest({
+      id: "tr1", benchmark_id: "b1", requester_name: "Ada", requester_email: "ada@x.com",
+      reason: "contains personal data", status: "OPEN", created_at: T0,
+    });
+    expect(out).toEqual({
+      type: "takedown_request",
+      id: "tr1",
+      attributes: {
+        benchmark: "b1", requester_name: "Ada", requester_email: "ada@x.com",
+        reason: "contains personal data", status: "OPEN", created_at: ISO0,
+      },
+    });
   });
 });

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@smplkit/sdk": "^3.0.163",
     "hono": "^4.12.27",
     "jose": "^5.10.0",
     "json-logic-js": "^2.0.5",

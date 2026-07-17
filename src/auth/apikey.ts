@@ -64,6 +64,7 @@ function toContext(scope: ResolvedScope): AuthContext {
     user_id: null,
     role: null,
     session_id: null,
+    api_key_id: scope.keyId,
   };
 }
 

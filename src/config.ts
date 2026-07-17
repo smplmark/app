@@ -117,6 +117,19 @@ export function jobsTriggerConfigured(env: Env): boolean {
   return !!env.JOBS_TRIGGER_SECRET;
 }
 
+/** The Smpl Audit ingest/query host (overridable for the local loop). */
+export const SMPL_AUDIT_DEFAULT_BASE_URL = "https://audit.smplkit.com";
+
+/** True when the Smpl Audit key is configured; unset → audit writes no-op, history reads are empty. */
+export function auditConfigured(env: Env): boolean {
+  return !!env.SMPL_AUDIT_API_KEY;
+}
+
+/** Where audit events are written and read (trailing slash stripped). */
+export function auditBaseUrl(env: Env): string {
+  return (env.SMPL_AUDIT_BASE_URL || SMPL_AUDIT_DEFAULT_BASE_URL).replace(/\/+$/, "");
+}
+
 /**
  * The JWT signing secret. Absent in a properly-deployed service is a server-config bug, not client
  * input, so callers surface a 500 — never a 400.

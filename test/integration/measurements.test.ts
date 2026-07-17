@@ -196,9 +196,13 @@ describe("DELETE /measurements/:id", () => {
     const after = (await (await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(me.token))).json()) as { data: Resource[] };
     expect(after.data.map((x) => x.id)).toEqual([m2.id]);
 
-    // Once published, measurements are append-only → 409.
+    // Once published, a measurement must never silently vanish → 409 (correct or invalidate instead).
     await publish(me.token, me.user_id, b.id);
-    expect((await apiDelete(`/api/v1/measurements/${m2.id}`, bearer(me.token))).status).toBe(409);
+    const del = await apiDelete(`/api/v1/measurements/${m2.id}`, bearer(me.token));
+    expect(del.status).toBe(409);
+    expect(((await del.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
+      "A published measurement can't be deleted — the public record must not vanish. Correct it in place or invalidate its run instead.",
+    );
   });
 
   it("404s an unknown id and isolates tenants", async () => {

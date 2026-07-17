@@ -11,6 +11,7 @@
   const ID = new URLSearchParams(location.search).get("id") || "";
   let BM = null;
   let CAN_WRITE = false, CAN_ADMIN = false, USER_ID = null, ALLOW_PERSONAL = false;
+  let USER_EMAIL = "", USER_NAME = "";
   // Per-tab counts shown as badges; null until first loaded, then kept in sync as each tab's data loads.
   const COUNTS = { subjects: null, metrics: null, runs: null, apikeys: null };
 
@@ -18,7 +19,7 @@
   let editing = false;
   let form = { name: "", description: "", about: "", methodology: "", subject_type: "" };
 
-  const TABS = ["details", "subjects", "metrics", "runs", "apikeys"];
+  const TABS = ["details", "subjects", "metrics", "runs", "history", "apikeys"];
   function activeTab() {
     const h = (location.hash || "").replace(/^#/, "");
     return TABS.indexOf(h) >= 0 ? h : "details";
@@ -40,6 +41,8 @@
     CAN_WRITE = id.canWrite;
     CAN_ADMIN = id.canAdmin;
     USER_ID = (id.user && id.user.id) || null;
+    USER_EMAIL = (id.user && id.user.attributes && id.user.attributes.email) || "";
+    USER_NAME = (id.user && id.user.attributes && id.user.attributes.display_name) || "";
     ALLOW_PERSONAL = !!(id.account && id.account.attributes && id.account.attributes.allow_personal_publish);
     loadBenchmark();
   }).catch(() => fail("Failed to load your account."));
@@ -148,9 +151,10 @@
       return b("Publish…", "publish", "Primary");
     }
     if (status === "PUBLISHED") {
-      return viewLink(a.key) + (a.closed ? b("Reopen", "reopen") : b("Close", "close")) + b("Withdraw", "withdraw", "Danger");
+      return viewLink(a.key) + (a.closed ? b("Reopen", "reopen") : b("Close", "close")) + b("Request takedown", "takedown") + b("Withdraw", "withdraw", "Danger");
     }
-    return viewLink(a.key);
+    // WITHDRAWN: the record stays public; the remaining affordance is asking operators to remove it.
+    return viewLink(a.key) + b("Request takedown", "takedown");
   }
   function viewLink(key) {
     return '<a class="button buttonSecondary buttonSmall" href="/benchmarks/' + encodeURIComponent(key || "") + '" target="_blank" rel="noopener">View</a>';
@@ -166,7 +170,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.name || a.key || "Benchmark", decorations: decorations(), secondaryId: a.key || "", actions: "" }) +
       '<div class="detailsTabHeader">' +
-      '<nav class="modalTabBar" role="tablist">' + tabBtn("details", "Details") + tabBtn("subjects", "Subjects") + tabBtn("metrics", "Metrics") + tabBtn("runs", "Runs") + tabBtn("apikeys", "API Keys") + "</nav>" +
+      '<nav class="modalTabBar" role="tablist">' + tabBtn("details", "Details") + tabBtn("subjects", "Subjects") + tabBtn("metrics", "Metrics") + tabBtn("runs", "Runs") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div>' +
       "</div>" +
       '<div id="tab-panel"></div>' +
@@ -205,6 +209,7 @@
     if (currentRenderedTab === "details") { renderDetails(panel, actions); }
     else if (currentRenderedTab === "subjects") { renderSubjects(panel, actions); }
     else if (currentRenderedTab === "metrics") { renderMetrics(panel, actions); }
+    else if (currentRenderedTab === "history") { renderHistory(panel, actions); }
     else if (currentRenderedTab === "apikeys") { renderApiKeys(panel, actions); }
     else { renderRuns(panel, actions); }
   }
@@ -409,8 +414,10 @@
   }
 
   async function renderSubjects(panel, actions) {
-    const priv = statusInfo().status === "PRIVATE"; // published => subjects are frozen
-    if (CAN_WRITE && priv && actions) {
+    const a = BM.attributes || {};
+    const priv = statusInfo().status === "PRIVATE"; // unlink is draft-only (it deletes measurements)
+    // Linking is additive and allowed even when published (recorded in the history); closed blocks it.
+    if (CAN_WRITE && !a.closed && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-subject-btn">' + SM.icon("plus", 14) + " Add subject</button>";
       $("add-subject-btn").addEventListener("click", openAddSubjectModal);
     }
@@ -579,8 +586,10 @@
   // measurement schema. The table is driven by the link rows joined to the account library (which
   // supplies each metric's name/label/type); unlink removes the snapshot (draft benchmarks only).
   async function renderMetrics(panel, actions) {
-    const priv = statusInfo().status === "PRIVATE"; // published => metrics are frozen
-    if (CAN_WRITE && priv && actions) {
+    const a = BM.attributes || {};
+    // Linking and unlinking are allowed even when published (recorded in the history as a
+    // semantic-core change); only the closed signal blocks additions.
+    if (CAN_WRITE && !a.closed && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-metric-btn">' + SM.icon("plus", 14) + " Add metric</button>";
       $("add-metric-btn").addEventListener("click", openAddMetricModal);
     }
@@ -590,12 +599,12 @@
       { key: "label", label: "Label", sortable: true, sortValue: (t) => (t.attributes || {}).label || "", render: (t) => esc((t.attributes || {}).label || "") },
       { key: "type", label: "Type", sortable: true, sortValue: (t) => (t.attributes || {}).type || "", render: (t) => SMMetricForm.typePillHtml((t.attributes || {}).type) },
     ];
-    if (CAN_WRITE && priv) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
+    if (CAN_WRITE) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn unlink-metric" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).label || (t.attributes || {}).name || "") + '" title="Unlink metric" aria-label="Unlink metric">' + SM.icon("trash", 15) + "</button>" });
     const table = SM.pagedTable($("metrics-table"), {
       columns: cols, rows: [], sort: { key: "name", dir: "asc" }, emptyText: "No metrics linked yet.",
       onRowClick: (t) => { location.href = "/account/metrics/detail?id=" + encodeURIComponent(t.id); },
-      onRender: CAN_WRITE && priv ? (c) => c.querySelectorAll(".unlink-metric").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); unlinkMetric(el.dataset.link, el.dataset.name); })) : undefined,
+      onRender: CAN_WRITE ? (c) => c.querySelectorAll(".unlink-metric").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); unlinkMetric(el.dataset.link, el.dataset.name); })) : undefined,
     });
     try {
       const [linksDoc, libDoc] = await Promise.all([
@@ -691,7 +700,8 @@
 
   async function unlinkMetric(linkId, name) {
     if (!linkId) { setMsg("Couldn't resolve the link to remove — refresh and try again.", "error"); return; }
-    const ok = await SM.confirm({ title: "Unlink metric?", message: "Remove <strong>" + esc(name) + "</strong> from this benchmark’s reported metrics? Existing measurement data is kept, but this metric is no longer part of the benchmark. The metric stays in your library.", confirmLabel: "Unlink" });
+    const published = statusInfo().status !== "PRIVATE";
+    const ok = await SM.confirm({ title: "Unlink metric?", message: "Remove <strong>" + esc(name) + "</strong> from this benchmark’s reported metrics? Existing measurement data is kept, but this metric is no longer part of the benchmark. The metric stays in your library." + (published ? " This benchmark is published, so the change is recorded in its public history." : ""), confirmLabel: "Unlink" });
     if (!ok) return;
     setMsg("");
     try {
@@ -724,8 +734,9 @@
   }
 
   async function renderRuns(panel, actions) {
-    const priv = statusInfo().status === "PRIVATE";
-    if (CAN_WRITE && priv && actions) {
+    const a = BM.attributes || {};
+    // Runs may be added and edited even when published (recorded in the history); closed blocks adds.
+    if (CAN_WRITE && !a.closed && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-run-btn">' + SM.icon("plus", 14) + " Add run</button>";
       $("add-run-btn").addEventListener("click", openAddRunModal);
     }
@@ -751,13 +762,13 @@
     }
   }
 
-  // ── Run modal — edit the run's fields (draft benchmarks only; the run ID is fixed at creation),
-  //    manage its API keys, and jump to its measurements. On a published benchmark the fields are
-  //    read-only and Invalidate is the only run action. ──
+  // ── Run modal — edit the run's fields (the run ID is fixed at creation), manage its API keys,
+  //    and jump to its measurements. Editing works at any lifecycle stage; on a published benchmark
+  //    the edit is recorded in the history, and Delete gives way to Invalidate. ──
   function openRunModal(run) {
     const a = run.attributes || {};
     const priv = statusInfo().status === "PRIVATE";
-    const canEdit = CAN_WRITE && priv;
+    const canEdit = CAN_WRITE;
     const f = runFlags(a);
     const dis = canEdit ? "" : " disabled";
     const runHref = "/account/runs/detail?id=" + encodeURIComponent(run.id);
@@ -776,7 +787,8 @@
       '<div id="run-keys-host"></div></div>';
     const actionsHtml =
       '<div class="modalActions">' +
-      (canEdit ? '<button type="button" class="button buttonDanger buttonSmall" id="run-delete" style="margin-right:auto;">Delete run</button>' : "") +
+      // Delete is draft-only (a published run is invalidated, never deleted — the record must not vanish).
+      (CAN_WRITE && priv ? '<button type="button" class="button buttonDanger buttonSmall" id="run-delete" style="margin-right:auto;">Delete run</button>' : "") +
       (!priv && CAN_WRITE && !f.invalidated ? '<button type="button" class="button buttonSecondary buttonSmall" id="run-invalidate" style="margin-right:auto;">Invalidate</button>' : "") +
       '<a class="buttonLink" href="' + runHref + '#measurements">View measurements</a>' +
       '<button type="button" class="button buttonSecondary buttonSmall" data-close>' + (canEdit ? "Cancel" : "Close") + "</button>" +
@@ -785,8 +797,10 @@
     const m = SM.modal({
       title: "Run " + (a.key || ""),
       description: canEdit
-        ? "Edit this run — its measurements live on the run page."
-        : priv ? "You have read-only access to this benchmark." : "This benchmark is published, so the run is frozen.",
+        ? (priv
+          ? "Edit this run — its measurements live on the run page."
+          : "Edit this run — this benchmark is published, so changes are recorded in its public history.")
+        : "You have read-only access to this benchmark.",
       bodyHtml: fieldsHtml + keysHtml + actionsHtml,
       width: 680,
     });
@@ -937,11 +951,122 @@
     } catch (err) { runModalMsg(parentModal, err.message); }
   }
 
+  // ── History tab — the benchmark's audit trail (its own events plus its runs/measurements). ──
+  function eventLabel(t) {
+    const labels = {
+      "benchmark.created": "Created",
+      "benchmark.edited": "Edited",
+      "benchmark.published": "Published",
+      "benchmark.closed": "Closed",
+      "benchmark.reopened": "Reopened",
+      "benchmark.withdrawn": "Withdrawn",
+      "benchmark.taken_down": "Taken down",
+      "benchmark.takedown_requested": "Takedown requested",
+      "run.created": "Run created",
+      "run.edited": "Run edited",
+      "run.ended": "Run ended",
+      "run.reopened": "Run reopened",
+      "run.appended": "Run appended",
+      "run.invalidated": "Run invalidated",
+      "measurement.created": "Measurement recorded",
+      "measurement.corrected": "Measurement corrected",
+      "subject.created": "Subject created",
+      "subject.edited": "Subject edited",
+    };
+    return labels[t] || t;
+  }
+  function actorLabel(actor) {
+    if (!actor) return "—";
+    if (actor.label) return actor.label;
+    if (actor.type === "API_KEY") return "an API key";
+    if (actor.type === "USER") return whoLabel(actor.id);
+    return actor.type ? String(actor.type).toLowerCase() : "—";
+  }
+  function historyColumns() {
+    return [
+      { key: "when", label: "When", sortable: true, sortValue: (e) => (e.attributes || {}).occurred_at || "", render: (e) => esc(fmtDate((e.attributes || {}).occurred_at) || "—") },
+      { key: "event", label: "Event", sortable: true, sortValue: (e) => (e.attributes || {}).event_type || "", render: (e) => {
+        const a = e.attributes || {};
+        return esc(eventLabel(a.event_type)) + (a.semantic_core ? ' <span class="tabBadge" title="Changed how the numbers are computed or read">semantic</span>' : "");
+      } },
+      { key: "description", label: "What happened", sortable: false, render: (e) => esc((e.attributes || {}).description || "") },
+      { key: "actor", label: "By", sortable: false, render: (e) => esc(actorLabel((e.attributes || {}).actor)) },
+    ];
+  }
+  function openHistoryEventModal(e) {
+    const a = e.attributes || {};
+    const changes = a.changes ? '<p class="detailFieldLabel" style="margin-top:0.8rem;">Changes (before → after)</p><pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:0.82rem;color:var(--text-muted);max-height:320px;overflow:auto;">' + esc(JSON.stringify(a.changes, null, 2)) + "</pre>" : "";
+    SM.modal({
+      title: eventLabel(a.event_type),
+      description: fmtDate(a.occurred_at) + " — " + actorLabel(a.actor),
+      bodyHtml: '<p>' + esc(a.description || "") + "</p>" + changes +
+        '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Close</button></div>',
+      width: 620,
+    });
+  }
+  async function renderHistory(panel, actions) {
+    panel.innerHTML = '<p class="muted" style="margin:0 0 0.6rem;">Every change to this benchmark and its runs and measurements, newest first. Visitors see the post-publish events on the public page, attributed to the publisher.</p><div id="history-table"></div>';
+    const table = SM.pagedTable($("history-table"), {
+      columns: historyColumns(), rows: [], sort: { key: "when", dir: "desc" },
+      emptyText: "No history recorded yet.",
+      onRowClick: openHistoryEventModal,
+    });
+    try {
+      const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID) + "/history");
+      table.setRows((doc && doc.data) || []);
+    } catch (err) {
+      $("history-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
+  }
+
+  // ── Request-takedown modal — files a request for OPERATOR review; it never deletes anything. ──
+  function openTakedownModal() {
+    const a = BM.attributes || {};
+    const bodyHtml =
+      '<form class="form" id="takedown-form" novalidate>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Your name</span><input name="tname" type="text" autocomplete="name" value="' + esc(USER_NAME) + '" /><p class="fieldErrorMessage" hidden></p></label>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Your email</span><input name="temail" type="email" autocomplete="email" value="' + esc(USER_EMAIL) + '" /><p class="fieldErrorMessage" hidden></p></label>' +
+      '<label class="field"><span class="detailFieldLabel fieldRequired">Why should it be removed?</span><textarea name="treason" rows="4" placeholder="e.g. it contains personal data that must be removed"></textarea><p class="fieldErrorMessage" hidden></p></label>' +
+      '<p class="form-status" id="takedown-msg"></p>' +
+      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<button type="submit" class="button buttonPrimary buttonSmall">Send request</button></div></form>';
+    const m = SM.modal({
+      title: "Request takedown",
+      description: "Asks smplmark operators to remove “" + (a.name || a.key || "") + "” entirely. This files a request for review — nothing is deleted until an operator acts on it. To retract the benchmark yourself while keeping the record, use Withdraw instead.",
+      bodyHtml: bodyHtml,
+      width: 560,
+    });
+    const f = m.panel.querySelector("#takedown-form");
+    const msg = m.panel.querySelector("#takedown-msg");
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      msg.textContent = ""; msg.className = "form-status";
+      let ok = true;
+      [["tname", "Your name is required."], ["temail", "Your email is required."], ["treason", "A reason is required."]].forEach(([name, err]) => {
+        const el = f[name]; SM.clearFieldError(el);
+        if (!el.value.trim()) { SM.setFieldError(el, err); ok = false; }
+      });
+      if (!ok) return;
+      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+      try {
+        await apiFetch("/api/v1/takedown_requests", { method: "POST", body: jsonapiBody("takedown_request", {
+          benchmark: ID,
+          requester_name: f.tname.value.trim(),
+          requester_email: f.temail.value.trim(),
+          reason: f.treason.value.trim(),
+        }) });
+        m.close();
+        SM.toast("Takedown request sent — smplmark operators will review it.", { kind: "success" });
+      } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+    });
+  }
+
   // ── Lifecycle actions ──
   async function lifecycle(act) {
     if (act === "publish") { openPublishModal(); return; }
     if (act === "delete") { doDelete(); return; }
     if (act === "withdraw") { doWithdraw(); return; }
+    if (act === "takedown") { openTakedownModal(); return; }
     if (act === "close") { await post("close"); return; }
     if (act === "reopen") { await post("reopen"); return; }
   }
@@ -981,7 +1106,7 @@
     const a = BM.attributes || {};
     const m = SM.modal({
       title: "Publish “" + (a.name || a.key || "") + "”",
-      description: "Publishing is a one-way step and freezes the benchmark. Choose how it's attributed.",
+      description: "Publishing makes the benchmark public. It stays editable, but every later change is recorded in its public history. Choose how it's attributed.",
       bodyHtml:
         '<form class="form" id="publish-form">' +
         '<div id="publish-options"><p class="muted">Loading publishing options…</p></div>' +

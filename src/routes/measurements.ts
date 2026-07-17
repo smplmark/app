@@ -1,11 +1,13 @@
 import { Hono } from "hono";
+import { emitAuditEvent } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
-import { getBenchmarkById } from "../data/benchmarks";
+import { getBenchmarkById, type BenchmarkRowWithPublisher } from "../data/benchmarks";
 import {
   deleteMeasurement,
   getMeasurementById,
   insertMeasurement,
   listMeasurements,
+  updateMeasurement,
   type MeasurementScope,
 } from "../data/measurements";
 import { isSubjectLinked, isSubjectPublic } from "../data/benchmark_subjects";
@@ -28,10 +30,10 @@ import {
 } from "../http/middleware";
 import { parseDateRange } from "../query/daterange";
 import { paginationMeta } from "../query/pagination";
-import { parseMeasurementSchema } from "../schema/measurement_schema";
+import { canonical, parseMeasurementSchema } from "../schema/measurement_schema";
 import { measurementsToCsv } from "../serialize/csv";
 import { serializeMeasurement } from "../serialize/resource";
-import type { AuthContext, MeasurementSchema } from "../types";
+import type { AuthContext, MeasurementRow, MeasurementSchema, RunRow } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
 const SORT_ALLOWED = ["created_at"] as const;
@@ -85,16 +87,11 @@ measurements.post("/", requireAuth, async (c) => {
     throw new ConflictError("The subject is not linked to the run's benchmark.");
   }
   assertBenchmarkEditable(benchmark);
-  // Measurements land while the benchmark is private; publishing freezes the whole dataset. A closed
-  // benchmark and an ended run also refuse new measurements.
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError("This benchmark is published; its data is frozen and no new measurements can be added.");
-  }
+  // Measurements may land at any lifecycle stage — post-publish ingest and appends to an ended run
+  // are allowed and audited (the record is auditable, not frozen). Only the publisher's explicit
+  // "closed" signal refuses new data (it's reversible via reopen).
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new measurements can be added.");
-  }
-  if (run.ended_at !== null) {
-    throw new ConflictError("This run has ended; no new measurements can be added.");
   }
 
   const now = Date.now();
@@ -117,6 +114,32 @@ measurements.post("/", requireAuth, async (c) => {
     meta: metaJson,
     client_ip: clientIp,
   });
+
+  const visibility = benchmark.status === "PRIVATE" ? "internal" : "public";
+  emitAuditEvent(c, {
+    event_type: "measurement.created",
+    resource_type: "measurement",
+    resource_id: String(id),
+    benchmark_id: benchmark.id,
+    visibility,
+    description: "Measurement recorded.",
+    extra: { run_id: run.id, subject_id: subject.id },
+    actor: auth,
+  });
+  // Appending to a run that had already ended is legitimate but noteworthy — it gets its own
+  // run-level event so the run's history shows the late addition.
+  if (run.ended_at !== null) {
+    emitAuditEvent(c, {
+      event_type: "run.appended",
+      resource_type: "run",
+      resource_id: run.id,
+      benchmark_id: benchmark.id,
+      visibility,
+      description: `Measurement added to run "${run.key}" after it ended.`,
+      extra: { measurement_id: String(id) },
+      actor: auth,
+    });
+  }
 
   const schema = parseMeasurementSchema(benchmark.measurement_schema);
   const resource = serializeMeasurement(
@@ -225,13 +248,14 @@ measurements.get("/", optionalAuth, async (c) => {
   });
 });
 
-// Delete a single measurement. Measurements are append-only once their benchmark is published (delete a
-// run's data there by invalidating the whole run), so this is allowed only while the benchmark is a
-// draft. The id is the measurement's rowid.
-measurements.delete("/:id", requireAuth, async (c) => {
+/** Load a measurement + its run/benchmark chain for a covered mutating caller, or 404 (no-leak). */
+async function loadOwnedMeasurement(
+  c: Parameters<typeof getAuth>[0],
+  rawId: string,
+): Promise<{ id: number; measurement: MeasurementRow; run: RunRow; benchmark: BenchmarkRowWithPublisher }> {
   const auth = getAuth(c);
   requireWrite(auth);
-  const id = Number(c.req.param("id"));
+  const id = Number(rawId);
   if (!Number.isInteger(id)) throw new NotFoundError();
   const measurement = await getMeasurementById(c.env.DB, id);
   if (!measurement) throw new NotFoundError();
@@ -245,10 +269,78 @@ measurements.delete("/:id", requireAuth, async (c) => {
   ) {
     throw new NotFoundError();
   }
+  return { id, measurement, run, benchmark };
+}
+
+// Correct a measurement in place: full-replace of its created_at / metrics / meta (its run and
+// subject are fixed — a measurement is an observation of that pair). Allowed at any lifecycle
+// stage; on a published benchmark the correction is part of the public record, and the audit event
+// carries before/after so the History can render exactly what changed.
+measurements.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  const { id, measurement, run, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
+  assertBenchmarkEditable(benchmark);
+  const attrs = await readAttributes(c);
+  const createdAt = "created_at" in attrs ? parseEpochMs(attrs.created_at, "created_at") : measurement.created_at;
+  const metricsJson =
+    "metrics" in attrs && attrs.metrics !== null
+      ? JSON.stringify(validateMetrics(attrs.metrics))
+      : null;
+  const metaJson =
+    "meta" in attrs && attrs.meta !== null
+      ? JSON.stringify(requireObject(attrs.meta, "meta"))
+      : null;
+
+  await updateMeasurement(c.env.DB, id, { created_at: createdAt, metrics: metricsJson, meta: metaJson });
+
+  // canonical(): key-order-only differences are not corrections (no spurious public events).
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  if (measurement.created_at !== createdAt) {
+    changes.created_at = { before: measurement.created_at, after: createdAt };
+  }
+  const oldMetrics = measurement.metrics === null ? null : JSON.parse(measurement.metrics);
+  const newMetrics = metricsJson === null ? null : JSON.parse(metricsJson);
+  if (canonical(oldMetrics) !== canonical(newMetrics)) {
+    changes.metrics = { before: oldMetrics, after: newMetrics };
+  }
+  const oldMeta = measurement.meta === null ? null : JSON.parse(measurement.meta);
+  const newMeta = metaJson === null ? null : JSON.parse(metaJson);
+  if (canonical(oldMeta) !== canonical(newMeta)) {
+    changes.meta = { before: oldMeta, after: newMeta };
+  }
+  if (Object.keys(changes).length > 0) {
+    emitAuditEvent(c, {
+      event_type: "measurement.corrected",
+      resource_type: "measurement",
+      resource_id: String(id),
+      benchmark_id: benchmark.id,
+      visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+      description: "Measurement corrected.",
+      changes,
+      extra: { run_id: run.id, subject_id: measurement.subject_id },
+      actor: auth,
+    });
+  }
+
+  const schema = parseMeasurementSchema(benchmark.measurement_schema);
+  return resourceResponse(
+    serializeMeasurement(
+      { id, run_id: run.id, subject_id: measurement.subject_id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+      schema,
+      { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
+    ),
+  );
+});
+
+// Delete a single measurement. Allowed only while the benchmark is a draft: a published
+// measurement must never silently vanish — correct it in place (PUT, audited with before/after) or
+// invalidate its run to retract it visibly. The id is the measurement's rowid.
+measurements.delete("/:id", requireAuth, async (c) => {
+  const { id, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
   if (benchmark.status !== "PRIVATE") {
     throw new ConflictError(
-      "Published measurements are append-only and cannot be deleted; invalidate the run instead.",
+      "A published measurement can't be deleted — the public record must not vanish. Correct it in place or invalidate its run instead.",
     );
   }
   await deleteMeasurement(c.env.DB, id);

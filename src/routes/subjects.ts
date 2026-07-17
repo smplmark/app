@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { emitAuditEvent, listHistoryEvents } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import { isSubjectPublic, subjectHasFrozenBenchmark, subjectHasNonPrivateBenchmark } from "../data/benchmark_subjects";
@@ -16,6 +17,7 @@ import {
 import { getSubjectTypeById } from "../data/subject_types";
 import { ConflictError, NotFoundError } from "../errors";
 import { requireString } from "../http/body";
+import { canonical } from "../schema/measurement_schema";
 import { kebab, parseStoredFieldDefs, validateSubjectValues } from "../schema/subject_type";
 import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
 import {
@@ -26,7 +28,7 @@ import {
   type AppBindings,
 } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
-import { serializeSubject } from "../serialize/resource";
+import { serializeHistoryEvent, serializeSubject } from "../serialize/resource";
 import type { SubjectRow } from "../types";
 import { readAttributes, readPagination, readSort } from "./shared";
 
@@ -111,6 +113,16 @@ subjects.post("/", requireAuth, async (c) => {
     name,
     details,
   });
+  // Subjects are account-level (shared across benchmarks), so their events carry no benchmark
+  // correlation and stay internal — the public History is benchmark-scoped.
+  emitAuditEvent(c, {
+    event_type: "subject.created",
+    resource_type: "subject",
+    resource_id: row.id,
+    visibility: "internal",
+    description: `Subject "${name}" created.`,
+    actor: auth,
+  });
   return resourceResponse(serializeSubject(row), { status: 201 });
 });
 
@@ -173,6 +185,7 @@ subjects.get("/:id", optionalAuth, async (c) => {
 });
 
 subjects.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
   const subject = await loadOwned(c, c.req.param("id"));
   await assertSubjectNotFrozen(c, subject.id);
   const attrs = await readAttributes(c);
@@ -184,7 +197,46 @@ subjects.put("/:id", requireAuth, async (c) => {
     "details" in attrs ? attrs.details : null,
   );
   const row = await updateSubject(c.env.DB, subject.id, { name, details });
+
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  if (subject.name !== name) changes.name = { before: subject.name, after: name };
+  const oldDetails = subject.details === null ? null : JSON.parse(subject.details);
+  // canonical(): key-order-only differences are not changes (no spurious "edited" events).
+  if (canonical(oldDetails) !== canonical(details)) {
+    changes.details = { before: oldDetails, after: details };
+  }
+  if (Object.keys(changes).length > 0) {
+    emitAuditEvent(c, {
+      event_type: "subject.edited",
+      resource_type: "subject",
+      resource_id: subject.id,
+      visibility: "internal",
+      description: `Subject "${name}" edited.`,
+      changes,
+      actor: auth,
+    });
+  }
   return resourceResponse(serializeSubject(row as SubjectRow));
+});
+
+// The subject's own audit trail (console detail page). Subject events are account-level and
+// internal, so this is a covered-caller surface; an uncovered caller on a publicly-linked subject
+// gets the public filter, which for subjects yields nothing rather than a leak.
+subjects.get("/:id/history", optionalAuth, async (c) => {
+  const auth = getOptionalAuth(c);
+  const subject = await getSubjectById(c.env.DB, c.req.param("id"));
+  if (!subject) throw new NotFoundError();
+  const covered = auth !== undefined && covers(auth, { account_id: subject.account_id });
+  if (!covered && !(await isSubjectPublic(c.env.DB, subject.id))) {
+    throw new NotFoundError();
+  }
+  const events = await listHistoryEvents(c.env, { resource_type: "subject", resource_id: subject.id });
+  const visible = covered ? events : events.filter((e) => e.visibility === "public");
+  const redact = covered ? null : { publisher_label: "the publisher" };
+  return collectionResponse(
+    visible.map((e) => serializeHistoryEvent(e, redact)),
+    { meta: { count: visible.length } },
+  );
 });
 
 subjects.delete("/:id", requireAuth, async (c) => {

@@ -253,7 +253,7 @@ describe("personal publish", () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
-    await seedPublishable(me.token, b.id); // clear the readiness gate before the freeze
+    await seedPublishable(me.token, b.id); // clear the readiness gate before the marked-ready lock
     await markReady(me.token, b.id);
 
     // opt-in off → 403
@@ -283,7 +283,7 @@ describe("personal publish", () => {
     expect((((await ok.json()) as { data: Resource }).data.attributes.published_as as { kind: string }).kind).toBe("PERSONAL");
   });
 
-  it("freezes ingest after publishing (even a live run rejects new measurements)", async () => {
+  it("keeps ingest open after publishing; new measurements join the public record", async () => {
     const me = await register();
     await markVerified(me.user_id);
     const b = await makeBenchmark(me.token);
@@ -293,17 +293,18 @@ describe("personal publish", () => {
     await markReady(me.token, b.id);
     await allowPersonalPublish(b.id);
     expect((await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(), bearer(me.token))).status).toBe(200);
-    // published → the whole dataset is frozen; even the still-live run rejects new measurements
+    // published → ingest continues; the addition is audited rather than blocked
     const ing = await apiPost(
       "/api/v1/measurements",
       { data: { type: "measurement", attributes: { run: run.id, subject: t.id, metrics: { skew_ms: 5 } } } },
       bearer(me.token),
     );
-    expect(ing.status).toBe(409);
-    const errors = ((await ing.json()) as { errors: { detail?: string }[] }).errors;
-    expect(errors[0].detail).toBe(
-      "This benchmark is published; its data is frozen and no new measurements can be added.",
-    );
+    expect(ing.status).toBe(201);
+    const created = ((await ing.json()) as { data: Resource }).data;
+    expect(created.attributes.run).toBe(run.id);
+    // Both measurements now stand in the published dataset.
+    const list = await apiGet(`/api/v1/measurements?filter[benchmark]=${b.id}`);
+    expect(((await list.json()) as { data: Resource[] }).data.length).toBe(2);
   });
 
   it("lets an author who has since become a viewer no longer mark ready", async () => {

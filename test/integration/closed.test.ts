@@ -34,16 +34,6 @@ async function expectConflict(
   expect(body.errors[0].detail).toBe(detail);
 }
 
-const SUBJECTS_FROZEN =
-  "This benchmark is published; its subjects are frozen and no new ones can be added.";
-const RUNS_FROZEN = "This benchmark is published; its runs are frozen and cannot be changed.";
-const DATA_FROZEN =
-  "This benchmark is published; its data is frozen and no new measurements can be added.";
-const METRICS_FROZEN =
-  "This benchmark is published; its metrics are frozen and no new ones can be added.";
-const INTERPRETATION_FROZEN =
-  "A published benchmark's schema is frozen: its metrics, derived expressions, and chart mapping cannot be changed or removed. Only descriptions and unit labels may be edited.";
-
 describe("closed lifecycle — benchmark", () => {
   it("close on a private benchmark blocks new subjects/runs/measurements; reopen restores; doubles 409", async () => {
     const owner = await register();
@@ -101,44 +91,68 @@ describe("closed lifecycle — benchmark", () => {
     expect((await action("benchmarks", bench.id, "reopen", owner.token)).status).toBe(409);
   });
 
-  it("publish freezes subjects/runs/measurements outright; close/reopen still toggle but restore nothing", async () => {
+  it("publishing keeps subjects/runs/measurements open; close still blocks them and reopen restores", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const subject = await makeSubject(owner.token, bench.id);
     const run = await makeRun(owner.token, bench.id);
     await publish(owner.token, owner.user_id, bench.id);
 
-    // The published freeze takes precedence over the closed gate — the messages name the publish.
+    // Publishing doesn't freeze ingest — additions land as part of the (audited) public record.
     const t2 = await makeAccountSubject(owner.token, "t2");
-    const linkT2 = () =>
-      apiPost(
-        "/api/v1/benchmark_subjects",
-        { data: { type: "benchmark_subject", attributes: { benchmark: bench.id, subject: t2.id } } },
-        bearer(owner.token),
-      );
-    const postRun = () =>
-      apiPost(
-        "/api/v1/runs",
-        { data: { type: "run", attributes: { benchmark: bench.id, key: "r2" } } },
-        bearer(owner.token),
-      );
+    expect(
+      (
+        await apiPost(
+          "/api/v1/benchmark_subjects",
+          { data: { type: "benchmark_subject", attributes: { benchmark: bench.id, subject: t2.id } } },
+          bearer(owner.token),
+        )
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiPost(
+          "/api/v1/runs",
+          { data: { type: "run", attributes: { benchmark: bench.id, key: "r2" } } },
+          bearer(owner.token),
+        )
+      ).status,
+    ).toBe(201);
     const postMeasurement = () =>
       apiPost(
         "/api/v1/measurements",
         { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
         bearer(owner.token),
       );
-    await expectConflict(linkT2(), SUBJECTS_FROZEN);
-    await expectConflict(postRun(), RUNS_FROZEN);
-    await expectConflict(postMeasurement(), DATA_FROZEN);
+    expect((await postMeasurement()).status).toBe(201);
 
-    // Close and reopen remain available as lifecycle signals…
+    // The closed gate is the one signal that refuses new data, published or not.
     expect((await action("benchmarks", bench.id, "close", owner.token)).status).toBe(200);
+    const t3 = await makeAccountSubject(owner.token, "t3");
+    await expectConflict(
+      apiPost(
+        "/api/v1/benchmark_subjects",
+        { data: { type: "benchmark_subject", attributes: { benchmark: bench.id, subject: t3.id } } },
+        bearer(owner.token),
+      ),
+      "This benchmark is closed; no new subjects can be added.",
+    );
+    await expectConflict(
+      apiPost(
+        "/api/v1/runs",
+        { data: { type: "run", attributes: { benchmark: bench.id, key: "r3" } } },
+        bearer(owner.token),
+      ),
+      "This benchmark is closed; no new runs can be added.",
+    );
+    await expectConflict(
+      postMeasurement(),
+      "This benchmark is closed; no new measurements can be added.",
+    );
+
+    // Reopen restores appendability even on a published benchmark.
     expect((await action("benchmarks", bench.id, "reopen", owner.token)).status).toBe(200);
-    // …but reopening no longer restores appendability: the publish freeze holds regardless.
-    await expectConflict(linkT2(), SUBJECTS_FROZEN);
-    await expectConflict(postRun(), RUNS_FROZEN);
-    await expectConflict(postMeasurement(), DATA_FROZEN);
+    expect((await postMeasurement()).status).toBe(201);
   });
 
   it("close needs author-or-admin authority; the public sees the closed flag", async () => {
@@ -162,38 +176,43 @@ describe("closed lifecycle — benchmark", () => {
 });
 
 describe("closed lifecycle — ended runs", () => {
-  it("an ended run on a private benchmark refuses new measurements; double end 409s", async () => {
+  it("an ended run still accepts new measurements (a late append is audited, not blocked); double end 409s", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const subject = await makeSubject(owner.token, bench.id);
     const run = await makeRun(owner.token, bench.id);
     expect((await action("runs", run.id, "end", owner.token)).status).toBe(200);
-    await expectConflict(
-      apiPost(
-        "/api/v1/measurements",
-        { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
-        bearer(owner.token),
-      ),
-      "This run has ended; no new measurements can be added.",
-    );
+    // Ending a run is a lifecycle signal, not an ingest gate: appending afterwards succeeds and
+    // simply shows up in the run's history as a late addition.
+    expect(
+      (
+        await apiPost(
+          "/api/v1/measurements",
+          { data: { type: "measurement", attributes: { run: run.id, subject: subject.id } } },
+          bearer(owner.token),
+        )
+      ).status,
+    ).toBe(201);
     await expectConflict(
       action("runs", run.id, "end", owner.token),
       "This run has already ended.",
     );
   });
 
-  it("publishing freezes the end action along with the rest of the runs", async () => {
+  it("publishing keeps the end action open; the run ends as part of the public record", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     const subject = await makeSubject(owner.token, bench.id);
     const run = await makeRun(owner.token, bench.id);
     await makeMeasurement(owner.token, run.id, subject.id);
     await publish(owner.token, owner.user_id, bench.id);
-    await expectConflict(action("runs", run.id, "end", owner.token), RUNS_FROZEN);
+    const ended = await action("runs", run.id, "end", owner.token);
+    expect(ended.status).toBe(200);
+    expect(((await ended.json()) as { data: Resource }).data.attributes.live).toBe(false);
   });
 });
 
-describe("post-publish schema freeze", () => {
+describe("post-publish schema edits", () => {
   const put = (token: string, bench: Resource, schema: unknown) =>
     apiPut(
       `/api/v1/benchmarks/${bench.id}`,
@@ -206,32 +225,32 @@ describe("post-publish schema freeze", () => {
       bearer(token),
     );
 
-  it("rejects adding a chart where none existed after publish", async () => {
+  it("adds a chart where none existed after publish", async () => {
     const owner = await register();
     const chartless = { metrics: [{ name: "cpu_ms", type: "DECIMAL" }], derived: [], chart: null };
     const bench = await makeBenchmark(owner.token, { key: "chartless", measurement_schema: chartless });
     await publish(owner.token, owner.user_id, bench.id);
     const res = await put(owner.token, bench, { ...chartless, chart: { x: null, y: "cpu_ms", x_kind: "CATEGORY" } });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
-      "This benchmark is published; its chart mapping is frozen and cannot be added.",
-    );
+    expect(res.status).toBe(200);
+    const schema = ((await res.json()) as { data: Resource }).data.attributes
+      .measurement_schema as { chart?: unknown };
+    expect(schema.chart).toEqual({ x: null, y: "cpu_ms", x_kind: "CATEGORY" });
   });
 
-  it("rejects appends after publish; unchanged round-trips and label edits still pass", async () => {
+  it("accepts appends, expression changes, chart changes, and removals after publish", async () => {
     const owner = await register();
     const bench = await makeBenchmark(owner.token);
     await publish(owner.token, owner.user_id, bench.id);
 
-    // Appending a brand-new stored metric alongside the frozen derived skew_ms → 409. The
-    // additive-freeze era is over: publish freezes the metric set outright.
+    // Appending a brand-new stored metric alongside the derived skew_ms lands — publishing no
+    // longer freezes the metric set; the semantic-core change is audited instead.
     const grown = {
       ...SKEW_SCHEMA,
       metrics: [{ name: "cpu_ms", type: "number", description: "CPU time per firing." }],
     };
-    await expectConflict(put(owner.token, bench, grown), METRICS_FROZEN);
+    expect((await put(owner.token, bench, grown)).status).toBe(200);
 
-    // Appending a new derived value is refused the same way.
+    // Appending a new derived value is accepted the same way.
     const grownDerived = {
       ...SKEW_SCHEMA,
       derived: [
@@ -239,9 +258,9 @@ describe("post-publish schema freeze", () => {
         { name: "skew_s", unit: "s", expr: { "/": [{ var: "skew_ms" }, 1000] } },
       ],
     };
-    await expectConflict(put(owner.token, bench, grownDerived), METRICS_FROZEN);
+    expect((await put(owner.token, bench, grownDerived)).status).toBe(200);
 
-    // Round-tripping the schema unchanged is a cosmetic PUT and still passes.
+    // Round-tripping the original schema back is a full-replace like any other → 200.
     expect((await put(owner.token, bench, SKEW_SCHEMA)).status).toBe(200);
 
     // Descriptions and unit labels inside existing entries remain editable.
@@ -253,18 +272,22 @@ describe("post-publish schema freeze", () => {
     };
     expect((await put(owner.token, bench, relabeled)).status).toBe(200);
 
-    // Mutating the existing derived expr → 409.
+    // Mutating the existing derived expr → 200 (a semantic-core change, flagged in the History).
     const mutated = {
       ...SKEW_SCHEMA,
       derived: [{ name: "skew_ms", unit: "ms", expr: { var: "created_at" } }],
     };
-    await expectConflict(put(owner.token, bench, mutated), INTERPRETATION_FROZEN);
+    expect((await put(owner.token, bench, mutated)).status).toBe(200);
 
-    // Removing the frozen derived (and its chart) → 409.
-    await expectConflict(put(owner.token, bench, { metrics: [], derived: [] }), INTERPRETATION_FROZEN);
-
-    // Changing the chart → 409.
+    // Changing the chart → 200.
     const rechart = { ...SKEW_SCHEMA, chart: { x: null, y: "skew_ms", x_kind: "CATEGORY" } };
-    await expectConflict(put(owner.token, bench, rechart), INTERPRETATION_FROZEN);
+    expect((await put(owner.token, bench, rechart)).status).toBe(200);
+
+    // Removing the derived (and its chart) → 200; the schema really is empty afterwards.
+    expect((await put(owner.token, bench, { metrics: [], derived: [] })).status).toBe(200);
+    const readBack = (await (await apiGet(`/api/v1/benchmarks/${bench.id}`, bearer(owner.token))).json()) as {
+      data: Resource;
+    };
+    expect(readBack.data.attributes.measurement_schema).toEqual({ metrics: [], derived: [] });
   });
 });

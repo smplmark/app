@@ -227,8 +227,8 @@ describe("publish gate + lifecycle", () => {
   });
 });
 
-describe("interpretation freeze (full freeze after publish)", () => {
-  it("allows cosmetic edits but freezes the semantic core after publish", async () => {
+describe("post-publish edits (auditable record, not frozen)", () => {
+  it("allows cosmetic and semantic-core edits after publish", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const st = b.attributes.subject_type as string;
@@ -242,8 +242,8 @@ describe("interpretation freeze (full freeze after publish)", () => {
     );
     expect(ok.status).toBe(200);
 
-    // Changing a derived expression is frozen.
-    const frozen = await apiPut(
+    // Changing a derived expression is allowed too — the semantic-core change is audited, not blocked.
+    const semantic = await apiPut(
       `/api/v1/benchmarks/${b.id}`,
       putBody({
         name: "Renamed",
@@ -256,9 +256,9 @@ describe("interpretation freeze (full freeze after publish)", () => {
       }),
       bearer(me.token),
     );
-    expect(frozen.status).toBe(409);
+    expect(semantic.status).toBe(200);
 
-    // Appending a new metric is frozen too — the additive-freeze era is over.
+    // Appending a new metric lands as well, and the schema grows.
     const appended = await apiPut(
       `/api/v1/benchmarks/${b.id}`,
       putBody({
@@ -271,11 +271,10 @@ describe("interpretation freeze (full freeze after publish)", () => {
       }),
       bearer(me.token),
     );
-    expect(appended.status).toBe(409);
-    const appendedBody = (await appended.json()) as { errors: { detail: string }[] };
-    expect(appendedBody.errors[0].detail).toBe(
-      "This benchmark is published; its metrics are frozen and no new ones can be added.",
-    );
+    expect(appended.status).toBe(200);
+    const schema = ((await appended.json()) as { data: Resource }).data.attributes
+      .measurement_schema as { derived: { name: string }[] };
+    expect(schema.derived.map((d) => d.name)).toEqual(["skew_ms", "extra_ms"]);
   });
 
   it("forbids deleting a published benchmark but allows deleting a private one", async () => {
@@ -283,9 +282,14 @@ describe("interpretation freeze (full freeze after publish)", () => {
     const priv = await makeBenchmark(me.token, { key: "priv" });
     expect((await apiDelete(`/api/v1/benchmarks/${priv.id}`, bearer(me.token))).status).toBe(204);
 
+    // Deleting is the one mutation an audit trail can't cover — the public record must not vanish.
     const pub = await makeBenchmark(me.token, { key: "pub" });
     await publish(me.token, me.user_id, pub.id);
-    expect((await apiDelete(`/api/v1/benchmarks/${pub.id}`, bearer(me.token))).status).toBe(409);
+    const del = await apiDelete(`/api/v1/benchmarks/${pub.id}`, bearer(me.token));
+    expect(del.status).toBe(409);
+    expect(((await del.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
+      "A published benchmark can't be deleted — the public record must not vanish. Withdraw it instead, or request a takedown for true removal.",
+    );
   });
 });
 

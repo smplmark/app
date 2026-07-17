@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { emitAuditEvent, listHistoryEvents } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
@@ -28,7 +29,8 @@ import {
   type AppBindings,
 } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
-import { serializeRun } from "../serialize/resource";
+import { canonical } from "../schema/measurement_schema";
+import { publisherLabel, serializeHistoryEvent, serializeRun } from "../serialize/resource";
 import type { BenchmarkRow, RunRow } from "../types";
 import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
 
@@ -81,11 +83,9 @@ function assertChronological(started_at: number | null, ended_at: number | null)
   }
 }
 
-/** A published (or withdrawn) benchmark's runs are immutable — no additions, edits, or deletions. */
-function assertRunsMutable(benchmark: BenchmarkRow): void {
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError("This benchmark is published; its runs are frozen and cannot be changed.");
-  }
+/** Post-publish mutations are part of the public record; draft ones are console-only history. */
+function runVisibility(benchmark: BenchmarkRow): "public" | "internal" {
+  return benchmark.status === "PRIVATE" ? "internal" : "public";
 }
 
 /** Resolve the run key: use the supplied one, or auto-generate a unique `run-<hex>` when omitted. */
@@ -117,7 +117,6 @@ runs.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  assertRunsMutable(benchmark);
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new runs can be added.");
   }
@@ -139,6 +138,15 @@ runs.post("/", requireAuth, async (c) => {
     details,
     started_at,
     ended_at,
+  });
+  emitAuditEvent(c, {
+    event_type: "run.created",
+    resource_type: "run",
+    resource_id: row.id,
+    benchmark_id: benchmark.id,
+    visibility: runVisibility(benchmark),
+    description: `Run "${row.key}" created.`,
+    actor: auth,
   });
   return resourceResponse(serializeRun(row), { status: 201 });
 });
@@ -197,30 +205,62 @@ runs.get("/:id", optionalAuth, async (c) => {
 });
 
 runs.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  assertRunsMutable(benchmark);
   const attrs = await readAttributes(c);
   const name = optionalStringOrNull(attrs, "name", LIMITS.nameLength) ?? null;
   const details = "details" in attrs ? attrs.details : null;
   // The timestamps are factual: omitting one keeps the current value (so a prose-only edit never
   // disturbs it); send an explicit value or null to change or clear it. Clearing ended_at returns
-  // the run to live.
+  // the run to live (reopening it).
   const started_at = "started_at" in attrs ? optionalStartedAt(attrs) : run.started_at;
   const ended_at = "ended_at" in attrs ? optionalEndedAt(attrs) : run.ended_at;
   assertChronological(started_at, ended_at);
   const row = await updateRun(c.env.DB, run.id, { name, details, started_at, ended_at });
+
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  if (run.name !== name) changes.name = { before: run.name, after: name };
+  const oldDetails = run.details === null ? null : JSON.parse(run.details);
+  // canonical(): key order must not count as a change — a get-mutate-put that rebuilds the
+  // details object would otherwise stamp a spurious "edited" entry on the public History.
+  if (canonical(oldDetails) !== canonical(details ?? null)) {
+    changes.details = { before: oldDetails, after: details ?? null };
+  }
+  if (run.started_at !== started_at) changes.started_at = { before: run.started_at, after: started_at };
+  if (run.ended_at !== ended_at) changes.ended_at = { before: run.ended_at, after: ended_at };
+  if (Object.keys(changes).length > 0) {
+    // Reopening (clearing ended_at) and ending (setting it) get their catalog names; anything else
+    // is a plain edit. One event either way — `changes` carries the full delta.
+    const reopened = run.ended_at !== null && ended_at === null;
+    const ended = run.ended_at === null && ended_at !== null;
+    emitAuditEvent(c, {
+      event_type: reopened ? "run.reopened" : ended ? "run.ended" : "run.edited",
+      resource_type: "run",
+      resource_id: run.id,
+      benchmark_id: benchmark.id,
+      visibility: runVisibility(benchmark),
+      description: reopened
+        ? `Run "${run.key}" reopened (ended_at cleared).`
+        : ended
+          ? `Run "${run.key}" ended.`
+          : `Run "${run.key}" edited.`,
+      changes,
+      actor: auth,
+    });
+  }
   return resourceResponse(serializeRun(row as RunRow));
 });
 
 runs.delete("/:id", requireAuth, async (c) => {
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  // A private benchmark's runs are freely deletable (measurements cascade). A published benchmark is
-  // frozen — a run that no longer stands must be invalidated instead (kept for the record).
+  // A private benchmark's runs are freely deletable (measurements cascade). A published run's data
+  // is part of the public record and must never silently vanish — a run that no longer stands is
+  // invalidated instead (a visible tombstone; the data stays reachable).
   if (benchmark.status !== "PRIVATE") {
     throw new ConflictError(
-      "This benchmark is published; its runs are frozen and cannot be deleted. Invalidate the run instead.",
+      "A published benchmark's runs can't be deleted — the public record must not vanish. Invalidate the run instead.",
     );
   }
   await deleteRunCascade(c.env.DB, run.id);
@@ -228,15 +268,24 @@ runs.delete("/:id", requireAuth, async (c) => {
 });
 
 runs.post("/:id/actions/end", requireAuth, async (c) => {
+  const auth = getAuth(c);
   const { run, benchmark } = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  assertRunsMutable(benchmark);
   if (run.ended_at !== null) {
     throw new ConflictError("This run has already ended.");
   }
   // A run whose started_at is in the future can't be ended "now" — that would invert the interval.
   assertChronological(run.started_at, Date.now());
   const row = await endRun(c.env.DB, run.id, Date.now());
+  emitAuditEvent(c, {
+    event_type: "run.ended",
+    resource_type: "run",
+    resource_id: run.id,
+    benchmark_id: benchmark.id,
+    visibility: runVisibility(benchmark),
+    description: `Run "${run.key}" ended.`,
+    actor: auth,
+  });
   return resourceResponse(serializeRun(row as RunRow));
 });
 
@@ -247,5 +296,40 @@ runs.post("/:id/actions/invalidate", requireAuth, async (c) => {
   const attrs = await readAttributes(c).catch(() => ({}) as Record<string, unknown>);
   const reason = optionalStringOrNull(attrs, "invalidation_reason") ?? null;
   const row = await invalidateRun(c.env.DB, run.id, Date.now(), reason, auth.user_id);
+  emitAuditEvent(c, {
+    event_type: "run.invalidated",
+    resource_type: "run",
+    resource_id: run.id,
+    benchmark_id: benchmark.id,
+    visibility: runVisibility(benchmark),
+    description: `Run "${run.key}" invalidated.`,
+    extra: { reason },
+    actor: auth,
+  });
   return resourceResponse(serializeRun(row as RunRow));
+});
+
+// The run's own audit trail. Same tiered view as the benchmark's: ACCOUNT-authority callers see
+// everything with real actors; covered narrower keys (BENCHMARK/RUN-scoped) see every event with
+// the actor redacted — member emails/user ids are account-level data a scoped key is denied
+// everywhere else; anyone else sees a world-visible benchmark's PUBLIC events, actor redacted to
+// the publisher identity.
+runs.get("/:id/history", optionalAuth, async (c) => {
+  const auth = getOptionalAuth(c);
+  const run = await getRunById(c.env.DB, c.req.param("id"));
+  if (!run) throw new NotFoundError();
+  const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
+  if (!benchmark) throw new NotFoundError();
+  const covered =
+    auth !== undefined &&
+    covers(auth, { account_id: benchmark.account_id, benchmark_id: benchmark.id, run_id: run.id });
+  if (!covered && !isPublicStatus(benchmark.status)) throw new NotFoundError();
+  const fullActors = covered && auth !== undefined && auth.scope_type === "ACCOUNT";
+  const events = await listHistoryEvents(c.env, { resource_type: "run", resource_id: run.id });
+  const visible = covered ? events : events.filter((e) => e.visibility === "public");
+  const redact = fullActors ? null : { publisher_label: publisherLabel(benchmark) };
+  return collectionResponse(
+    visible.map((e) => serializeHistoryEvent(e, redact)),
+    { meta: { count: visible.length } },
+  );
 });

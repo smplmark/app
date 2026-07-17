@@ -13,7 +13,8 @@ type C = Context<AppBindings>;
 /**
  * The draft/ready edit-lock (§2). While a benchmark is PRIVATE and marked ready (draft=0) its whole
  * subtree is frozen: reject mutations on it and its subjects, runs, and measurements. The only ways out
- * of this state are publish and return_to_draft. After publish, normal append-only semantics resume.
+ * of this state are publish and return_to_draft. This is a review-workflow guard, not an immutability
+ * guard — after publish the record is editable again, with every change audited (the History).
  */
 export function assertBenchmarkEditable(benchmark: BenchmarkRow): void {
   if (benchmark.status === "PRIVATE" && benchmark.draft === 0) {

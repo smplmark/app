@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { emitAuditEvent } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
@@ -48,9 +49,6 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError("This benchmark is published; its subjects are frozen and no new ones can be added.");
-  }
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new subjects can be added.");
   }
@@ -72,6 +70,16 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
   const row = await createBenchmarkSubject(c.env.DB, {
     benchmark_id: benchmark.id,
     subject_id: subject.id,
+  });
+  emitAuditEvent(c, {
+    event_type: "benchmark.edited",
+    resource_type: "benchmark",
+    resource_id: benchmark.id,
+    benchmark_id: benchmark.id,
+    visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+    description: `Subject "${subject.name}" linked to the benchmark.`,
+    extra: { subject_linked: subject.id },
+    actor: auth,
   });
   return resourceResponse(serializeBenchmarkSubject(row), { status: 201 });
 });
@@ -122,8 +130,10 @@ benchmarkSubjects.get("/", optionalAuth, async (c) => {
   });
 });
 
-// Unlink a subject from a benchmark. Removal is not an append, so — like deleting a subject — it's only
-// allowed while the benchmark is PRIVATE; a published benchmark's subject set is frozen.
+// Unlink a subject from a benchmark. Unlinking cascades away the subject's measurements under this
+// benchmark, so on a published benchmark it stays blocked: it would hard-delete published data —
+// the one mutation the auditable-record model still forbids. Retract a subject's results visibly
+// by invalidating the runs that carry them instead.
 benchmarkSubjects.delete("/:id", requireAuth, async (c) => {
   const auth = getAuth(c);
   requireWrite(auth);
@@ -139,7 +149,7 @@ benchmarkSubjects.delete("/:id", requireAuth, async (c) => {
   assertBenchmarkEditable(benchmark);
   if (benchmark.status !== "PRIVATE") {
     throw new ConflictError(
-      "Published benchmark data is append-only; a subject cannot be unlinked.",
+      "A published benchmark's subjects can't be unlinked — that would delete their published measurements. Invalidate the affected runs instead.",
     );
   }
   await deleteBenchmarkSubjectCascade(c.env.DB, link);

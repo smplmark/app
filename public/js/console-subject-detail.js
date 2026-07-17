@@ -19,7 +19,7 @@
   let editing = false;
   let nameDraft = "";
 
-  const TABS = ["details", "benchmarks"];
+  const TABS = ["details", "benchmarks", "history"];
   function activeTab() {
     const h = (location.hash || "").replace(/^#/, "");
     return TABS.indexOf(h) >= 0 ? h : "details";
@@ -130,7 +130,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.name || a.key || "Subject", secondaryId: a.key || "", actions: "" }) +
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
-      tabBtn("details", "Details") + tabBtn("benchmarks", "Benchmarks") + "</nav>" +
+      tabBtn("details", "Details") + tabBtn("benchmarks", "Benchmarks") + tabBtn("history", "History") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>' +
       '<div id="detail-msg" class="form-status" style="margin-top:0.5rem;"></div>';
@@ -157,7 +157,38 @@
     const panel = $("tab-panel");
     $("tab-actions").innerHTML = "";
     if (currentRenderedTab === "details") renderDetails(panel, $("tab-actions"));
+    else if (currentRenderedTab === "history") renderHistory(panel);
     else renderBenchmarks(panel);
+  }
+
+  // ── History tab — this subject's audit trail (account-visible only). ──
+  function eventLabel(t) {
+    const labels = { "subject.created": "Created", "subject.edited": "Edited" };
+    return labels[t] || t;
+  }
+  function actorLabel(actor) {
+    if (!actor) return "—";
+    if (actor.label) return actor.label;
+    if (actor.type === "API_KEY") return "an API key";
+    return actor.type ? String(actor.type).toLowerCase() : "—";
+  }
+  async function renderHistory(panel) {
+    panel.innerHTML = '<div class="detailsTabPanel"><div id="history-table"></div></div>';
+    const table = SM.pagedTable($("history-table"), {
+      columns: [
+        { key: "when", label: "When", sortable: true, sortValue: (e) => (e.attributes || {}).occurred_at || "", render: (e) => esc(fmtDate((e.attributes || {}).occurred_at) || "—") },
+        { key: "event", label: "Event", sortable: true, sortValue: (e) => (e.attributes || {}).event_type || "", render: (e) => esc(eventLabel((e.attributes || {}).event_type)) },
+        { key: "description", label: "What happened", sortable: false, render: (e) => esc((e.attributes || {}).description || "") },
+        { key: "actor", label: "By", sortable: false, render: (e) => esc(actorLabel((e.attributes || {}).actor)) },
+      ],
+      rows: [], sort: { key: "when", dir: "desc" }, emptyText: "No history recorded yet.",
+    });
+    try {
+      const doc = await apiFetch("/api/v1/subjects/" + encodeURIComponent(ID) + "/history");
+      table.setRows((doc && doc.data) || []);
+    } catch (err) {
+      $("history-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
   }
 
   // ── Details tab (typed field values) ──

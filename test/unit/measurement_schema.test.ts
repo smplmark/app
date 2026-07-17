@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/errors";
 import {
-  assertFrozenCompatible,
+  diffMeasurementSchema,
   parseMeasurementSchema,
   validateMeasurementSchema,
 } from "../../src/schema/measurement_schema";
@@ -16,7 +16,6 @@ function expectStatus(fn: () => void, status: number) {
   }
 }
 const expect400 = (fn: () => void) => expectStatus(fn, 400);
-const expect409 = (fn: () => void) => expectStatus(fn, 409);
 
 describe("validateMeasurementSchema", () => {
   it("normalizes a full valid schema", () => {
@@ -142,52 +141,110 @@ describe("chart validation", () => {
   });
 });
 
-describe("assertFrozenCompatible", () => {
+describe("diffMeasurementSchema", () => {
   const published: MeasurementSchema = {
     metrics: [{ name: "skew_ms", type: "number", unit: "ms", description: "old" }],
     derived: [{ name: "d", expr: { minute_offset_ms: [{ var: "created_at" }] }, unit: "ms" }],
     chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
   };
+  // The same schema without its chart (built without the key — absent compares as null).
+  const chartless: MeasurementSchema = {
+    metrics: published.metrics,
+    derived: published.derived,
+  };
 
-  it("allows cosmetic-only changes (unit/description)", () => {
+  it("reports identical schemas as unchanged", () => {
+    expect(diffMeasurementSchema(published, { ...published })).toEqual({
+      changed: false,
+      semantic_core: false,
+    });
+  });
+
+  it("ignores key-order-only differences (canonical compare)", () => {
+    const reordered: MeasurementSchema = {
+      metrics: [{ type: "number", description: "old", unit: "ms", name: "skew_ms" }],
+      derived: [{ expr: { minute_offset_ms: [{ var: "created_at" }] }, unit: "ms", name: "d" }],
+      chart: { y: "skew_ms", x_kind: "TIME", x: "created_at" },
+    };
+    expect(diffMeasurementSchema(published, reordered)).toEqual({
+      changed: false,
+      semantic_core: false,
+    });
+  });
+
+  it("flags cosmetic unit/format/description edits as changed, but not semantic-core", () => {
     const edited: MeasurementSchema = {
-      metrics: [{ name: "skew_ms", type: "number", unit: "milliseconds", description: "new" }],
+      metrics: [
+        { name: "skew_ms", type: "number", unit: "milliseconds", format: "#,##0", description: "new" },
+      ],
       derived: [{ name: "d", expr: { minute_offset_ms: [{ var: "created_at" }] }, unit: "ms" }],
       chart: { x: "created_at", y: "skew_ms", x_kind: "TIME" },
     };
-    expect(() => assertFrozenCompatible(published, edited)).not.toThrow();
+    expect(diffMeasurementSchema(published, edited)).toEqual({
+      changed: true,
+      semantic_core: false,
+    });
   });
 
-  it("rejects a changed derived expression", () => {
+  it("treats reordered metrics as a change, but not a semantic-core one (name-sorted set compare)", () => {
+    const pair: MeasurementSchema = {
+      metrics: [{ name: "a_ms", type: "number" }, { name: "b_ms", type: "number" }],
+      derived: [],
+    };
+    const swapped: MeasurementSchema = {
+      metrics: [{ name: "b_ms", type: "number" }, { name: "a_ms", type: "number" }],
+      derived: [],
+    };
+    expect(diffMeasurementSchema(pair, swapped)).toEqual({
+      changed: true,
+      semantic_core: false,
+    });
+  });
+
+  it("flags a changed derived expression as semantic-core", () => {
     const edited: MeasurementSchema = {
       ...published,
       derived: [{ name: "d", expr: { "+": [1, 1] }, unit: "ms" }],
     };
-    expect409(() => assertFrozenCompatible(published, edited));
+    expect(diffMeasurementSchema(published, edited)).toEqual({
+      changed: true,
+      semantic_core: true,
+    });
   });
 
-  it("allows ADDING metrics/derived (additive growth) but rejects a changed chart mapping", () => {
-    // Continuous publishers may grow the schema — appending is compatible.
-    expect(() =>
-      assertFrozenCompatible(published, {
-        ...published,
-        metrics: [...published.metrics, { name: "extra", type: "number" }],
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertFrozenCompatible(published, {
-        ...published,
-        derived: [...published.derived, { name: "extra_d", expr: { var: "created_at" } }],
-      }),
-    ).not.toThrow();
-    // A chart may be added where none existed…
-    expect(() =>
-      assertFrozenCompatible({ ...published, chart: undefined }, published),
-    ).not.toThrow();
-    // …but an existing chart never changes or disappears.
-    expect409(() =>
-      assertFrozenCompatible(published, { ...published, chart: { x: null, y: "skew_ms" } }),
-    );
-    expect409(() => assertFrozenCompatible(published, { ...published, chart: undefined }));
+  it("flags an added metric as semantic-core", () => {
+    const grown: MeasurementSchema = {
+      ...published,
+      metrics: [...published.metrics, { name: "extra", type: "number" }],
+    };
+    expect(diffMeasurementSchema(published, grown)).toEqual({
+      changed: true,
+      semantic_core: true,
+    });
+  });
+
+  it("flags a removed derived as semantic-core", () => {
+    const shrunk: MeasurementSchema = { ...published, derived: [] };
+    expect(diffMeasurementSchema(published, shrunk)).toEqual({
+      changed: true,
+      semantic_core: true,
+    });
+  });
+
+  it("flags chart changes as semantic-core: added, changed, and removed", () => {
+    // Added where none existed.
+    expect(diffMeasurementSchema(chartless, published)).toEqual({
+      changed: true,
+      semantic_core: true,
+    });
+    // Changed mapping.
+    expect(
+      diffMeasurementSchema(published, { ...published, chart: { x: null, y: "skew_ms" } }),
+    ).toEqual({ changed: true, semantic_core: true });
+    // Removed (an absent chart compares as null).
+    expect(diffMeasurementSchema(published, chartless)).toEqual({
+      changed: true,
+      semantic_core: true,
+    });
   });
 });

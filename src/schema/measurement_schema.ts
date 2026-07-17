@@ -1,9 +1,10 @@
 // Validate a client-supplied measurement_schema (benchmark create/update only — never the hot path) and
 // parse a stored one back. Enforces unique metric names across metrics + derived so the merged read
-// surface is unambiguous (§4), validates the chart declaration (§11), and — for PUBLISHED benchmarks
-// — enforces the interpretation freeze (§8/§10): the semantic core (derived expressions, metric set,
-// chart mapping) is immutable; only cosmetic unit/description labels may change.
-import { BadRequestError, ConflictError } from "../errors";
+// surface is unambiguous (§4) and validates the chart declaration (§11). A published benchmark's
+// schema is editable — the auditable-record model replaced the old freeze — but a change to the
+// semantic core (derived expressions, metric set, chart mapping) is detected here and flagged on
+// the audit event so the History surfaces it.
+import { BadRequestError } from "../errors";
 import type {
   ChartDecl,
   DerivedDecl,
@@ -147,10 +148,10 @@ export function parseMeasurementSchema(json: string): MeasurementSchema {
   return schema;
 }
 
-// ── freeze-on-publish ────────────────────────────────────────────────────────
+// ── semantic-core change detection ───────────────────────────────────────────
 
 /** Recursively key-sorted JSON, so semantic-equality ignores key ordering. */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   return JSON.stringify(value, (_k, v) =>
     v && typeof v === "object" && !Array.isArray(v)
       ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, (v as Record<string, unknown>)[k]]))
@@ -158,32 +159,33 @@ function canonical(value: unknown): string {
   );
 }
 
-/**
- * Enforce the interpretation freeze: once a benchmark is PUBLISHED/WITHDRAWN, every existing metric
- * (name+type), derived value (name+expr), and the chart mapping are immutable. This check alone is
- * additive (it ignores new entries) — the benchmark PUT route layers a no-additions check on top, so
- * post-publish the schema is fully frozen. Cosmetic unit/description labels stay editable.
- */
-export function assertFrozenCompatible(
+export interface SchemaDiff {
+  /** Any difference at all (including cosmetic unit/format/description edits). */
+  changed: boolean;
+  /**
+   * The semantic core moved: the metric set (names/types), a derived expression, or the chart/axis
+   * mapping changed — i.e. the numbers now mean something different. Post-publish, an edit like
+   * this is allowed but its audit event is flagged so the History surfaces it prominently.
+   */
+  semantic_core: boolean;
+}
+
+/** Compare two measurement schemas: did anything change, and did the semantic core change? */
+export function diffMeasurementSchema(
   oldSchema: MeasurementSchema,
   newSchema: MeasurementSchema,
-): void {
-  const frozen = () =>
-    new ConflictError(
-      "A published benchmark's schema is frozen: its metrics, derived expressions, and chart mapping cannot be changed or removed. Only descriptions and unit labels may be edited.",
-    );
-  const newMetrics = new Map(newSchema.metrics.map((m) => [m.name, m]));
-  for (const old of oldSchema.metrics) {
-    const current = newMetrics.get(old.name);
-    if (!current || current.type !== old.type) throw frozen();
-  }
-  const newDerived = new Map(newSchema.derived.map((d) => [d.name, d]));
-  for (const old of oldSchema.derived) {
-    const current = newDerived.get(old.name);
-    if (!current || canonical(current.expr) !== canonical(old.expr)) throw frozen();
-  }
-  const oldChart = oldSchema.chart ?? null;
-  if (oldChart !== null && canonical(oldChart) !== canonical(newSchema.chart ?? null)) {
-    throw frozen();
-  }
+): SchemaDiff {
+  const changed = canonical(oldSchema) !== canonical(newSchema);
+  if (!changed) return { changed: false, semantic_core: false };
+  const core = (s: MeasurementSchema) =>
+    canonical({
+      metrics: [...s.metrics.map((m) => ({ name: m.name, type: m.type }))].sort((a, b) =>
+        a.name < b.name ? -1 : 1,
+      ),
+      derived: [...s.derived.map((d) => ({ name: d.name, expr: d.expr }))].sort((a, b) =>
+        a.name < b.name ? -1 : 1,
+      ),
+      chart: s.chart ?? null,
+    });
+  return { changed: true, semantic_core: core(oldSchema) !== core(newSchema) };
 }

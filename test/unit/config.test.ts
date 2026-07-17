@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   appUrl,
+  auditBaseUrl,
+  auditConfigured,
   devLoginEnabled,
   emailConfigured,
   isAllowedCorsOrigin,
@@ -76,5 +78,19 @@ describe("required secrets", () => {
     expect(requireAuthSecret(env({ APP_AUTH_SECRET: "s" }))).toBe("s");
     expect(() => requireKeyEncryptionSecret(env())).toThrow();
     expect(requireKeyEncryptionSecret(env({ KEY_ENCRYPTION_SECRET: "k" }))).toBe("k");
+  });
+});
+
+describe("auditConfigured / auditBaseUrl", () => {
+  it("is configured only when the Smpl Audit key is set", () => {
+    expect(auditConfigured(env())).toBe(false);
+    expect(auditConfigured(env({ SMPL_AUDIT_API_KEY: "" }))).toBe(false);
+    expect(auditConfigured(env({ SMPL_AUDIT_API_KEY: "sk_api_x" }))).toBe(true);
+  });
+
+  it("defaults the base URL and honors the override with trailing slashes stripped", () => {
+    expect(auditBaseUrl(env())).toBe("https://audit.smplkit.com");
+    expect(auditBaseUrl(env({ SMPL_AUDIT_BASE_URL: "http://localhost:9999/" }))).toBe("http://localhost:9999");
+    expect(auditBaseUrl(env({ SMPL_AUDIT_BASE_URL: "" }))).toBe("https://audit.smplkit.com");
   });
 });

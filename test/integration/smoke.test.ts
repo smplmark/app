@@ -29,6 +29,7 @@ describe("test harness", () => {
       "subject",
       "subject_type",
       "tag",
+      "takedown_request",
       "user",
       "user_identity",
     ]);

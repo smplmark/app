@@ -15,6 +15,7 @@ export const SKEW_SCHEMA: MeasurementSchema = {
 
 // Every table, child-first, so resetDb never trips a logical FK.
 const TABLES = [
+  "takedown_request",
   "external_source",
   "measurement",
   "benchmark_metric",

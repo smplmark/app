@@ -1,10 +1,11 @@
 // Link a library metric to a benchmark (M:N). Linking is snapshot-on-link: the metric's current
 // definition is copied into the benchmark's measurement_schema — a MetricDecl for INTEGER/DECIMAL, a
-// DerivedDecl (with the compiled JSON Logic) for FORMULA — which is what the compute-on-read engine and the publish
-// freeze read. Because a snapshot is an APPEND, linking is allowed even on a published benchmark; the
-// interpretation freeze only forbids changing/removing existing entries. Unlinking removes the snapshot,
-// so — like unlinking a subject — it's only allowed while the benchmark is PRIVATE.
+// DerivedDecl (with the compiled JSON Logic) for FORMULA — which is what the compute-on-read engine
+// reads. Linking and unlinking are allowed at any lifecycle stage; on a published benchmark either
+// one changes the semantic core of the public record, so it's recorded as a semantic-core-flagged
+// audit event (the History surfaces it) rather than blocked.
 import { Hono } from "hono";
+import { emitAuditEvent } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
@@ -28,7 +29,7 @@ import {
   type AppBindings,
 } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
-import { assertFrozenCompatible, parseMeasurementSchema } from "../schema/measurement_schema";
+import { parseMeasurementSchema } from "../schema/measurement_schema";
 import { metricSnapshot } from "../schema/metric";
 import { serializeBenchmarkMetric } from "../serialize/resource";
 import type { MeasurementSchema } from "../types";
@@ -57,9 +58,6 @@ benchmarkMetrics.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError("This benchmark is published; its metrics are frozen and no new ones can be added.");
-  }
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new metrics can be added.");
   }
@@ -93,13 +91,23 @@ benchmarkMetrics.post("/", requireAuth, async (c) => {
     derived: snap.derived ? [...old.derived, snap.derived] : old.derived,
   };
   if (old.chart) next.chart = old.chart;
-  // Belt-and-suspenders: an append is always freeze-compatible, but assert it on a published benchmark.
-  if (benchmark.status !== "PRIVATE") assertFrozenCompatible(old, next);
 
   const row = await createBenchmarkMetricLink(c.env.DB, {
     benchmark_id: benchmark.id,
     metric_id: metric.id,
     schemaJson: JSON.stringify(next),
+  });
+  emitAuditEvent(c, {
+    event_type: "benchmark.edited",
+    resource_type: "benchmark",
+    resource_id: benchmark.id,
+    benchmark_id: benchmark.id,
+    visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+    description: `Metric "${metric.name}" linked to the benchmark.`,
+    changes: { measurement_schema: { before: old, after: next } },
+    semantic_core: true,
+    extra: { metric_linked: metric.id },
+    actor: auth,
   });
   return resourceResponse(serializeBenchmarkMetric(row), { status: 201 });
 });
@@ -145,8 +153,10 @@ benchmarkMetrics.get("/", optionalAuth, async (c) => {
   });
 });
 
-// Unlink a metric from a benchmark, removing its snapshot from the measurement_schema. Removal is not an
-// append, so — like deleting a subject — it's only allowed while the benchmark is PRIVATE.
+// Unlink a metric from a benchmark, removing its snapshot from the measurement_schema. Allowed at
+// any lifecycle stage; on a published benchmark the removal is a semantic-core change to the public
+// record and is recorded (with the before/after schema) rather than blocked. Measurement rows are
+// untouched — their stored values for the removed name simply stop being part of the schema.
 benchmarkMetrics.delete("/:id", requireAuth, async (c) => {
   const auth = getAuth(c);
   requireWrite(auth);
@@ -160,24 +170,20 @@ benchmarkMetrics.delete("/:id", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError(
-      "Published benchmark data is append-only; a metric cannot be unlinked.",
-    );
-  }
 
   // Remove the metric's snapshot from the schema by its name. The metric row still exists (a linked
   // metric can't be deleted from the library), so its name is available.
   const old = parseMeasurementSchema(benchmark.measurement_schema);
   const metric = await getMetricById(c.env.DB, link.metric_id);
   let schemaJson = benchmark.measurement_schema;
+  let next: MeasurementSchema | null = null;
   if (metric) {
     if (old.chart && (old.chart.x === metric.name || old.chart.y === metric.name)) {
       throw new ConflictError(
         "This metric is used by the benchmark chart; update the chart before unlinking it.",
       );
     }
-    const next: MeasurementSchema = {
+    next = {
       metrics: old.metrics.filter((m) => m.name !== metric.name),
       derived: old.derived.filter((d) => d.name !== metric.name),
     };
@@ -189,5 +195,19 @@ benchmarkMetrics.delete("/:id", requireAuth, async (c) => {
     benchmark_id: link.benchmark_id,
     schemaJson,
   });
+  if (metric && next) {
+    emitAuditEvent(c, {
+      event_type: "benchmark.edited",
+      resource_type: "benchmark",
+      resource_id: benchmark.id,
+      benchmark_id: benchmark.id,
+      visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+      description: `Metric "${metric.name}" unlinked from the benchmark.`,
+      changes: { measurement_schema: { before: old, after: next } },
+      semantic_core: true,
+      extra: { metric_unlinked: metric.id },
+      actor: auth,
+    });
+  }
   return noContentResponse();
 });

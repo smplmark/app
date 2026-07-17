@@ -23,6 +23,7 @@ import { publishers } from "./routes/publishers";
 import { runs } from "./routes/runs";
 import { subjects } from "./routes/subjects";
 import { subjectTypes } from "./routes/subject_types";
+import { takedownRequests } from "./routes/takedown_requests";
 import { users } from "./routes/users";
 
 // ── Routing ──────────────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ export function createApp() {
   app.route("/api/v1/measurements", measurements);
   app.route("/api/v1/external_sources", externalSources);
   app.route("/api/v1/publishers", publishers);
+  app.route("/api/v1/takedown_requests", takedownRequests);
   // System triggers for the Smpl Jobs scheduler (shared-secret auth; not in the public spec).
   app.route("/api/v1/jobs", jobs);
 

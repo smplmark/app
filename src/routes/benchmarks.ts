@@ -57,13 +57,15 @@ import { collectionResponse, noContentResponse, resourceResponse } from "../http
 import { getAuth, getOptionalAuth, optionalAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
 import { parseSearchQuery } from "../query/search";
+import { emitAuditEvent, listHistoryEvents } from "../audit/smpl_audit";
 import {
-  assertFrozenCompatible,
+  canonical,
+  diffMeasurementSchema,
   parseMeasurementSchema,
   validateMeasurementSchema,
 } from "../schema/measurement_schema";
 import { kebab } from "../schema/subject_type";
-import { serializeBenchmark } from "../serialize/resource";
+import { publisherLabel, serializeBenchmark, serializeHistoryEvent } from "../serialize/resource";
 import {
   CATEGORIES,
   type AuthContext,
@@ -194,6 +196,15 @@ benchmarks.post("/", requireAuth, async (c) => {
   });
   if (tags.length > 0) await setBenchmarkTags(c.env.DB, row.id, tags);
   await refreshBenchmarkSearchText(c.env.DB, row.id);
+  emitAuditEvent(c, {
+    event_type: "benchmark.created",
+    resource_type: "benchmark",
+    resource_id: row.id,
+    benchmark_id: row.id,
+    visibility: "internal",
+    description: `Benchmark "${name}" created.`,
+    actor: auth,
+  });
   return resourceResponse(serializeBenchmark(row, tags), { status: 201 });
 });
 
@@ -255,6 +266,7 @@ benchmarks.get("/:id", optionalAuth, async (c) => {
 });
 
 benchmarks.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
   const existing = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(existing); // marked-ready subtree is frozen until publish/return-to-draft
   const attrs = await readAttributes(c);
@@ -276,26 +288,29 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const category = optionalEnum(attrs, "category", CATEGORIES) ?? "OTHER";
   const tags = optionalTags(attrs) ?? [];
 
-  // Interpretation freeze: on a published/withdrawn benchmark the semantic core is immutable, and —
-  // since publishing now freezes the whole dataset — nothing may be added either. Only descriptions
-  // and unit labels (which assertFrozenCompatible ignores) remain editable.
-  if (existing.status !== "PRIVATE") {
-    const frozen = parseMeasurementSchema(existing.measurement_schema);
-    assertFrozenCompatible(frozen, measurement_schema);
-    if (
-      measurement_schema.metrics.length !== frozen.metrics.length ||
-      measurement_schema.derived.length !== frozen.derived.length
-    ) {
-      throw new ConflictError(
-        "This benchmark is published; its metrics are frozen and no new ones can be added.",
-      );
-    }
-    // assertFrozenCompatible skips the chart when none existed — adding one is also an addition.
-    if ((frozen.chart ?? null) === null && (measurement_schema.chart ?? null) !== null) {
-      throw new ConflictError(
-        "This benchmark is published; its chart mapping is frozen and cannot be added.",
-      );
-    }
+  // A published benchmark is editable — the record is auditable, not frozen. Diff the old row
+  // against the incoming full-replace so the audit event can say exactly what changed (and flag a
+  // semantic-core change: metric set, derived expressions, chart/axis mapping).
+  const oldSchema = parseMeasurementSchema(existing.measurement_schema);
+  const schemaDiff = diffMeasurementSchema(oldSchema, measurement_schema);
+  const oldTags = await listTagsForBenchmark(c.env.DB, existing.id);
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  const scalarFields: [string, unknown, unknown][] = [
+    ["name", existing.name, name],
+    ["description", existing.description, description],
+    ["about", existing.about, about],
+    ["methodology", existing.methodology, methodology],
+    ["subject_type", existing.subject_type, subject_type],
+    ["category", existing.category, category],
+  ];
+  for (const [field, before, after] of scalarFields) {
+    if (before !== after) changes[field] = { before, after };
+  }
+  if (schemaDiff.changed) {
+    changes.measurement_schema = { before: oldSchema, after: measurement_schema };
+  }
+  if (canonical([...oldTags].sort()) !== canonical([...tags].sort())) {
+    changes.tags = { before: oldTags, after: tags };
   }
 
   const row = await updateBenchmark(c.env.DB, existing.id, {
@@ -309,19 +324,66 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   });
   await setBenchmarkTags(c.env.DB, existing.id, tags);
   await refreshBenchmarkSearchText(c.env.DB, existing.id);
+  if (Object.keys(changes).length > 0) {
+    emitAuditEvent(c, {
+      event_type: "benchmark.edited",
+      resource_type: "benchmark",
+      resource_id: existing.id,
+      benchmark_id: existing.id,
+      // Post-publish edits are part of the public record; draft edits are console-only history.
+      visibility: existing.status === "PRIVATE" ? "internal" : "public",
+      description: schemaDiff.semantic_core
+        ? "Benchmark edited (semantic core changed: metrics, derived expressions, or chart mapping)."
+        : "Benchmark edited.",
+      changes,
+      semantic_core: schemaDiff.semantic_core,
+      actor: auth,
+    });
+  }
   return resourceResponse(serializeBenchmark(row as BenchmarkRowWithPublisher, tags));
 });
 
+// Delete a benchmark. A PRIVATE benchmark hard-deletes freely; a published (or withdrawn) one never
+// does — a public record must not silently vanish, which is the one mutation an audit trail cannot
+// cover. The publisher's exit is withdrawal (a visible tombstone); true removal is an operator-only
+// takedown (see routes/jobs.ts), reachable via a takedown request.
 benchmarks.delete("/:id", requireAuth, async (c) => {
   const existing = await loadOwned(c, c.req.param("id"));
   assertBenchmarkEditable(existing); // can't delete out of the marked-ready state
   if (existing.status !== "PRIVATE") {
     throw new ConflictError(
-      "Published benchmark data is append-only and cannot be deleted; withdraw it instead.",
+      "A published benchmark can't be deleted — the public record must not vanish. Withdraw it instead, or request a takedown for true removal.",
     );
   }
   await deleteBenchmarkCascade(c.env.DB, existing.id);
   return noContentResponse();
+});
+
+// ── History (the audit trail) ────────────────────────────────────────────────
+
+// The benchmark's full change history — its own events plus its whole subtree (runs,
+// measurements), correlated in Smpl Audit by benchmark id. Three views from one endpoint:
+//  - an ACCOUNT-authority caller (a session or account-scoped key) sees every event with real
+//    actors;
+//  - a covered narrower credential (a BENCHMARK-scoped key) sees every event but with the actor
+//    redacted — member emails and user ids are account-level data a scoped key is denied
+//    everywhere else (cf. the member-roster gate in routes/account_users.ts);
+//  - anyone else sees a world-visible benchmark's PUBLIC events only, with the actor redacted to
+//    the publisher identity (never an individual email or user id) — the credibility surface.
+benchmarks.get("/:id/history", optionalAuth, async (c) => {
+  const auth = getOptionalAuth(c);
+  const row = await getBenchmarkById(c.env.DB, c.req.param("id"));
+  if (!row) throw new NotFoundError();
+  const covered = auth !== undefined && covers(auth, { account_id: row.account_id, benchmark_id: row.id });
+  if (!covered && !isPublicStatus(row.status)) throw new NotFoundError();
+  const fullActors = covered && auth !== undefined && auth.scope_type === "ACCOUNT";
+  const events = await listHistoryEvents(c.env, { benchmark_id: row.id });
+  const visible = covered ? events : events.filter((e) => e.visibility === "public");
+  const redact = fullActors ? null : { publisher_label: publisherLabel(row) };
+  return collectionResponse(
+    visible.map((e) => serializeHistoryEvent(e, redact)),
+    { meta: { count: visible.length } },
+  );
 });
 
 // ── Popularity ───────────────────────────────────────────────────────────────
@@ -381,6 +443,18 @@ benchmarks.post("/:id/actions/close", requireAuth, async (c) => {
     throw new ConflictError("This benchmark is already closed.");
   }
   const row = await setBenchmarkClosed(c.env.DB, existing.id, Date.now());
+  // Closing is a lifecycle signal, not a credibility invariant — but it's world-visible state on
+  // a published benchmark, so a close/reopen/append sequence must be reconstructible from the
+  // History, not just from measurement timestamps.
+  emitAuditEvent(c, {
+    event_type: "benchmark.closed",
+    resource_type: "benchmark",
+    resource_id: existing.id,
+    benchmark_id: existing.id,
+    visibility: existing.status === "PRIVATE" ? "internal" : "public",
+    description: "Benchmark closed to new data.",
+    actor: auth,
+  });
   return resourceResponse(
     serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
@@ -394,6 +468,15 @@ benchmarks.post("/:id/actions/reopen", requireAuth, async (c) => {
     throw new ConflictError("This benchmark is not closed.");
   }
   const row = await setBenchmarkClosed(c.env.DB, existing.id, null);
+  emitAuditEvent(c, {
+    event_type: "benchmark.reopened",
+    resource_type: "benchmark",
+    resource_id: existing.id,
+    benchmark_id: existing.id,
+    visibility: existing.status === "PRIVATE" ? "internal" : "public",
+    description: "Benchmark reopened to new data.",
+    actor: auth,
+  });
   return resourceResponse(
     serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );
@@ -452,6 +535,16 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
       published_identity_id: publisher.id,
       attribution_snapshot: JSON.stringify(snapshot),
     });
+    emitAuditEvent(c, {
+      event_type: "benchmark.published",
+      resource_type: "benchmark",
+      resource_id: existing.id,
+      benchmark_id: existing.id,
+      visibility: "public",
+      description: `Benchmark published as ${publisher.domain}.`,
+      extra: { published_as_kind: "ORGANIZATION", attribution: snapshot },
+      actor: auth,
+    });
     return resourceResponse(
       serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
     );
@@ -472,6 +565,16 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
     published_as_kind: "PERSONAL",
     published_identity_id: null,
     attribution_snapshot: JSON.stringify(snapshot),
+  });
+  emitAuditEvent(c, {
+    event_type: "benchmark.published",
+    resource_type: "benchmark",
+    resource_id: existing.id,
+    benchmark_id: existing.id,
+    visibility: "public",
+    description: `Benchmark published as ${snapshot.display_name ?? "a personal publisher"}.`,
+    extra: { published_as_kind: "PERSONAL", attribution: { display_name: snapshot.display_name } },
+    actor: auth,
   });
   return resourceResponse(
     serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
@@ -506,6 +609,16 @@ benchmarks.post("/:id/actions/withdraw", requireAuth, async (c) => {
     );
   }
   const row = await withdrawBenchmark(c.env.DB, existing.id, Date.now(), reason);
+  emitAuditEvent(c, {
+    event_type: "benchmark.withdrawn",
+    resource_type: "benchmark",
+    resource_id: existing.id,
+    benchmark_id: existing.id,
+    visibility: "public",
+    description: "Benchmark withdrawn by its publisher.",
+    extra: { reason },
+    actor: auth,
+  });
   return resourceResponse(
     serializeBenchmark(row as BenchmarkRowWithPublisher, await listTagsForBenchmark(c.env.DB, existing.id)),
   );

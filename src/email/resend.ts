@@ -179,6 +179,49 @@ export async function sendContactAutoresponse(
   });
 }
 
+// ── Takedown request (ops alert to support) ──────────────────────────────────
+
+/** Route a takedown request to the operators. Best-effort: the request row is already persisted. */
+export async function sendTakedownRequestEmail(
+  env: Env,
+  input: {
+    benchmarkName: string;
+    /** publisher_slug/key — the public URL path of the benchmark. */
+    benchmarkRef: string;
+    benchmarkId: string;
+    requesterName: string;
+    requesterEmail: string;
+    reason: string;
+    requestId: string;
+  },
+): Promise<boolean> {
+  const rows = [
+    ["Benchmark", `${input.benchmarkName} (/benchmarks/${input.benchmarkRef})`],
+    ["Benchmark ID", input.benchmarkId],
+    ["Requester", `${input.requesterName} <${input.requesterEmail}>`],
+    ["Request ID", input.requestId],
+  ]
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:4px 12px 4px 0;color:${MUTED}">${esc(k)}</td><td style="padding:4px 0">${esc(v)}</td></tr>`,
+    )
+    .join("");
+  const html = scaffold(
+    `<p><strong>Takedown requested</strong></p>
+<table style="font-size:14px;border-collapse:collapse;margin-bottom:12px">${rows}</table>
+<blockquote style="margin:0;padding:10px 14px;border-left:3px solid #d6dce4;background:#f6f8fa;white-space:pre-wrap">${esc(input.reason)}</blockquote>
+<p style="color:${MUTED};font-size:13px">Fulfilling this is an operator action (the system benchmark-takedown endpoint) — never a self-serve delete. Reply to this email to respond to the requester.</p>`,
+  );
+  const text = `Takedown requested\n\nBenchmark: ${input.benchmarkName} (/benchmarks/${input.benchmarkRef})\nBenchmark ID: ${input.benchmarkId}\nRequester: ${input.requesterName} <${input.requesterEmail}>\nRequest ID: ${input.requestId}\n\n${input.reason}`;
+  return sendEmail(env, {
+    to: SUPPORT_EMAIL,
+    subject: `Takedown request: ${input.benchmarkRef}`,
+    html,
+    text,
+    replyTo: input.requesterEmail,
+  });
+}
+
 // ── New-account notification (ops alert to support) ──────────────────────────
 
 /** Notify the support inbox whenever a new account is provisioned (password signup or OIDC first
