@@ -53,6 +53,30 @@ function consoleBenchmarkAsset(p: string): string | null {
   return null;
 }
 
+/**
+ * One-time browser cache heal.
+ *
+ * Before `/benchmarks` became the console list, this app served a permanent (301) redirect for it to
+ * the marketing site. Browsers cache 301s indefinitely, and a stored redirect for a URL the browser
+ * refuses to re-request cannot be cleared server-side — so a browser that ever hit the old
+ * `/benchmarks` (or a one-segment `/benchmarks/{key}` link) keeps redirecting away from the console.
+ *
+ * `Clear-Site-Data: "cache"` wipes the origin's HTTP cache — including that stored redirect — on the
+ * first top-level console response a browser receives. It touches only the network cache, never
+ * cookies or localStorage, so the session survives. A cookie (`sm_cr`) records that the heal has run
+ * so it fires exactly once per browser and caching works normally thereafter. Retire this once the
+ * old 301s can no longer be cached anywhere (well past any reasonable cache lifetime).
+ */
+function needsCacheReset(cookie: string | undefined): boolean {
+  return !/(?:^|;\s*)sm_cr=1(?:\s*;|\s*$)/.test(cookie ?? "");
+}
+function applyCacheReset(cookie: string | undefined, res: Response): Response {
+  if (!needsCacheReset(cookie)) return res;
+  res.headers.set("Clear-Site-Data", '"cache"');
+  res.headers.append("Set-Cookie", "sm_cr=1; Path=/; Max-Age=31536000; SameSite=Lax");
+  return res;
+}
+
 export function createApp() {
   const app = new Hono<AppBindings>();
 
@@ -96,7 +120,7 @@ export function createApp() {
       const res = new Response(asset.body, asset);
       res.headers.set("Cache-Control", "no-store");
       res.headers.append("Vary", "Cookie");
-      return res;
+      return applyCacheReset(c.req.header("Cookie"), res);
     }
     // The console's benchmark pages live at pretty app-host paths (/benchmarks[/{key}[/runs/{run}]])
     // that map to a static shell; serve the shell and let the page JS resolve the keys. Like "/", the
@@ -111,7 +135,7 @@ export function createApp() {
       const res = new Response(asset.body, asset);
       res.headers.set("Cache-Control", "no-store");
       res.headers.append("Vary", "Cookie");
-      return res;
+      return applyCacheReset(c.req.header("Cookie"), res);
     }
     // Marketing pages live on the website; send stragglers there. In the local loop (.dev.vars) that's
     // the local website Worker, not prod — hostname sniffing can't detect dev because wrangler dev

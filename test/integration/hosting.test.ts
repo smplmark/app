@@ -65,6 +65,23 @@ describe("app routing", () => {
     const res = await fetchNoFollow("http://smplmark.test/api/v1/benchmarks");
     expect(res.status).toBe(200);
   });
+
+  // One-time heal: a browser that cached the old /benchmarks 301 gets its HTTP cache cleared on its
+  // first console response, gated by a cookie so it fires exactly once.
+  it("sends a one-time Clear-Site-Data + sm_cr cookie on the first console response", async () => {
+    for (const url of ["http://smplmark.test/", "https://app.smplmark.org/benchmarks", "https://app.smplmark.org/benchmarks/scheduler-latency"]) {
+      const res = await fetchNoFollow(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("clear-site-data")).toBe('"cache"');
+      expect(res.headers.get("set-cookie")).toContain("sm_cr=1");
+    }
+  });
+
+  it("does NOT repeat the cache heal once the sm_cr cookie is present", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks", { headers: { Cookie: "sm_cr=1" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("clear-site-data")).toBeNull();
+  });
 });
 
 describe("public API CORS", () => {
