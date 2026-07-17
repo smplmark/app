@@ -35,8 +35,22 @@ import { users } from "./routes/users";
 
 /** Paths whose canonical home is the marketing website (www); redirect stragglers there. */
 function isPublicPage(p: string): boolean {
-  const roots = ["/about", "/terms", "/privacy", "/benchmarks"];
+  const roots = ["/about", "/terms", "/privacy"];
   return roots.some((r) => p === r || p.startsWith(`${r}/`));
+}
+
+/**
+ * The console's benchmark section lives at the app-host root (not under /account, which is reserved
+ * for account settings): `/benchmarks` is the signed-in list, `/benchmarks/{key}` a benchmark, and
+ * `/benchmarks/{key}/runs/{runKey}` a run. These pretty paths have no matching asset file, so map
+ * each to the static console shell it renders in; the page JS resolves the key(s) from the URL.
+ * Returns the underlying asset path, or null when `p` isn't a console benchmark path.
+ */
+function consoleBenchmarkAsset(p: string): string | null {
+  if (p === "/benchmarks" || p === "/benchmarks/") return "/account/benchmarks";
+  if (/^\/benchmarks\/[^/]+\/runs\/[^/]+\/?$/.test(p)) return "/account/runs/detail";
+  if (/^\/benchmarks\/[^/]+\/?$/.test(p)) return "/account/benchmarks/detail";
+  return null;
 }
 
 export function createApp() {
@@ -84,10 +98,27 @@ export function createApp() {
       res.headers.append("Vary", "Cookie");
       return res;
     }
-    // Marketing + published benchmarks live on the website; send stragglers there. In the local
-    // loop (.dev.vars) that's the local website Worker, not prod — hostname sniffing can't detect
-    // dev because wrangler dev presents requests as the configured custom domain.
-    if (isPublicPage(p)) {
+    // The console's benchmark pages live at pretty app-host paths (/benchmarks[/{key}[/runs/{run}]])
+    // that map to a static shell; serve the shell and let the page JS resolve the keys. Like "/", the
+    // response varies by auth (the shell requires a token client-side), so it must never be shared.
+    const benchAsset = consoleBenchmarkAsset(p);
+    if (benchAsset !== null) {
+      const subject = new URL(url);
+      subject.pathname = benchAsset;
+      const asset = await c.env.ASSETS.fetch(
+        new Request(subject, { method: "GET", headers: c.req.raw.headers }),
+      );
+      const res = new Response(asset.body, asset);
+      res.headers.set("Cache-Control", "no-store");
+      res.headers.append("Vary", "Cookie");
+      return res;
+    }
+    // Marketing pages live on the website; send stragglers there. In the local loop (.dev.vars) that's
+    // the local website Worker, not prod — hostname sniffing can't detect dev because wrangler dev
+    // presents requests as the configured custom domain. The console benchmark shapes were served
+    // above, so any remaining `/benchmarks/…` path is a public benchmark page (`/{publisher}/{key}`)
+    // whose home is the website — redirect it there.
+    if (isPublicPage(p) || p.startsWith("/benchmarks/")) {
       if (c.env.DEV_WWW_ORIGIN) {
         return c.redirect(new URL(p + url.search, c.env.DEV_WWW_ORIGIN).toString(), 301);
       }

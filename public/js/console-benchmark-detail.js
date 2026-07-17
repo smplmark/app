@@ -8,7 +8,15 @@
   const esc = SM.esc;
   const $ = (id) => document.getElementById(id);
 
-  const ID = new URLSearchParams(location.search).get("id") || "";
+  // Pretty route /benchmarks/{key}; ?id= is kept as a fallback (old links). ID resolves to the
+  // benchmark's uuid once loaded (from the key when pretty-routed) and everything downstream uses it.
+  const PATH_KEY = (function () {
+    const m = /^\/benchmarks\/([^/]+)\/?$/.exec(location.pathname);
+    return m ? decodeURIComponent(m[1]) : "";
+  })();
+  const QUERY_ID = new URLSearchParams(location.search).get("id") || "";
+  let ID = QUERY_ID;
+  let ACCOUNT_ID = null;
   let BM = null;
   let CAN_WRITE = false, CAN_ADMIN = false, USER_ID = null, ALLOW_PERSONAL = false;
   let USER_EMAIL = "", USER_NAME = "";
@@ -38,6 +46,7 @@
 
   // ── Boot ──
   SM.ready.then((id) => {
+    ACCOUNT_ID = id.accountId;
     CAN_WRITE = id.canWrite;
     CAN_ADMIN = id.canAdmin;
     USER_ID = (id.user && id.user.id) || null;
@@ -60,16 +69,27 @@
     return a.name || a.key || (id ? id : null);
   }
 
+  // Resolve the benchmark from either the pretty key (own account, any status) or the ?id= fallback.
+  async function resolveBenchmark() {
+    if (QUERY_ID) return (await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(QUERY_ID))).data || null;
+    if (PATH_KEY) {
+      const list = await apiFetch("/api/v1/benchmarks?filter[account]=" + encodeURIComponent(ACCOUNT_ID) + "&filter[key]=" + encodeURIComponent(PATH_KEY));
+      return (list && list.data && list.data[0]) || null;
+    }
+    return null;
+  }
+
   async function loadBenchmark() {
-    if (!ID) { fail("No benchmark id."); return; }
+    if (!QUERY_ID && !PATH_KEY) { fail("No benchmark specified."); return; }
     try {
-      const [doc, typesDoc] = await Promise.all([
-        apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID)),
+      const [row, typesDoc] = await Promise.all([
+        resolveBenchmark(),
         apiFetch("/api/v1/subject_types?page[size]=1000").catch(() => null),
       ]);
       SUBJECT_TYPES = (typesDoc && typesDoc.data) || [];
-      BM = (doc && doc.data) || null;
+      BM = row || null;
       if (!BM) { fail("Benchmark not found."); return; }
+      ID = BM.id; // everything downstream (subresource queries, links) keys off the uuid
       render();
       loadCounts();
     } catch (err) {
@@ -156,8 +176,12 @@
     // WITHDRAWN: the record stays public; the remaining affordance is asking operators to remove it.
     return viewLink(a.key) + b("Request takedown", "takedown");
   }
+  // "View" opens the PUBLIC page on the website: /benchmarks/{publisher}/{key} (two segments). The
+  // app host redirects that shape to www; the one-segment /benchmarks/{key} is the console page here.
   function viewLink(key) {
-    return '<a class="button buttonSecondary buttonSmall" href="/benchmarks/' + encodeURIComponent(key || "") + '" target="_blank" rel="noopener">View</a>';
+    const slug = (BM && BM.attributes && BM.attributes.publisher_slug) || "";
+    const href = "/benchmarks/" + encodeURIComponent(slug) + "/" + encodeURIComponent(key || "");
+    return '<a class="button buttonSecondary buttonSmall" href="' + href + '" target="_blank" rel="noopener">View</a>';
   }
 
   // ── Render ──
@@ -718,6 +742,11 @@
   function runFlags(a) { return { invalidated: !!(a.invalidated || a.invalidated_at || a.invalidation_reason), ended: !!(a.ended_at || a.live === false) }; }
   function runStateSort(r) { const f = runFlags(r.attributes || {}); return f.invalidated ? "invalidated" : f.ended ? "ended" : "live"; }
   function runStatePill(r) { return SM.statusPill(runStateSort(r), runStateSort(r)); }
+  // The run's own detail page: /benchmarks/{benchmarkKey}/runs/{runKey}.
+  function runHref(r) {
+    const bkey = (BM && BM.attributes && BM.attributes.key) || ID;
+    return "/benchmarks/" + encodeURIComponent(bkey) + "/runs/" + encodeURIComponent((r.attributes || {}).key || r.id);
+  }
 
   // datetime-local <-> ISO: the picker works in the viewer's local time; the API stores UTC.
   function dtLocalValue(v) {
@@ -750,7 +779,8 @@
         { key: "ended", label: "Ended", sortable: true, sortValue: (r) => (r.attributes || {}).ended_at || "", render: (r) => esc(SM.fmtDateTime((r.attributes || {}).ended_at) || "—") },
       ],
       rows: [], sort: { key: "started", dir: "desc" }, emptyText: "No runs yet.",
-      onRowClick: (r) => openRunModal(r),
+      // Selecting a run opens its own detail page (edit, measurements, keys, API reference live there).
+      onRowClick: (r) => { location.href = runHref(r); },
     });
     try {
       const doc = await apiFetch("/api/v1/runs?filter[benchmark]=" + encodeURIComponent(ID) + "&page[size]=1000");
@@ -762,101 +792,19 @@
     }
   }
 
-  // ── Run modal — edit the run's fields (the run ID is fixed at creation), manage its API keys,
-  //    and jump to its measurements. Editing works at any lifecycle stage; on a published benchmark
-  //    the edit is recorded in the history, and Delete gives way to Invalidate. ──
-  function openRunModal(run) {
-    const a = run.attributes || {};
-    const priv = statusInfo().status === "PRIVATE";
-    const canEdit = CAN_WRITE;
-    const f = runFlags(a);
-    const dis = canEdit ? "" : " disabled";
-    const runHref = "/account/runs/detail?id=" + encodeURIComponent(run.id);
-    const fieldsHtml =
-      '<form class="form" id="run-form" novalidate>' +
-      '<div class="detailGrid"><div class="detailCol">' +
-      '<label class="field"><span class="detailFieldLabel">Run ID</span><input name="key" type="text" value="' + esc(a.key || "") + '" disabled /><p class="detailFieldHelp">Fixed once the run is created.</p></label>' +
-      '<label class="field"><span class="detailFieldLabel">Name</span><input name="name" type="text" autocomplete="off" placeholder="Optional — a label for this run" value="' + esc(a.name || "") + '"' + dis + " /></label>" +
-      "</div><div class=\"detailCol\">" +
-      '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="datetime-local" value="' + esc(dtLocalValue(a.started_at)) + '"' + dis + " /></label>" +
-      '<label class="field"><span class="detailFieldLabel">Ended at</span><input name="ended_at" type="datetime-local" value="' + esc(dtLocalValue(a.ended_at)) + '"' + dis + ' /><p class="detailFieldHelp">Leave blank while the run is still live.</p></label>' +
-      "</div></div>" +
-      '<p class="form-status" id="run-msg"></p></form>';
-    const keysHtml =
-      '<div class="runKeysBlock"><div class="runKeysHead"><span class="detailFieldLabel">API keys for this run</span><span id="run-keys-actions"></span></div>' +
-      '<div id="run-keys-host"></div></div>';
-    const actionsHtml =
-      '<div class="modalActions">' +
-      // Delete is draft-only (a published run is invalidated, never deleted — the record must not vanish).
-      (CAN_WRITE && priv ? '<button type="button" class="button buttonDanger buttonSmall" id="run-delete" style="margin-right:auto;">Delete run</button>' : "") +
-      (!priv && CAN_WRITE && !f.invalidated ? '<button type="button" class="button buttonSecondary buttonSmall" id="run-invalidate" style="margin-right:auto;">Invalidate</button>' : "") +
-      '<a class="buttonLink" href="' + runHref + '#measurements">View measurements</a>' +
-      '<button type="button" class="button buttonSecondary buttonSmall" data-close>' + (canEdit ? "Cancel" : "Close") + "</button>" +
-      (canEdit ? '<button type="button" class="button buttonPrimary buttonSmall" id="run-save">Save</button>' : "") +
-      "</div>";
-    const m = SM.modal({
-      title: "Run " + (a.key || ""),
-      description: canEdit
-        ? (priv
-          ? "Edit this run — its measurements live on the run page."
-          : "Edit this run — this benchmark is published, so changes are recorded in its public history.")
-        : "You have read-only access to this benchmark.",
-      bodyHtml: fieldsHtml + keysHtml + actionsHtml,
-      width: 680,
-    });
-    const form = m.panel.querySelector("#run-form");
-    const msg = (t, kind) => { const el = m.panel.querySelector("#run-msg"); el.textContent = t || ""; el.className = "form-status" + (t ? " is-" + (kind || "error") : ""); };
-
-    SMApiKeys.mount({ host: m.panel.querySelector("#run-keys-host"), actions: m.panel.querySelector("#run-keys-actions"), scopeType: "RUN", scopeRef: run.id, canAdmin: CAN_ADMIN, compact: true });
-
-    const saveBtn = m.panel.querySelector("#run-save");
-    if (saveBtn) saveBtn.addEventListener("click", async () => {
-      msg("");
-      const started = dtLocalToIso(form.started_at.value);
-      const ended = dtLocalToIso(form.ended_at.value);
-      if (started === undefined || ended === undefined) { msg("Enter valid dates."); return; }
-      if (started && ended && new Date(ended) < new Date(started)) { msg("Ended at must not be earlier than Started at."); return; }
-      // Full-replace PUT: name/details are replaced, so details must round-trip from the resource.
-      // Timestamps are only sent when the picker value actually changed — the picker is minute-
-      // precision, so re-sending an untouched value would silently truncate stored seconds.
-      const attrs = { name: form.name.value.trim() || null, details: a.details ?? null };
-      if (form.started_at.value !== dtLocalValue(a.started_at)) attrs.started_at = started;
-      if (form.ended_at.value !== dtLocalValue(a.ended_at)) attrs.ended_at = ended;
-      saveBtn.disabled = true;
-      try {
-        await apiFetch("/api/v1/runs/" + encodeURIComponent(run.id), { method: "PUT", body: jsonapiBody("run", attrs) });
-        m.close();
-        SM.toast("Run saved.", { kind: "success" });
-        renderRuns($("tab-panel"), $("tab-actions"));
-      } catch (err) { saveBtn.disabled = false; msg(err.message); }
-    });
-    const delBtn = m.panel.querySelector("#run-delete");
-    if (delBtn) delBtn.addEventListener("click", () => deleteRun(run.id, a.key, m));
-    const invBtn = m.panel.querySelector("#run-invalidate");
-    if (invBtn) invBtn.addEventListener("click", () => invalidateRun(run.id, m));
-  }
-
-  // ── Add-run modal — optionally mints a run-scoped API key in the same step; the key is revealed
-  //    after the modal closes. The created run is retained across retries so a failed key create
-  //    never duplicates the run. ──
+  // ── Add-run modal — started/ended stacked so the datetime pickers never run off the modal.
+  //    Run-scoped API keys are an advanced concern — create them from the run's API Keys tab. ──
   async function openAddRunModal() {
-    const keyOption = CAN_ADMIN
-      ? '<label class="checkField"><input type="checkbox" id="ar-mkkey" /> <span>Also create an API key for this run</span></label>' +
-        '<label class="field" id="ar-keyname-field" hidden><span class="detailFieldLabel fieldRequired">Key name</span><input name="keyname" type="text" autocomplete="off" value="Upload key" /><p class="detailFieldHelp">The key is scoped to this run only. You’ll see its value once the run is created.</p><p class="fieldErrorMessage" hidden></p></label>'
-      : "";
     const bodyHtml =
       '<form class="form" id="add-run-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel">Run ID</span><input name="key" type="text" autocomplete="off" placeholder="Auto-generated if left blank" /><p class="detailFieldHelp">A unique identifier for this run within the benchmark. Leave blank to auto-generate one.</p></label>' +
       '<label class="field"><span class="detailFieldLabel">Name</span><input name="name" type="text" autocomplete="off" placeholder="Optional — a label for this run" /></label>' +
-      '<div class="detailGrid"><div class="detailCol">' +
       '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="datetime-local" /><p class="detailFieldHelp">Defaults to now if left blank.</p></label>' +
-      '</div><div class="detailCol">' +
       '<label class="field"><span class="detailFieldLabel">Ended at</span><input name="ended_at" type="datetime-local" /><p class="detailFieldHelp">Leave blank while the run is still live.</p></label>' +
-      "</div></div>" + keyOption +
       '<p class="form-status" id="add-run-msg"></p>' +
       '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add run</button></div></form>';
-    let createdRun = null; // survives a failed key create so a retry doesn't duplicate the run
+    let createdRun = null; // survives a failed re-submit so a retry doesn't duplicate the run
     let finished = false;  // distinguishes success-close from abandoning after the run was created
     const m = SM.modal({
       title: "Add run", description: "Record a new run for this benchmark.", bodyHtml: bodyHtml, width: 560,
@@ -864,8 +812,6 @@
     });
     const f = m.panel.querySelector("#add-run-form");
     const msg = m.panel.querySelector("#add-run-msg");
-    const mkkey = m.panel.querySelector("#ar-mkkey");
-    if (mkkey) mkkey.addEventListener("change", () => { m.panel.querySelector("#ar-keyname-field").hidden = !mkkey.checked; });
     f.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       msg.textContent = ""; msg.className = "form-status";
@@ -874,13 +820,6 @@
       if (started === undefined || ended === undefined) { msg.textContent = "Enter valid dates."; msg.className = "form-status is-error"; return; }
       if (ended && !started) { msg.textContent = "Set Started at when recording an end time — a blank start defaults to now."; msg.className = "form-status is-error"; return; }
       if (started && ended && new Date(ended) < new Date(started)) { msg.textContent = "Ended at must not be earlier than Started at."; msg.className = "form-status is-error"; return; }
-      const wantKey = !!(mkkey && mkkey.checked);
-      let keyName = "";
-      if (wantKey) {
-        const knEl = f.keyname; SM.clearFieldError(knEl);
-        keyName = knEl.value.trim();
-        if (!keyName) { SM.setFieldError(knEl, "A name for the key is required."); knEl.focus(); return; }
-      }
       const attrs = { benchmark: ID };
       const k = f.key.value.trim(); if (k) attrs.key = k;
       const n = f.name.value.trim(); if (n) attrs.name = n;
@@ -892,63 +831,14 @@
           const doc = await apiFetch("/api/v1/runs", { method: "POST", body: jsonapiBody("run", attrs) });
           createdRun = doc && doc.data;
         }
-        let plaintext = null;
-        if (wantKey) {
-          const kd = await apiFetch("/api/v1/api_keys", { method: "POST", body: jsonapiBody("api_key", { name: keyName, scope_type: "RUN", scope_ref: createdRun.id }) });
-          plaintext = kd && kd.data && kd.data.attributes && kd.data.attributes.key;
-        }
         finished = true;
         m.close();
         renderRuns($("tab-panel"), $("tab-actions"));
-        if (plaintext) SMApiKeys.reveal(plaintext);
       } catch (err) {
         submit.disabled = false;
-        const note = createdRun ? " The run was created — retrying will only retry the key." : "";
-        msg.textContent = err.message + note; msg.className = "form-status is-error";
+        msg.textContent = err.message; msg.className = "form-status is-error";
       }
     });
-  }
-
-  // Errors surface inside the still-open run modal when there is one — the page banner sits behind it.
-  function runModalMsg(parentModal, text) {
-    const el = parentModal && parentModal.panel.isConnected ? parentModal.panel.querySelector("#run-msg") : null;
-    if (el) { el.textContent = text; el.className = "form-status is-error"; }
-    else setMsg(text, "error");
-  }
-
-  async function invalidateRun(id, parentModal) {
-    const reason = await SM.confirm({ title: "Invalidate run?", message: "Invalidated runs stay visible but are flagged. This can't be undone.", confirmLabel: "Invalidate", reason: { label: "Reason (optional)", placeholder: "Why is this run invalid?" } });
-    if (reason === null) return;
-    setMsg("");
-    const attrs = {};
-    if (reason) attrs.invalidation_reason = reason;
-    try {
-      await apiFetch("/api/v1/runs/" + encodeURIComponent(id) + "/actions/invalidate", { method: "POST", body: jsonapiBody("run", attrs) });
-      if (parentModal) parentModal.close();
-      renderRuns($("tab-panel"), $("tab-actions"));
-    } catch (err) { runModalMsg(parentModal, err.message); }
-  }
-
-  // Deleting a run cascades to its measurements — count them first so the warning is honest.
-  async function deleteRun(id, key, parentModal) {
-    let count = null;
-    try {
-      const d = await apiFetch("/api/v1/measurements?filter[run]=" + encodeURIComponent(id) + "&meta[total]=true&page[size]=1");
-      count = (d && d.meta && d.meta.pagination && d.meta.pagination.total) || 0;
-    } catch (_e) { /* count unavailable — warn generically */ }
-    const message = count > 0
-      ? "Run <strong>" + esc(key || "") + "</strong> contains <strong>" + count + " measurement" + (count === 1 ? "" : "s") + "</strong>. Deleting the run permanently deletes them too. This can't be undone."
-      : count === 0
-        ? "Delete run <strong>" + esc(key || "") + "</strong>? This can't be undone."
-        : "Delete run <strong>" + esc(key || "") + "</strong> and any measurements it contains? This can't be undone.";
-    const ok = await SM.confirm({ title: "Delete run?", message: message, confirmLabel: "Delete" });
-    if (!ok) return;
-    setMsg("");
-    try {
-      await apiFetch("/api/v1/runs/" + encodeURIComponent(id), { method: "DELETE" });
-      if (parentModal) parentModal.close();
-      renderRuns($("tab-panel"), $("tab-actions"));
-    } catch (err) { runModalMsg(parentModal, err.message); }
   }
 
   // ── History tab — the benchmark's audit trail (its own events plus its runs/measurements). ──
@@ -1086,7 +976,7 @@
     if (!ok) return;
     try {
       await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID), { method: "DELETE" });
-      location.href = "/account/benchmarks";
+      location.href = "/benchmarks";
     } catch (err) { setMsg(err.message, "error"); }
   }
 

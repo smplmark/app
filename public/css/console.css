@@ -856,6 +856,8 @@
 .wzChip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.3rem 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-alt); font-size: 0.82rem; }
 .wzChip button { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer; line-height: 1; font-size: 1rem; }
 .wzChip button:hover { background: var(--surface); color: var(--danger); }
+/* Optional-step guidance: a soft callout so "you can skip this" reads as guidance, not fine print. */
+.wzOptionalHint:not([hidden]) { display: block; margin-top: 0.5rem; padding: 0.55rem 0.7rem; border-left: 3px solid var(--accent); background: var(--surface-alt); border-radius: 6px; line-height: 1.5; }
 
 /* ================================================================
    Auth pages (login / signup)
@@ -955,6 +957,20 @@
 .detailGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 2.5rem; align-items: flex-start; }
 .detailCol { display: grid; gap: 1rem; min-width: 0; }
 @media (max-width: 760px) { .detailGrid { grid-template-columns: 1fr; gap: 1.5rem; } }
+
+/* API Reference tab (run detail): method+URL, headers table, and copyable code blocks. */
+.apiRef .apiRefH { margin: 1.4rem 0 0.6rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.apiRefRow { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.apiRefMethod { font-family: var(--mono); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.03em; color: #fff; background: var(--accent); padding: 0.15rem 0.5rem; border-radius: 5px; }
+.apiRefUrl { font-family: var(--mono); font-size: 0.86rem; color: var(--text); word-break: break-all; }
+.apiRefHeaders { border-collapse: collapse; font-size: 0.85rem; }
+.apiRefHeaders td { padding: 0.2rem 1rem 0.2rem 0; vertical-align: top; }
+.apiRefHKey { font-family: var(--mono); color: var(--text-muted); white-space: nowrap; }
+.apiRefHVal { font-family: var(--mono); color: var(--text); }
+.apiRefBlock { position: relative; }
+.apiRefPre { margin: 0; padding: 0.9rem 1rem; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 0.82rem; line-height: 1.5; color: var(--text); white-space: pre; overflow-x: auto; }
+.apiRefCopy { position: absolute; top: 0.5rem; right: 0.5rem; display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-muted); font-size: 0.76rem; cursor: pointer; }
+.apiRefCopy:hover { color: var(--text); border-color: var(--text-muted); }
 
 /* DetailField: an UPPERCASE muted label above a read value (or an input in edit mode). */
 .detailFieldLabel { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }

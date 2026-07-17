@@ -1,18 +1,24 @@
 "use strict";
 
-// Run detail (/account/runs/detail?id=…) — a conforming detail page for a single run: a DetailHeader
-// with the run's key + status, and four tabs — Details (the run's info), Measurements (the run's
-// recorded data, addable and correctable; on a published benchmark every change is recorded in the
-// history), History (the run's audit trail), and API Keys (keys scoped to this run, for CI uploads).
-// The API-key scope is implicit here, so creating one never asks the user for a scope or id. The
-// run's fields (name, start/end) are edited from its benchmark's Runs tab.
+// Run detail (/benchmarks/{benchmarkKey}/runs/{runKey}) — a conforming detail page for a single run:
+// a DetailHeader with the run's key + status, and five tabs — Details (info + Edit / Delete /
+// Invalidate), Measurements (add / correct / delete the run's recorded data), History (the run's
+// audit trail), API Keys (keys scoped to this run, for CI uploads), and API Reference (how to POST
+// measurements to this run). The legacy ?id= run-uuid form is still accepted (old links).
 // Depends on api.js + shell.js (SM helpers) + apikeys-panel.js.
 
 (function () {
   const esc = SM.esc;
   const $ = (id) => document.getElementById(id);
-  const ID = new URLSearchParams(location.search).get("id") || "";
-  const TABS = ["details", "measurements", "history", "apikeys"];
+  // Pretty route /benchmarks/{bkey}/runs/{runKey}; ?id= (the run's uuid) is kept as a fallback.
+  const PATH = (function () {
+    const m = /^\/benchmarks\/([^/]+)\/runs\/([^/]+)\/?$/.exec(location.pathname);
+    return m ? { bkey: decodeURIComponent(m[1]), runKey: decodeURIComponent(m[2]) } : null;
+  })();
+  const QUERY_ID = new URLSearchParams(location.search).get("id") || "";
+  let ID = QUERY_ID;  // the run's uuid, resolved on load (from the keys when pretty-routed)
+  let ACCOUNT_ID = null;
+  const TABS = ["details", "measurements", "history", "apikeys", "apireference"];
 
   let RUN = null;
   let BENCH = null; // the parent benchmark (breadcrumb, measurement schema, freeze state)
@@ -24,6 +30,8 @@
     return TABS.indexOf(h) >= 0 ? h : "details";
   }
   function fmtDateTime(iso) { return SM.fmtDateTime(iso) || "—"; }
+  function benchKey() { return (BENCH && BENCH.attributes && (BENCH.attributes.key)) || ""; }
+  function benchHref() { return "/benchmarks/" + encodeURIComponent(benchKey()); }
   function statusPill(a) {
     if (a.invalidated || a.invalidated_at) return SM.statusPill("invalidated", "invalidated");
     if (a.ended_at || a.live === false) return SM.statusPill("ended", "ended");
@@ -31,6 +39,7 @@
   }
 
   SM.ready.then((id) => {
+    ACCOUNT_ID = id.accountId;
     CAN_ADMIN = id.canAdmin;
     CAN_WRITE = id.canWrite;
     load();
@@ -41,17 +50,25 @@
   function fail(msg) { $("detail-root").innerHTML = '<div class="errorBanner"><p>' + esc(msg) + "</p></div>"; }
 
   async function load() {
-    if (!ID) { fail("No run id."); return; }
+    if (!QUERY_ID && !PATH) { fail("No run specified."); return; }
     try {
-      const doc = await apiFetch("/api/v1/runs/" + encodeURIComponent(ID));
-      RUN = (doc && doc.data) || null;
+      if (QUERY_ID) {
+        RUN = (await apiFetch("/api/v1/runs/" + encodeURIComponent(QUERY_ID))).data || null;
+      } else {
+        // Resolve the benchmark by key first (own account, any status), then the run by its key.
+        const bl = await apiFetch("/api/v1/benchmarks?filter[account]=" + encodeURIComponent(ACCOUNT_ID) + "&filter[key]=" + encodeURIComponent(PATH.bkey));
+        BENCH = (bl && bl.data && bl.data[0]) || null;
+        if (!BENCH) { fail("Benchmark not found."); return; }
+        const rl = await apiFetch("/api/v1/runs?filter[benchmark]=" + encodeURIComponent(BENCH.id) + "&filter[key]=" + encodeURIComponent(PATH.runKey));
+        RUN = (rl && rl.data && rl.data[0]) || null;
+      }
       if (!RUN) { fail("Run not found."); return; }
-      const benchId = (RUN.attributes || {}).benchmark;
-      if (benchId) {
-        try {
-          const bd = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(benchId));
-          BENCH = (bd && bd.data) || null;
-        } catch (_e) { /* benchmark unreadable — fall back to a generic crumb */ }
+      ID = RUN.id;
+      if (!BENCH) {
+        const benchId = (RUN.attributes || {}).benchmark;
+        if (benchId) {
+          try { BENCH = (await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(benchId))).data || null; } catch (_e) { /* generic crumb */ }
+        }
       }
       renderShell();
     } catch (err) { fail(err.message || "Failed to load the run."); }
@@ -63,9 +80,11 @@
     const benchName = (BENCH && BENCH.attributes && (BENCH.attributes.name || BENCH.attributes.key)) || "Benchmark";
     const benchId = a.benchmark || "";
 
+    // Benchmarks / <benchmark> / Runs / <run key>.
     SM.setBreadcrumbs([
-      { label: "Benchmarks", href: "/account/benchmarks" },
-      { label: benchName, href: "/account/benchmarks/detail?id=" + encodeURIComponent(benchId) + "#runs" },
+      { label: "Benchmarks", href: "/benchmarks" },
+      { label: benchName, href: benchHref() },
+      { label: "Runs", href: benchHref() + "#runs" },
       { label: a.key || "Run" },
     ]);
     document.title = (a.key || "Run") + " — smplmark";
@@ -76,7 +95,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.key || "Run", decorations: statusPill(a), secondaryId: a.name || "" }) +
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
-      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + "</nav>" +
+      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + tabBtn("apireference", "API Reference") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>';
 
@@ -98,17 +117,27 @@
     if (tab === "apikeys") renderApiKeys();
     else if (tab === "measurements") renderMeasurements();
     else if (tab === "history") renderHistory();
+    else if (tab === "apireference") renderApiReference();
     else renderDetails();
   }
 
   function renderDetails() {
     const a = RUN.attributes || {};
-    const benchId = a.benchmark || "";
-    const benchName = (BENCH && BENCH.attributes && (BENCH.attributes.name || BENCH.attributes.key)) || benchId;
+    const benchName = (BENCH && BENCH.attributes && (BENCH.attributes.name || BENCH.attributes.key)) || (a.benchmark || "");
+    const priv = String(benchAttrs().status || "").toUpperCase() === "PRIVATE";
+    const invalidated = !!(a.invalidated || a.invalidated_at);
     const benchmarkField =
       '<div class="field"><span class="detailFieldLabel">Benchmark</span><span class="detailFieldValue">' +
-      (benchId ? '<a class="authTextLink" href="/account/benchmarks/detail?id=' + encodeURIComponent(benchId) + '#runs">' + esc(benchName) + "</a>" : "—") +
+      (benchKey() ? '<a class="authTextLink" href="' + benchHref() + '#runs">' + esc(benchName) + "</a>" : esc(benchName || "—")) +
       "</span></div>";
+
+    // Actions in the tab row (the standard for detail pages): Edit, then Delete on a draft benchmark
+    // or Invalidate on a published one (a published run is never deleted — the record must not vanish).
+    if (CAN_WRITE) {
+      const b = (label, id, kind) => '<button type="button" class="button button' + (kind || "Secondary") + ' buttonSmall" id="' + id + '">' + esc(label) + "</button>";
+      $("tab-actions").innerHTML = b("Edit", "run-edit") +
+        (priv ? b("Delete", "run-delete", "Danger") : (!invalidated ? b("Invalidate", "run-invalidate", "Danger") : ""));
+    }
 
     const left =
       '<div class="field"><span class="detailFieldLabel">Run ID</span><span class="detailFieldValue isMono">' + esc(a.key || "") + "</span></div>" +
@@ -120,7 +149,7 @@
       SM.detailField("Started", { value: fmtDateTime(a.started_at) }) +
       SM.detailField("Ended", { value: a.ended_at ? fmtDateTime(a.ended_at) : "—" }) +
       SM.detailField("Created", { value: fmtDateTime(a.created_at) });
-    if (a.invalidated || a.invalidated_at) {
+    if (invalidated) {
       right +=
         SM.detailField("Invalidated", { value: fmtDateTime(a.invalidated_at) }) +
         SM.detailField("Reason", { value: a.invalidation_reason, emptyText: "—" });
@@ -130,7 +159,101 @@
       '<div class="detailsTabPanel"><div class="detailGrid">' +
       '<div class="detailCol">' + left + "</div>" +
       '<div class="detailCol">' + right + "</div></div>" +
-      '<p class="detailFieldHelp" style="margin-top:1rem;">Edit this run (name, start and end times) from its benchmark’s Runs tab.</p></div>';
+      '<div id="run-msg" class="form-status" style="margin-top:0.75rem;"></div></div>';
+
+    const editBtn = $("run-edit"); if (editBtn) editBtn.addEventListener("click", openEditRunModal);
+    const delBtn = $("run-delete"); if (delBtn) delBtn.addEventListener("click", doDeleteRun);
+    const invBtn = $("run-invalidate"); if (invBtn) invBtn.addEventListener("click", doInvalidateRun);
+  }
+
+  function runMsg(text, kind) {
+    const el = $("run-msg");
+    if (el) { el.textContent = text || ""; el.className = "form-status" + (text ? " is-" + (kind || "error") : ""); }
+  }
+
+  // datetime-local <-> ISO: the picker works in the viewer's local time; the API stores UTC.
+  function dtLocalValue(v) {
+    if (!v) return "";
+    const d = new Date(v); if (isNaN(d.getTime())) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+  function dtLocalToIso(v) {
+    if (!v) return null;
+    const d = new Date(v); return isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+
+  // ── Edit-run modal — name + start/end (the run ID is fixed at creation). On a published benchmark
+  //    the edit is recorded in the run's history; clearing "Ended at" returns the run to live. ──
+  function openEditRunModal() {
+    const a = RUN.attributes || {};
+    const priv = String(benchAttrs().status || "").toUpperCase() === "PRIVATE";
+    const bodyHtml =
+      '<form class="form" id="run-edit-form" novalidate>' +
+      '<label class="field"><span class="detailFieldLabel">Run ID</span><input type="text" value="' + esc(a.key || "") + '" disabled /><p class="detailFieldHelp">Fixed once the run is created.</p></label>' +
+      '<label class="field"><span class="detailFieldLabel">Name</span><input name="name" type="text" autocomplete="off" placeholder="Optional — a label for this run" value="' + esc(a.name || "") + '" /></label>' +
+      '<label class="field"><span class="detailFieldLabel">Started at</span><input name="started_at" type="datetime-local" value="' + esc(dtLocalValue(a.started_at)) + '" /></label>' +
+      '<label class="field"><span class="detailFieldLabel">Ended at</span><input name="ended_at" type="datetime-local" value="' + esc(dtLocalValue(a.ended_at)) + '" /><p class="detailFieldHelp">Leave blank while the run is still live.</p></label>' +
+      '<p class="form-status" id="run-edit-msg"></p>' +
+      '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+      '<button type="submit" class="button buttonPrimary buttonSmall">Save</button></div></form>';
+    const m = SM.modal({
+      title: "Edit run " + (a.key || ""),
+      description: priv ? "Edit this run’s name and times." : "Edit this run — this benchmark is published, so changes are recorded in its public history.",
+      bodyHtml: bodyHtml, width: 560,
+    });
+    const f = m.panel.querySelector("#run-edit-form");
+    const msg = (t, k) => { const el = m.panel.querySelector("#run-edit-msg"); el.textContent = t || ""; el.className = "form-status" + (t ? " is-" + (k || "error") : ""); };
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      msg("");
+      const started = dtLocalToIso(f.started_at.value);
+      const ended = dtLocalToIso(f.ended_at.value);
+      if (started === undefined || ended === undefined) { msg("Enter valid dates."); return; }
+      if (started && ended && new Date(ended) < new Date(started)) { msg("Ended at must not be earlier than Started at."); return; }
+      // Full-replace PUT: name/details are replaced (details round-trips from the resource). Timestamps
+      // are sent only when the picker value actually changed — the picker is minute-precision, so
+      // re-sending an untouched value would truncate stored seconds.
+      const attrs = { name: f.name.value.trim() || null, details: a.details ?? null };
+      if (f.started_at.value !== dtLocalValue(a.started_at)) attrs.started_at = started;
+      if (f.ended_at.value !== dtLocalValue(a.ended_at)) attrs.ended_at = ended;
+      const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
+      try {
+        RUN = (await apiFetch("/api/v1/runs/" + encodeURIComponent(ID), { method: "PUT", body: jsonapiBody("run", attrs) })).data || RUN;
+        m.close();
+        SM.toast("Run saved.", { kind: "success" });
+        renderShell();
+      } catch (err) { submit.disabled = false; msg(err.message); }
+    });
+  }
+
+  async function doInvalidateRun() {
+    const reason = await SM.confirm({ title: "Invalidate run?", message: "Invalidated runs stay visible but are flagged and excluded from published results. This can’t be undone.", confirmLabel: "Invalidate", reason: { label: "Reason (optional)", placeholder: "Why is this run invalid?" } });
+    if (reason === null) return;
+    const attrs = {};
+    if (reason) attrs.invalidation_reason = reason;
+    try {
+      RUN = (await apiFetch("/api/v1/runs/" + encodeURIComponent(ID) + "/actions/invalidate", { method: "POST", body: jsonapiBody("run", attrs) })).data || RUN;
+      renderShell();
+    } catch (err) { runMsg(err.message, "error"); }
+  }
+
+  async function doDeleteRun() {
+    const a = RUN.attributes || {};
+    let count = null;
+    try {
+      const d = await apiFetch("/api/v1/measurements?filter[run]=" + encodeURIComponent(ID) + "&meta[total]=true&page[size]=1");
+      count = (d && d.meta && d.meta.pagination && d.meta.pagination.total) || 0;
+    } catch (_e) { /* count unavailable — warn generically */ }
+    const message = count > 0
+      ? "Run <strong>" + esc(a.key || "") + "</strong> contains <strong>" + count + " measurement" + (count === 1 ? "" : "s") + "</strong>. Deleting the run permanently deletes them too. This can’t be undone."
+      : "Delete run <strong>" + esc(a.key || "") + "</strong>? This can’t be undone.";
+    const ok = await SM.confirm({ title: "Delete run?", message: message, confirmLabel: "Delete" });
+    if (!ok) return;
+    try {
+      await apiFetch("/api/v1/runs/" + encodeURIComponent(ID), { method: "DELETE" });
+      location.href = benchHref() + "#runs";
+    } catch (err) { runMsg(err.message, "error"); }
   }
 
   // ── Measurements tab — the run's recorded data. Measurements may be added and corrected at any
@@ -181,7 +304,8 @@
       '<button type="button" class="iconBtn meas-del" data-id="' + esc(m.id) + '" title="Delete measurement" aria-label="Delete measurement">' + SM.icon("trash", 15) + "</button>" });
     const table = SM.pagedTable($("meas-table"), {
       columns: cols, rows: [], sort: { key: "created_at", dir: "desc" }, emptyText: "No measurements in this run yet.",
-      onRowClick: (m) => openMeasurementModal(m),
+      // A writer clicks a row to correct the measurement; a read-only viewer just sees its values.
+      onRowClick: (m) => (CAN_WRITE ? openCorrectMeasurementModal(m) : openMeasurementModal(m)),
       onRender: canDel ? (c) => c.querySelectorAll(".meas-del").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); deleteMeasurement(el.dataset.id); })) : undefined,
     });
     try {
@@ -366,6 +490,61 @@
     if (!ok) return;
     try { await apiFetch("/api/v1/measurements/" + encodeURIComponent(measId), { method: "DELETE" }); renderMeasurements(); }
     catch (err) { const el = $("meas-msg"); if (el) { el.textContent = err.message; el.className = "form-status is-error"; } }
+  }
+
+  // ── API Reference tab — everything needed to POST measurements to this run from CI: the HTTP
+  //    method, the endpoint URL, the headers (a run-scoped API key + JSON:API content type), and an
+  //    example request body pre-filled with this run's id and its benchmark's stored metrics. ──
+  function codeBlock(id, text) {
+    return '<div class="apiRefBlock"><button type="button" class="apiRefCopy" data-copy="' + id + '" title="Copy">' + SM.icon("copy", 14) + " Copy</button>" +
+      '<pre id="' + id + '" class="apiRefPre">' + esc(text) + "</pre></div>";
+  }
+  async function renderApiReference() {
+    const url = location.origin + "/api/v1/measurements";
+    const stored = measSchema().metrics || [];
+    let subjectId = "<subject-id>";
+    let subjectNote = "";
+    try {
+      const benchId = (RUN.attributes || {}).benchmark;
+      const sd = benchId ? await apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(benchId) + "&page[size]=1") : null;
+      const s0 = sd && sd.data && sd.data[0];
+      if (s0) subjectId = s0.id;
+      else subjectNote = "This benchmark has no subjects yet — link one on the benchmark’s Subjects tab, then use its id as “subject” below.";
+    } catch (_e) { /* fall back to the placeholder id */ }
+
+    const metricsExample = {};
+    stored.forEach((mm, i) => { metricsExample[mm.name] = i === 0 ? 123.4 : 42; });
+    const payload = { data: { type: "measurement", attributes: { run: ID, subject: subjectId, metrics: metricsExample } } };
+    const payloadStr = JSON.stringify(payload, null, 2);
+    const curl =
+      "curl -X POST '" + url + "' \\\n" +
+      "  -H 'Authorization: Bearer <run-scoped-api-key>' \\\n" +
+      "  -H 'Content-Type: application/vnd.api+json' \\\n" +
+      "  -d '" + JSON.stringify(payload) + "'";
+
+    const headersRows = [
+      ["Authorization", "Bearer &lt;run-scoped-api-key&gt;"],
+      ["Content-Type", "application/vnd.api+json"],
+    ].map(([k, v]) => '<tr><td class="apiRefHKey">' + esc(k) + '</td><td class="apiRefHVal">' + v + "</td></tr>").join("");
+
+    $("tab-panel").innerHTML =
+      '<div class="detailsTabPanel apiRef">' +
+      '<p class="muted" style="margin:0 0 1rem;">Record measurements for this run from anywhere (CI, a script) by POSTing to the measurements endpoint. Authenticate with an API key scoped to this run — create one on the <a class="authTextLink" href="#apikeys">API Keys</a> tab.</p>' +
+      '<div class="apiRefRow"><span class="apiRefMethod">POST</span><code class="apiRefUrl">' + esc(url) + "</code></div>" +
+      '<h3 class="apiRefH">Headers</h3><table class="apiRefHeaders">' + headersRows + "</table>" +
+      '<h3 class="apiRefH">Request body</h3>' +
+      (subjectNote ? '<p class="detailFieldHelp" style="margin:0 0 0.5rem;">' + esc(subjectNote) + "</p>" : "") +
+      codeBlock("apiref-body", payloadStr) +
+      '<h3 class="apiRefH">Example (curl)</h3>' +
+      codeBlock("apiref-curl", curl) +
+      "</div>";
+
+    // Deep-link the API Keys tab, and wire the copy buttons.
+    $("tab-panel").querySelectorAll('a[href="#apikeys"]').forEach((el) => el.addEventListener("click", (ev) => { ev.preventDefault(); location.hash = "apikeys"; }));
+    $("tab-panel").querySelectorAll(".apiRefCopy").forEach((btn) => btn.addEventListener("click", () => {
+      const pre = $(btn.dataset.copy);
+      if (pre && navigator.clipboard) navigator.clipboard.writeText(pre.textContent).then(() => SM.toast("Copied.", { kind: "success" })).catch(() => {});
+    }));
   }
 
   function renderApiKeys() {

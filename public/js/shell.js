@@ -87,7 +87,7 @@
   const BASE_NAV = [
     { key: "dashboard", label: "Dashboard", href: "/", icon: "dashboard", exact: true },
     { divider: true },
-    { key: "benchmarks", label: "Benchmarks", href: "/account/benchmarks", icon: "benchmarks" },
+    { key: "benchmarks", label: "Benchmarks", href: "/benchmarks", icon: "benchmarks" },
     { key: "metrics", label: "Metrics", href: "/account/metrics", icon: "activity" },
     { key: "subjects", label: "Subjects", href: "/account/subjects", icon: "subjects" },
     { key: "subject_types", label: "Subject types", href: "/account/subject-types", icon: "layers" },

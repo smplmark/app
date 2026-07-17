@@ -31,10 +31,31 @@ describe("app routing", () => {
     expect(res.headers.get("location")).toBe(`${WWW}/about`);
   });
 
-  it("redirects published benchmark pages to the website (301)", async () => {
+  it("serves the console benchmark list at /benchmarks (app host)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="bm-content"'); // the console list shell, not a redirect
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("serves the console benchmark-detail shell at /benchmarks/{key}", async () => {
     const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/scheduler-latency");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="detail-root"');
+    expect(body).toContain("console-benchmark-detail.js");
+  });
+
+  it("serves the console run-detail shell at /benchmarks/{key}/runs/{runKey}", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/scheduler-latency/runs/run-1");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("console-run-detail.js");
+  });
+
+  it("redirects a PUBLIC benchmark page (/benchmarks/{publisher}/{key}) to the website (301)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/stanford-helm/scheduler-latency");
     expect(res.status).toBe(301);
-    expect(res.headers.get("location")).toBe(`${WWW}/benchmarks/scheduler-latency`);
+    expect(res.headers.get("location")).toBe(`${WWW}/benchmarks/stanford-helm/scheduler-latency`);
   });
 
   it("serves the API directly (no host partition)", async () => {

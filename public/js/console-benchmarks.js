@@ -154,7 +154,7 @@
       rows: filtered(),
       sort: RAIL === "recent" ? { key: "created", dir: "desc" } : { key: "name", dir: "asc" },
       emptyText: RAIL === "mine" ? "You haven’t created any matching benchmarks." : "No matching benchmarks.",
-      onRowClick: (b) => { location.href = "/account/benchmarks/detail?id=" + encodeURIComponent(b.id); },
+      onRowClick: (b) => { location.href = "/benchmarks/" + encodeURIComponent((b.attributes || {}).key || b.id); },
       onRender: hydrateAvatars,
     });
   }
@@ -172,11 +172,29 @@
     return s;
   }
 
+  // A benchmark compares subjects of a defined type, so at least one subject type must exist before
+  // one can be created. Gate the wizard on it up front — a clear "define a subject type first" modal
+  // rather than letting the user fill in a name and hit a dead end at the type picker.
+  function openNoSubjectTypeGate() {
+    SM.modal({
+      title: "Define a subject type first",
+      description: "A benchmark compares subjects of a single type (for example a “Scheduler” or a “GPU”). Create at least one subject type, then come back to create your benchmark.",
+      bodyHtml:
+        '<div class="modalActions">' +
+        '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+        '<a class="button buttonPrimary buttonSmall" href="/account/subject-types">Go to Subject types</a>' +
+        "</div>",
+      width: 480,
+    });
+  }
+
   // ── Create wizard ── A 3-step modal: (1) name + description, (2) link subjects, (3) link metrics. The
   //    key is auto-generated from the name server-side. Subjects/metrics are optional (one or more, and
   //    always addable later from the benchmark's tabs). Finish creates the benchmark, links the chosen
   //    subjects + metrics, and opens it in view mode.
   function openCreateModal() {
+    // No subject types yet → the benchmark can't name what it compares. Gate before the wizard.
+    if (Object.keys(SUBJECT_TYPES).length === 0) { openNoSubjectTypeGate(); return; }
     const data = { name: "", description: "", subject_type: "" };
     const subjects = []; // chosen subject resources
     const metrics = [];  // chosen metric resources
@@ -278,6 +296,7 @@
         '<p class="fieldErrorMessage" hidden></p></label>' +
         '<label class="field"><span class="detailFieldLabel">Subject</span><input id="bw-subj" type="text" autocomplete="off" placeholder="Pick a subject to add" /></label>' +
         '<div class="wzChips" id="bw-subj-chips"></div>' +
+        '<p class="detailFieldHelp wzOptionalHint" id="bw-subj-hint" hidden></p>' +
         '<p class="form-status" id="bw-msg"></p>' +
         dots(1) +
         nav(renderName, "Next", null);
@@ -287,6 +306,16 @@
         (t) => [(t.attributes || {}).key, (t.attributes || {}).name],
         (t) => { const a = t.attributes || {}; return (a.name || "") + (a.key ? " — " + a.key : ""); },
         (t) => (t.attributes || {}).name || (t.attributes || {}).key || "");
+      // When the chosen type has no subjects yet, say plainly that this step is optional and skippable
+      // (the picker's own "No matches" only shows inside the popup, which the user may never open).
+      function refreshSubjHint() {
+        const hint = root.querySelector("#bw-subj-hint");
+        if (!hint) return;
+        const avail = (acctSubjects || []).filter((t) => (t.attributes || {}).subject_type === data.subject_type);
+        const show = !!data.subject_type && acctSubjects !== null && avail.length === 0;
+        hint.hidden = !show;
+        if (show) hint.textContent = "No subjects of this type yet — this step is optional. Click Next to continue; you can add subjects anytime from the benchmark’s Subjects tab.";
+      }
       const stEl = root.querySelector("#bw-st");
       stEl.addEventListener("change", () => {
         SM.clearFieldError(stEl);
@@ -300,8 +329,9 @@
         renderMetrics();
       });
       (data.subject_type ? root.querySelector("#bw-subj") : stEl).focus();
+      refreshSubjHint();
       if (acctTypes === null) loadList("/api/v1/subject_types?page[size]=1000", (rows) => { acctTypes = rows; renderSubjects(); });
-      if (acctSubjects === null) loadList("/api/v1/subjects?page[size]=1000", (rows) => { acctSubjects = rows; fillList(); });
+      if (acctSubjects === null) loadList("/api/v1/subjects?page[size]=1000", (rows) => { acctSubjects = rows; fillList(); refreshSubjHint(); });
     }
 
     // ── Step 3: metrics ──
@@ -311,18 +341,34 @@
         '<div class="wzHead"><h2 class="wzTitle">Add metrics</h2><p class="wzText">Link the metrics this benchmark reports. This is optional: add one or more now, or add them anytime later from the benchmark’s Metrics tab.</p></div>' +
         '<label class="field"><span class="detailFieldLabel">Metric</span><input id="bw-metric" type="text" autocomplete="off" placeholder="Pick a metric to add" /></label>' +
         '<div class="wzChips" id="bw-metric-chips"></div>' +
+        '<p class="detailFieldHelp wzOptionalHint" id="bw-metric-hint" hidden></p>' +
         '<p class="form-status" id="bw-msg"></p>' +
         dots(2) +
-        nav(renderSubjects, "Finish", null);
+        nav(renderSubjects, metrics.length ? "Finish" : "Skip &amp; create", null);
+      // The Finish button reads "Skip & create" until a metric is picked, so skipping is an obvious
+      // choice — then flips to "Finish" once the user has chosen at least one.
       const fillList = setupPicker("#bw-metric", "#bw-metric-chips", () => acctMetrics, metrics,
         (t) => [(t.attributes || {}).name, (t.attributes || {}).label],
         (t) => { const a = t.attributes || {}; return (a.label || "") + (a.name ? " — " + a.name : ""); },
         (t) => (t.attributes || {}).label || (t.attributes || {}).name || "");
       const nextBtn = root.querySelector("#bw-next"); nextBtn.id = "bw-finish";
+      function refreshMetricUi() {
+        nextBtn.innerHTML = metrics.length ? "Finish" : "Skip &amp; create";
+        const hint = root.querySelector("#bw-metric-hint");
+        if (hint) {
+          const show = acctMetrics !== null && (acctMetrics || []).length === 0;
+          hint.hidden = !show;
+          if (show) hint.textContent = "No metrics defined yet — this step is optional. Click Skip & create; you can add metrics anytime from the benchmark’s Metrics tab.";
+        }
+      }
       root.querySelector("#bw-back").addEventListener("click", renderSubjects);
       nextBtn.addEventListener("click", finish);
+      // Keep the button label in sync as chips are added/removed.
+      root.querySelector("#bw-metric-chips").addEventListener("click", () => setTimeout(refreshMetricUi, 0));
+      root.querySelector("#bw-metric").addEventListener("change", () => setTimeout(refreshMetricUi, 0));
       root.querySelector("#bw-metric").focus();
-      if (acctMetrics === null) loadList("/api/v1/metrics?page[size]=1000", (rows) => { acctMetrics = rows; fillList(); });
+      refreshMetricUi();
+      if (acctMetrics === null) loadList("/api/v1/metrics?page[size]=1000", (rows) => { acctMetrics = rows; fillList(); refreshMetricUi(); });
     }
 
     // ── Finish: create the benchmark, link the chosen subjects + metrics, open it in view mode ──
@@ -333,14 +379,15 @@
         const attrs = { name: data.name, subject_type: data.subject_type };
         if (data.description) attrs.description = data.description;
         const doc = await apiFetch("/api/v1/benchmarks", { method: "POST", body: jsonapiBody("benchmark", attrs) });
-        const id = doc && doc.data && doc.data.id;
+        const created = doc && doc.data;
+        const id = created && created.id;
         if (!id) throw new Error("The benchmark could not be created.");
         // Link the chosen subjects + metrics (best-effort; the benchmark exists and the rest is addable later).
         const links = subjects.map((s) => apiFetch("/api/v1/benchmark_subjects", { method: "POST", body: jsonapiBody("benchmark_subject", { benchmark: id, subject: s.id }) }))
           .concat(metrics.map((mt) => apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: id, metric: mt.id }) })));
         await Promise.allSettled(links);
         m.close();
-        location.href = "/account/benchmarks/detail?id=" + encodeURIComponent(id);
+        location.href = "/benchmarks/" + encodeURIComponent((created.attributes || {}).key || id);
       } catch (err) { btn.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
     }
   }
