@@ -117,6 +117,9 @@ function auditClient(env: Env): AuditClient {
     baseUrl: auditBaseUrl(env),
     environment: env.SMPL_AUDIT_ENVIRONMENT,
     buffered: false,
+    // Workers' outbound fetch sends no User-Agent, and the smplkit platform's WAF (CloudFront
+    // managed rules) rejects UA-less requests with an HTML 403 before they reach the service.
+    extraHeaders: { "User-Agent": "smplmark-app (+https://app.smplmark.org)" },
   });
 }
 

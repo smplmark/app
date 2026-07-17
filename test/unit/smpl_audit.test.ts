@@ -91,6 +91,8 @@ describe("emitAuditEvent", () => {
     expect(calls[0].url).toBe("https://audit.smplkit.com/api/v1/events");
     expect(calls[0].headers.get("Authorization")).toBe("Bearer sk_api_test");
     expect(calls[0].headers.get("Content-Type")).toBe("application/vnd.api+json");
+    // The platform WAF rejects UA-less requests (Workers' fetch default) — the UA must travel.
+    expect(calls[0].headers.get("User-Agent")).toContain("smplmark-app");
     const body = JSON.parse(calls[0].body) as { data: { type: string; attributes: Record<string, unknown> } };
     expect(body.data.type).toBe("event");
     const a = body.data.attributes;
