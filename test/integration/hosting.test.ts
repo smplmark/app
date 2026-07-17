@@ -52,10 +52,13 @@ describe("app routing", () => {
     expect(await res.text()).toContain("console-run-detail.js");
   });
 
-  it("redirects a PUBLIC benchmark page (/benchmarks/{publisher}/{key}) to the website (301)", async () => {
+  it("redirects a PUBLIC benchmark page (/benchmarks/{publisher}/{key}) to the website — 302, uncached", async () => {
     const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/stanford-helm/scheduler-latency");
-    expect(res.status).toBe(301);
+    // 302 (not 301): /benchmarks/* is a shared namespace, so its redirects must never be cached —
+    // a permanent redirect would strand the console pages if routing shifts again.
+    expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(`${WWW}/benchmarks/stanford-helm/scheduler-latency`);
+    expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
   it("serves the API directly (no host partition)", async () => {

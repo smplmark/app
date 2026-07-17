@@ -118,14 +118,22 @@ export function createApp() {
     // presents requests as the configured custom domain. The console benchmark shapes were served
     // above, so any remaining `/benchmarks/…` path is a public benchmark page (`/{publisher}/{key}`)
     // whose home is the website — redirect it there.
-    if (isPublicPage(p) || p.startsWith("/benchmarks/")) {
-      if (c.env.DEV_WWW_ORIGIN) {
-        return c.redirect(new URL(p + url.search, c.env.DEV_WWW_ORIGIN).toString(), 301);
-      }
-      url.protocol = "https:";
-      url.hostname = WWW_HOST;
-      url.port = "";
-      return c.redirect(url.toString(), 301);
+    const isBenchmarkPath = p.startsWith("/benchmarks/");
+    if (isPublicPage(p) || isBenchmarkPath) {
+      // `/benchmarks/*` is a SHARED, evolving namespace (console pages served above, public pages
+      // here), so redirect it with a NON-permanent 302 — never a 301. A cached 301 would strand
+      // users if the routing shifts again the way it just did (`/benchmarks` went from a redirect to
+      // the console list; a benchmark whose one-segment URL was 301'd to the site before this change
+      // would otherwise be unreachable in the console). Stable marketing pages stay a permanent 301.
+      const status = isBenchmarkPath ? 302 : 301;
+      const target = c.env.DEV_WWW_ORIGIN
+        ? new URL(p + url.search, c.env.DEV_WWW_ORIGIN).toString()
+        : (() => { url.protocol = "https:"; url.hostname = WWW_HOST; url.port = ""; return url.toString(); })();
+      const res = c.redirect(target, status);
+      // Belt and suspenders: tell browsers not to cache this redirect, so the shared namespace can
+      // never be poisoned by a stored redirect again.
+      res.headers.set("Cache-Control", "no-store");
+      return res;
     }
     await next();
   });
