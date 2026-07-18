@@ -7,9 +7,10 @@ import {
   createRun,
   deleteRunCascade,
   endRun,
-  getRunById,
   invalidateRun,
   listRuns,
+  resolveOwnedRun,
+  resolveRunForRead,
   runKeyExists,
   updateRun,
 } from "../data/runs";
@@ -40,11 +41,13 @@ export const runs = new Hono<AppBindings>();
 
 async function loadOwned(
   c: Context<AppBindings>,
-  id: string,
+  idOrKey: string,
 ): Promise<{ run: RunRow; benchmark: BenchmarkRow }> {
   const auth = getAuth(c);
   requireWrite(auth); // loadOwned backs only mutating handlers.
-  const run = await getRunById(c.env.DB, id);
+  // The path segment may be the run's key (resolved within the caller's scope, since a key is unique
+  // only per benchmark) or a raw UUID. The covers() check below still authorizes the resolved row.
+  const run = await resolveOwnedRun(c.env.DB, auth, idOrKey);
   if (!run) throw new NotFoundError();
   const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (
@@ -185,7 +188,8 @@ runs.get("/", optionalAuth, async (c) => {
 
 runs.get("/:id", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
-  const run = await getRunById(c.env.DB, c.req.param("id"));
+  // The path segment may be the run's key or a raw UUID; the visibility check below still gates it.
+  const run = await resolveRunForRead(c.env.DB, auth ?? null, c.req.param("id"));
   if (!run) throw new NotFoundError();
   const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (!benchmark) throw new NotFoundError();
@@ -316,7 +320,8 @@ runs.post("/:id/actions/invalidate", requireAuth, async (c) => {
 // the publisher identity.
 runs.get("/:id/history", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
-  const run = await getRunById(c.env.DB, c.req.param("id"));
+  // The path segment may be the run's key or a raw UUID; the visibility check below still gates it.
+  const run = await resolveRunForRead(c.env.DB, auth ?? null, c.req.param("id"));
   if (!run) throw new NotFoundError();
   const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (!benchmark) throw new NotFoundError();

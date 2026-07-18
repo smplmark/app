@@ -355,6 +355,30 @@ describe("organization publish", () => {
     expect(badge.icon).toBe("monogram");
   });
 
+  it("addresses an organization publish by its verified domain, resolvable via filter[publisher]", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    const publisher = await verifiedPublisher(me.token);
+    const b = await makeBenchmark(me.token);
+    await seedPublishable(me.token, b.id);
+    await markReady(me.token, b.id);
+    const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
+    expect(ok.status).toBe(200);
+    const pub = ((await ok.json()) as { data: Resource }).data;
+    const domain = publisher.attributes.domain as string;
+
+    // The public path is /{verified-domain}/{key} — the org's domain, not the owning account's slug.
+    expect(pub.attributes.publisher_slug).toBe(domain);
+
+    // …and it resolves anonymously by that domain slug (the list + single-read paths share the same
+    // resolver, so this exercises the public addressing end to end).
+    const byDomain = (await (
+      await apiGet(`/api/v1/benchmarks?filter[publisher]=${encodeURIComponent(domain)}`)
+    ).json()) as { data: Resource[] };
+    expect(byDomain.data.map((r) => r.id)).toContain(pub.id);
+    for (const r of byDomain.data) expect(r.attributes.publisher_slug).toBe(domain);
+  });
+
   it("blocks org publish when the publisher's domain is not verified (409)", async () => {
     const me = await register();
     await markVerified(me.user_id);

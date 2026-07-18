@@ -21,6 +21,7 @@ import {
   SKEW_SCHEMA,
   type Resource,
   makeSubjectType,
+  subjectTypeUuid,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -40,7 +41,7 @@ describe("benchmark create + read", () => {
 
   it("auto-generates the key from the name when omitted (unique within the account)", async () => {
     const me = await register();
-    const st = (await makeSubjectType(me.token)).id;
+    const st = await subjectTypeUuid(await makeSubjectType(me.token));
     const mk = (name: string) => apiPost(
       "/api/v1/benchmarks",
       { data: { type: "benchmark", attributes: { name, subject_type: st } } },
@@ -58,7 +59,7 @@ describe("benchmark create + read", () => {
 
   it("defaults to an empty measurement_schema when none is supplied, as a draft", async () => {
     const me = await register();
-    const st = (await makeSubjectType(me.token)).id;
+    const st = await subjectTypeUuid(await makeSubjectType(me.token));
     const res = await apiPost(
       "/api/v1/benchmarks",
       { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema", subject_type: st } } },
@@ -301,18 +302,63 @@ describe("benchmark subject_type (like against like)", () => {
     expect((await post({})).status).toBe(400); // missing
     expect((await post({ subject_type: "ghost" })).status).toBe(400); // unknown
     const other = await register("other-st@example.com");
-    const foreign = (await makeSubjectType(other.token)).id;
-    expect((await post({ subject_type: foreign })).status).toBe(400); // another account's type
+    const foreign = await makeSubjectType(other.token, { name: "CPU" });
+    expect((await post({ subject_type: foreign.id })).status).toBe(400); // another account's type, by key
+    expect((await post({ subject_type: await subjectTypeUuid(foreign) })).status).toBe(400); // ...and by UUID
 
-    const st = (await makeSubjectType(me.token, { name: "CPU" })).id;
-    const b = await makeBenchmark(me.token, { subject_type: st });
-    expect(b.attributes.subject_type).toBe(st);
+    const st = await makeSubjectType(me.token, { name: "CPU" });
+    const b = await makeBenchmark(me.token, { subject_type: st.id }); // referenced by its key
+    // The wire value is the subject type's key (its public id), never the internal UUID.
+    expect(b.attributes.subject_type).toBe(st.id);
+  });
+
+  it("accepts the subject_type by key or by legacy UUID, on create and update", async () => {
+    const me = await register();
+    const st = await makeSubjectType(me.token, { name: "CPU" });
+    const stUuid = await subjectTypeUuid(st);
+
+    // Create by key, and by the legacy UUID — both serialize the key back.
+    const byKey = await makeBenchmark(me.token, { key: "by-key", subject_type: st.id });
+    expect(byKey.attributes.subject_type).toBe(st.id);
+    const byUuid = await makeBenchmark(me.token, { key: "by-uuid", subject_type: stUuid });
+    expect(byUuid.attributes.subject_type).toBe(st.id);
+
+    // Update to a fresh type by key, then round-trip the same type by UUID — both 200, both emit the key.
+    const st2 = await makeSubjectType(me.token, { name: "GPU" });
+    const put = (ref: string) =>
+      apiPut(
+        `/api/v1/benchmarks/${byKey.id}`,
+        putBody({ name: "Renamed", subject_type: ref, measurement_schema: SKEW_SCHEMA }),
+        bearer(me.token),
+      );
+    const r1 = await put(st2.id);
+    expect(r1.status).toBe(200);
+    expect(((await r1.json()) as { data: Resource }).data.attributes.subject_type).toBe(st2.id);
+    const r2 = await put(await subjectTypeUuid(st2));
+    expect(r2.status).toBe(200);
+    expect(((await r2.json()) as { data: Resource }).data.attributes.subject_type).toBe(st2.id);
+  });
+
+  it("rejects an unknown or cross-account subject_type on update (by key or UUID)", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const other = await register("cross-upd@example.com");
+    const foreign = await makeSubjectType(other.token, { name: "CPU" });
+    const put = (ref: string) =>
+      apiPut(
+        `/api/v1/benchmarks/${b.id}`,
+        putBody({ name: "R", subject_type: ref, measurement_schema: SKEW_SCHEMA }),
+        bearer(me.token),
+      );
+    expect((await put("ghost")).status).toBe(400); // unknown
+    expect((await put(foreign.id)).status).toBe(400); // another account's type, by key
+    expect((await put(await subjectTypeUuid(foreign))).status).toBe(400); // ...and by UUID
   });
 
   it("locks subject_type while subjects are linked; editable again once unlinked", async () => {
     const me = await register();
-    const st1 = (await makeSubjectType(me.token, { name: "CPU" })).id;
-    const st2 = (await makeSubjectType(me.token, { name: "GPU" })).id;
+    const st1 = await subjectTypeUuid(await makeSubjectType(me.token, { name: "CPU" }));
+    const st2 = await subjectTypeUuid(await makeSubjectType(me.token, { name: "GPU" }));
     const b = await makeBenchmark(me.token, { subject_type: st1 });
     const subject = await makeAccountSubject(me.token, "cpu-1", { subject_type: st1 });
     const link = await linkSubject(me.token, b.id, subject.id);

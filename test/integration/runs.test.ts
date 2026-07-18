@@ -13,6 +13,7 @@ import {
   publish,
   register,
   resetDb,
+  runUuid,
   type Resource,
 } from "./helpers";
 
@@ -108,6 +109,32 @@ describe("run liveness + actions", () => {
     );
     expect(res3.status).toBe(201);
     expect(((await res3.json()) as { data: Resource }).data.attributes.started_at).toBeNull();
+  });
+
+  it("uses the run key as its public id and resolves a run by key or by UUID on read and mutate", async () => {
+    const me = await register();
+    const { r } = await scaffold(me.token);
+    // The run's public id is its key; the internal UUID is never surfaced.
+    expect(r.id).toBe(r.attributes.key);
+
+    // GET by key works and echoes the key as the id.
+    const byKey = await apiGet(`/api/v1/runs/${r.id}`, bearer(me.token));
+    expect(byKey.status).toBe(200);
+    expect(((await byKey.json()) as { data: Resource }).data.id).toBe(r.id);
+
+    // GET by the internal UUID (legacy path) also resolves and still emits the key as the id.
+    const byUuid = await apiGet(`/api/v1/runs/${await runUuid(r)}`, bearer(me.token));
+    expect(byUuid.status).toBe(200);
+    expect(((await byUuid.json()) as { data: Resource }).data.id).toBe(r.id);
+
+    // A mutation addressed by the key resolves to the same run.
+    const put = await apiPut(
+      `/api/v1/runs/${r.id}`,
+      { data: { type: "run", attributes: { name: "renamed" } } },
+      bearer(me.token),
+    );
+    expect(put.status).toBe(200);
+    expect(((await put.json()) as { data: Resource }).data.attributes.name).toBe("renamed");
   });
 
   it("a new run is live (ended_at null)", async () => {
@@ -339,7 +366,7 @@ describe("post-publish run rules (editable, never deletable)", () => {
     const me = await register();
     const { b, t, r } = await scaffold(me.token);
     await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
-    const { resource: key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+    const { resource: key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
     expect(b.attributes.status).toBe("PRIVATE");
     expect((await apiDelete(`/api/v1/runs/${r.id}`, bearer(me.token))).status).toBe(204);
     // The run-scoped key authorizes nothing once its run is gone — it must not linger.

@@ -35,14 +35,21 @@ export async function benchmarkHasMeasurements(
   return r !== null;
 }
 
-/** Load one measurement by its rowid (for authz + delete). */
+/** Load one measurement by its rowid (for authz + delete + the correction response). Carries the run's
+ *  and subject's keys so the serialized `run`/`subject` references are their public ids, not UUIDs. */
 export async function getMeasurementById(
   db: D1Database,
   id: number,
-): Promise<MeasurementRow | null> {
+): Promise<(MeasurementRow & { subject_key: string; run_key: string }) | null> {
   return (
-    (await db.prepare("SELECT * FROM measurement WHERE id = ?").bind(id).first<MeasurementRow>()) ??
-    null
+    (await db
+      .prepare(
+        "SELECT measurement.*, subject.key AS subject_key, run.key AS run_key FROM measurement" +
+          " JOIN subject ON subject.id = measurement.subject_id" +
+          " JOIN run ON run.id = measurement.run_id WHERE measurement.id = ?",
+      )
+      .bind(id)
+      .first<MeasurementRow & { subject_key: string; run_key: string }>()) ?? null
   );
 }
 
@@ -92,6 +99,10 @@ export interface MeasurementListRow {
   id: number;
   run_id: string;
   subject_id: string;
+  /** The subject's human key — the subject's public id on the wire (serialization emits this). */
+  subject_key: string;
+  /** The run's human key — the run's public id on the wire (serialization emits this). */
+  run_key: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
@@ -119,11 +130,13 @@ export interface ListMeasurementsInput {
 }
 
 // A measurement names both its run and its subject directly; the benchmark hangs off the run
-// (run.benchmark_id). The subject scope filters measurement.subject_id, so no subject JOIN is needed.
+// (run.benchmark_id). The subject scope filters measurement.subject_id; the subject JOIN also carries
+// subject.key so serialization can emit the subject's public key rather than its internal UUID.
 const JOINS =
   "FROM measurement" +
   " JOIN run ON run.id = measurement.run_id" +
-  " JOIN benchmark ON benchmark.id = run.benchmark_id";
+  " JOIN benchmark ON benchmark.id = run.benchmark_id" +
+  " JOIN subject ON subject.id = measurement.subject_id";
 
 const MEASUREMENT_COLUMNS: Record<string, string> = {
   created_at: "measurement.created_at",
@@ -169,6 +182,7 @@ export async function listMeasurements(
     await db
       .prepare(
         `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.subject_id AS subject_id,` +
+          ` subject.key AS subject_key, run.key AS run_key,` +
           ` measurement.created_at AS created_at, measurement.metrics AS metrics, measurement.meta AS meta,` +
           ` benchmark.measurement_schema AS measurement_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +

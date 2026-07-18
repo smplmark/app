@@ -13,6 +13,7 @@ import {
   serializePublisher,
   serializeRun,
   serializeSubject,
+  serializeSubjectType,
   serializeTakedownRequest,
   serializeUser,
 } from "../../src/serialize/resource";
@@ -28,6 +29,7 @@ import type {
   RunRow,
   MeasurementSchema,
   SubjectRow,
+  SubjectTypeRow,
   UserRow,
 } from "../../src/types";
 
@@ -140,7 +142,9 @@ describe("serializeApiKey", () => {
 describe("serializeBenchmark", () => {
   const priv: BenchmarkRowWithPublisher = {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
-    description: null, about: null, methodology: null, subject_type: null, status: "PRIVATE",
+    description: null, about: null, methodology: null,
+    // subject_type is the internal UUID (never surfaced); subject_type_key is the wire reference.
+    subject_type: "st-uuid-1", subject_type_key: "cpu", status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
     measurement_schema: "{}",
     created_by_user_id: "u1", draft: 1,
@@ -169,6 +173,14 @@ describe("serializeBenchmark", () => {
 
   it("null created_by for an API-key-created benchmark", () => {
     expect(serializeBenchmark({ ...priv, created_by_user_id: null }, []).attributes.created_by).toBeNull();
+  });
+
+  it("references the subject type by its key, never the internal UUID; null when untyped", () => {
+    // The wire reference is subject_type_key (the type's public id), not the raw subject_type UUID.
+    expect(serializeBenchmark(priv, []).attributes.subject_type).toBe("cpu");
+    expect(
+      serializeBenchmark({ ...priv, subject_type: null, subject_type_key: null }, []).attributes.subject_type,
+    ).toBeNull();
   });
 
   it("surfaces category and the caller-supplied tag keys", () => {
@@ -264,16 +276,43 @@ describe("serializePublisher", () => {
 });
 
 describe("serializeSubject", () => {
-  const row: SubjectRow = {
-    id: "t1", account_id: "a1", subject_type_id: "st1", key: "sched-a", name: "Scheduler A",
+  const row: SubjectRow & { subject_type_key: string | null } = {
+    id: "t1", account_id: "a1", subject_type_id: "st1", subject_type_key: "server", key: "sched-a", name: "Scheduler A",
     details: JSON.stringify({ region: "us-east-1" }),
     created_at: T0, updated_at: T0,
   };
-  it("maps account + subject_type and parses details; null details → null", () => {
+  it("maps account + subject_type (by key, not the internal UUID) and parses details; null details → null", () => {
     expect(serializeSubject(row).attributes.account).toBe("a1");
-    expect(serializeSubject(row).attributes.subject_type).toBe("st1");
+    // The subject_type ref is the type's key (its public id), never the internal subject_type_id UUID.
+    expect(serializeSubject(row).attributes.subject_type).toBe("server");
     expect(serializeSubject(row).attributes.details).toEqual({ region: "us-east-1" });
     expect(serializeSubject({ ...row, details: null }).attributes.details).toBeNull();
+  });
+
+  it("passes a null subject_type_key through (an untyped subject)", () => {
+    expect(serializeSubject({ ...row, subject_type_key: null }).attributes.subject_type).toBeNull();
+  });
+
+  it("uses the subject's key as its public id (the internal UUID is never surfaced)", () => {
+    const out = serializeSubject(row);
+    expect(out.id).toBe("sched-a");
+    expect(out.id).toBe(row.key);
+    expect(out.attributes.key).toBe("sched-a"); // the key attribute is retained; it equals the id
+  });
+});
+
+describe("serializeSubjectType", () => {
+  const row: SubjectTypeRow = {
+    id: "st-uuid-1", account_id: "a1", key: "server", name: "Server",
+    fields: JSON.stringify([{ name: "region", label: "Region", type: "STRING", required: false }]),
+    created_at: T0, updated_at: T0,
+  };
+  it("uses the subject type's key as its public id (the internal UUID is never surfaced)", () => {
+    const out = serializeSubjectType(row);
+    expect(out.id).toBe("server");
+    expect(out.id).toBe(row.key);
+    expect(out.attributes.key).toBe("server"); // the key attribute is retained; it equals the id
+    expect(out.attributes.account).toBe("a1");
   });
 });
 
@@ -283,6 +322,14 @@ describe("serializeRun", () => {
     started_at: null, ended_at: null, invalidated_at: null, invalidation_reason: null,
     invalidated_by_user_id: null, created_at: T0, updated_at: T0,
   };
+  it("uses the run's key as its public id (never the internal UUID)", () => {
+    const out = serializeRun(base);
+    expect(out.id).toBe("default");
+    expect(out.id).toBe(base.key);
+    expect(out.attributes.key).toBe("default"); // the key attribute is retained; it equals the id
+    expect(out.attributes.benchmark).toBe("b1"); // the benchmark ref stays a UUID (a later slice)
+  });
+
   it("computes live/invalidated and maps timestamps", () => {
     const live = serializeRun(base);
     expect(live.attributes.benchmark).toBe("b1");
@@ -306,15 +353,18 @@ describe("serializeMeasurement", () => {
     derived: [{ name: "skew_ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }],
   };
   const ctx: DerivedContext = { created_at: T0 + 87, run: { started_at: null, ended_at: null } };
-  const base: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta"> = {
-    id: 48213, run_id: "r1", subject_id: "tg1", created_at: T0 + 87, metrics: null, meta: null,
+  const base: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta"> & {
+    subject_key: string;
+    run_key: string;
+  } = {
+    id: 48213, run_id: "r1", subject_id: "tg1", subject_key: "sched-a", run_key: "default", created_at: T0 + 87, metrics: null, meta: null,
   };
 
-  it("computes derived metrics, stringifies id", () => {
+  it("computes derived metrics, stringifies id, emits the run and subject by their keys (not UUIDs)", () => {
     const out = serializeMeasurement(base, schema, ctx);
     expect(out.id).toBe("48213");
     expect(out.attributes).toEqual({
-      created_at: "2026-07-01T09:00:00.087Z", run: "r1", subject: "tg1", metrics: { skew_ms: 87 },
+      created_at: "2026-07-01T09:00:00.087Z", run: "default", subject: "sched-a", metrics: { skew_ms: 87 },
     });
   });
 
@@ -337,7 +387,8 @@ describe("serializeMeasurement", () => {
 describe("publisherLabel", () => {
   const priv: BenchmarkRowWithPublisher = {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
-    description: null, about: null, methodology: null, subject_type: null, status: "PRIVATE",
+    description: null, about: null, methodology: null,
+    subject_type: null, subject_type_key: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
     measurement_schema: "{}",
     created_by_user_id: "u1", draft: 1,

@@ -16,8 +16,10 @@ import {
   publish,
   register,
   resetDb,
+  runUuid,
   type Resource,
   makeSubjectType,
+  subjectTypeUuid,
 } from "./helpers";
 
 beforeEach(resetDb);
@@ -27,7 +29,7 @@ describe("benchmark create defaults + scoped-key visibility", () => {
     const me = await register();
     const res = await apiPost(
       "/api/v1/benchmarks",
-      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema", subject_type: (await makeSubjectType(me.token)).id } } },
+      { data: { type: "benchmark", attributes: { key: "no-schema", name: "No Schema", subject_type: await subjectTypeUuid(await makeSubjectType(me.token)) } } },
       bearer(me.token),
     );
     expect(res.status).toBe(201);
@@ -41,9 +43,9 @@ describe("benchmark create defaults + scoped-key visibility", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
-    const { key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+    const { key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
     expect((await apiGet(`/api/v1/benchmarks/${b.id}`, bearer(key))).status).toBe(404);
-    // But it can read measurements of its own run.
+    // But it can read measurements of its own run (referenced by the run's public key).
     expect((await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(key))).status).toBe(200);
   });
 });
@@ -93,11 +95,12 @@ describe("api key expiry + rotate scope", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
-    const { resource } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+    const rId = await runUuid(r);
+    const { resource } = await mintKey(me.token, { scope_type: "RUN", scope_ref: rId });
     const rot = await apiPost(`/api/v1/api_keys/${resource.id}/actions/rotate`, undefined, bearer(me.token));
     const rotated = ((await rot.json()) as { data: Resource }).data;
     expect(rotated.attributes.scope_type).toBe("RUN");
-    expect(rotated.attributes.scope_ref).toBe(r.id);
+    expect(rotated.attributes.scope_ref).toBe(rId);
   });
 });
 

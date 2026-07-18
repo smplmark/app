@@ -227,12 +227,28 @@ export async function makeSubjectType(
   return ((await res.json()) as { data: Resource }).data;
 }
 
-/** The account's first subject type, creating a no-field default on demand — so subject helpers can
- *  satisfy the required `subject_type` without every caller wiring one up. */
+/**
+ * The internal UUID of a subject type. The subject_type API now exposes its key as the public id (the
+ * key-as-id migration), but benchmark create/update still reference a subject type by its internal
+ * UUID (the benchmark slice is not migrated yet — it keeps taking/storing/emitting the UUID). Tests
+ * that drive a benchmark endpoint therefore resolve the UUID from the DB rather than the (now
+ * key-valued) resource id. Subject endpoints accept either, so this is safe to feed them too.
+ */
+export async function subjectTypeUuid(st: Resource): Promise<string> {
+  const row = await env.DB
+    .prepare("SELECT id FROM subject_type WHERE account_id = ? AND key = ?")
+    .bind(st.attributes.account as string, st.attributes.key as string)
+    .first<{ id: string }>();
+  if (row === null) throw new Error(`subject type not found for key ${String(st.attributes.key)}`);
+  return row.id;
+}
+
+/** The account's first subject type (its internal UUID), creating a no-field default on demand — so
+ *  subject/benchmark helpers can satisfy the required `subject_type` without every caller wiring one up. */
 async function defaultSubjectTypeId(token: string): Promise<string> {
   const list = (await (await apiGet("/api/v1/subject_types", bearer(token))).json()) as { data: Resource[] };
-  if (list.data.length > 0) return list.data[0].id;
-  return (await makeSubjectType(token)).id;
+  const st = list.data.length > 0 ? list.data[0] : await makeSubjectType(token);
+  return subjectTypeUuid(st);
 }
 
 /** Create an account-owned subject (not linked to any benchmark). Uses the account's default type
@@ -279,6 +295,17 @@ export async function makeSubject(
   const subject = await makeAccountSubject(token, key);
   await linkSubject(token, benchmarkId, subject.id);
   return subject;
+}
+
+/** The internal UUID behind a run's key — never surfaced by the API, read straight from D1 so a test
+ *  can supply it where an internal reference still keyed by UUID is needed (an api_key `scope_ref`, an
+ *  audit `resource_id`). Run keys are unique per benchmark, so the run's `benchmark` disambiguates. */
+export async function runUuid(run: Resource): Promise<string> {
+  const row = await env.DB
+    .prepare("SELECT id FROM run WHERE benchmark_id = ? AND key = ?")
+    .bind(run.attributes.benchmark, run.id)
+    .first<{ id: string }>();
+  return row!.id;
 }
 
 export async function makeRun(

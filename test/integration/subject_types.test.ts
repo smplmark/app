@@ -11,6 +11,7 @@ import {
   mintKey,
   register,
   resetDb,
+  subjectTypeUuid,
   type Resource,
 } from "./helpers";
 
@@ -95,6 +96,34 @@ describe("subject type CRUD + key derivation", () => {
     expect((await apiDelete(`/api/v1/subject_types/${st.id}`, bearer(me.token))).status).toBe(204);
     expect((await apiGet(`/api/v1/subject_types/${st.id}`, bearer(me.token))).status).toBe(404);
   });
+
+  it("uses the key as the public id, and resolves GET/PUT/DELETE by the key or the legacy UUID", async () => {
+    const me = await register();
+    const st = await create(me.token, { name: "By Ref", fields: [{ label: "VRAM", type: "NUMBER" }] });
+    expect(st.id).toBe("by-ref"); // the public id is the derived key
+    expect(st.id).toBe(st.attributes.key);
+    const uuid = await subjectTypeUuid(st);
+    expect(uuid).not.toBe(st.id); // the internal UUID differs and is never surfaced
+
+    // GET resolves by the key and by the legacy UUID.
+    expect((await apiGet(`/api/v1/subject_types/${st.id}`, bearer(me.token))).status).toBe(200);
+    expect((await apiGet(`/api/v1/subject_types/${uuid}`, bearer(me.token))).status).toBe(200);
+
+    // PUT resolves by the legacy UUID (key stays immutable).
+    const put = await apiPut(
+      `/api/v1/subject_types/${uuid}`,
+      body({ name: "Renamed", fields: [{ label: "VRAM", type: "NUMBER" }] }),
+      bearer(me.token),
+    );
+    expect(put.status).toBe(200);
+    const updated = ((await put.json()) as { data: Resource }).data;
+    expect(updated.attributes.name).toBe("Renamed");
+    expect(updated.id).toBe("by-ref");
+
+    // DELETE resolves by the legacy UUID.
+    expect((await apiDelete(`/api/v1/subject_types/${uuid}`, bearer(me.token))).status).toBe(204);
+    expect((await apiGet(`/api/v1/subject_types/${st.id}`, bearer(me.token))).status).toBe(404);
+  });
 });
 
 describe("subject type field validation", () => {
@@ -139,11 +168,14 @@ describe("subject type authz", () => {
     expect((await apiPost("/api/v1/subject_types", body({ name: "Nope" }), bearer(benchKey))).status).toBe(403);
   });
 
-  it("isolates tenants (another account's subject type is 404)", async () => {
+  it("isolates tenants (another account's subject type is 404, by key or by legacy UUID)", async () => {
     const me = await register();
     const other = await register("other@example.com");
     const st = await create(me.token, { name: "Mine" });
+    // By key (unknown to the other account) and by the real UUID (resolved but cross-account) both 404,
+    // so neither leaks whether a foreign subject type exists.
     expect((await apiGet(`/api/v1/subject_types/${st.id}`, bearer(other.token))).status).toBe(404);
+    expect((await apiGet(`/api/v1/subject_types/${await subjectTypeUuid(st)}`, bearer(other.token))).status).toBe(404);
   });
 });
 
@@ -151,7 +183,9 @@ describe("subject type deletion guards", () => {
   it("409s (not 500s) when a benchmark pins the type, even with zero subjects", async () => {
     const me = await register();
     const st = await create(me.token, { name: "Pinned" });
-    await makeBenchmark(me.token, { subject_type: st.id });
+    // Benchmark create still references the subject type by internal UUID (benchmark slice pending),
+    // while the subject_types DELETE below resolves the type by its key (st.id) — its new public id.
+    await makeBenchmark(me.token, { subject_type: await subjectTypeUuid(st) });
     const res = await apiDelete(`/api/v1/subject_types/${st.id}`, bearer(me.token));
     expect(res.status).toBe(409);
     const body = (await res.json()) as { errors: { detail: string }[] };

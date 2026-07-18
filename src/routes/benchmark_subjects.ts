@@ -10,7 +10,7 @@ import {
   isSubjectPublic,
   listBenchmarkSubjects,
 } from "../data/benchmark_subjects";
-import { getSubjectById } from "../data/subjects";
+import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
 import { LIMITS } from "../limits";
 import { ConflictError, NotFoundError } from "../errors";
 import { requireString } from "../http/body";
@@ -52,9 +52,10 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new subjects can be added.");
   }
-  // Resolve the subject only after the benchmark is covered. A missing subject and a subject in another
+  // Resolve the subject only after the benchmark is covered. The reference may be the subject's key
+  // (resolved within the benchmark's account) or a raw UUID. A missing subject and a subject in another
   // account are rejected identically (same 409) so neither leaks whether a foreign id exists.
-  const subject = await getSubjectById(c.env.DB, subjectId);
+  const subject = await resolveOwnedSubject(c.env.DB, benchmark.account_id, subjectId);
   if (!subject || subject.account_id !== benchmark.account_id) {
     throw new ConflictError("The subject does not belong to this benchmark's account.");
   }
@@ -81,7 +82,9 @@ benchmarkSubjects.post("/", requireAuth, async (c) => {
     extra: { subject_linked: subject.id },
     actor: auth,
   });
-  return resourceResponse(serializeBenchmarkSubject(row), { status: 201 });
+  return resourceResponse(serializeBenchmarkSubject({ ...row, subject_key: subject.key }), {
+    status: 201,
+  });
 });
 
 benchmarkSubjects.get("/", optionalAuth, async (c) => {
@@ -96,6 +99,8 @@ benchmarkSubjects.get("/", optionalAuth, async (c) => {
   // and the caller can't cover its account, only its links to PUBLISHED/WITHDRAWN benchmarks are
   // visible — a private benchmark's id must not leak through the subject's link rows.
   let publicOnly = false;
+  // The subject filter may arrive as a key or a UUID; resolve it to the internal UUID for the query.
+  let resolvedSubjectId = subjectId;
   if (benchmarkId !== undefined) {
     const benchmark = await getBenchmarkById(c.env.DB, benchmarkId);
     if (!benchmark) throw new NotFoundError();
@@ -105,20 +110,21 @@ benchmarkSubjects.get("/", optionalAuth, async (c) => {
       }
     }
   } else if (subjectId !== undefined) {
-    const subject = await getSubjectById(c.env.DB, subjectId);
+    const subject = await resolveSubjectForRead(c.env.DB, auth?.account_id ?? null, subjectId);
     if (!subject) throw new NotFoundError();
     const covered = auth !== undefined && covers(auth, { account_id: subject.account_id });
     if (!covered && !(await isSubjectPublic(c.env.DB, subject.id))) {
       throw new NotFoundError();
     }
     publicOnly = !covered;
+    resolvedSubjectId = subject.id;
   }
 
   const pagination = readPagination(c);
   const sort = readSort(c, "created_at", SORT_ALLOWED);
   const { rows, total } = await listBenchmarkSubjects(c.env.DB, {
     benchmarkId,
-    subjectId,
+    subjectId: resolvedSubjectId,
     publicOnly,
     sort,
     limit: pagination.limit,

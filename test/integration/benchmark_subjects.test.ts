@@ -14,6 +14,7 @@ import {
   publish,
   register,
   resetDb,
+  subjectTypeUuid,
   type Resource,
 } from "./helpers";
 
@@ -163,12 +164,14 @@ describe("measurements filter[subject] visibility across a shared subject's benc
     // A PRIVATE benchmark with a measurement of the shared subject (must stay hidden).
     const priv = await makeBenchmark(me.token, { key: "priv" });
     await linkSubject(me.token, priv.id, t.id);
-    const runPriv = await makeRun(me.token, priv.id);
+    // Distinct run keys: an ACCOUNT-scoped caller ingesting by run key needs an unambiguous key, and
+    // these two runs live in different benchmarks of the same account.
+    const runPriv = await makeRun(me.token, priv.id, { key: "run-priv" });
     await makeMeasurement(me.token, runPriv.id, t.id, { metrics: { skew_ms: 999 } });
     // A PUBLISHED benchmark with a measurement of the same subject (public).
     const pub = await makeBenchmark(me.token, { key: "pub" });
     await linkSubject(me.token, pub.id, t.id);
-    const runPub = await makeRun(me.token, pub.id);
+    const runPub = await makeRun(me.token, pub.id, { key: "run-pub" });
     await makeMeasurement(me.token, runPub.id, t.id, { metrics: { skew_ms: 1 } });
     await publish(me.token, me.user_id, pub.id);
 
@@ -187,14 +190,16 @@ describe("measurements filter[subject] visibility across a shared subject's benc
 describe("benchmark_subject — type conformance", () => {
   it("rejects linking a subject of a different type (like against like)", async () => {
     const me = await register();
-    const stCpu = (await makeSubjectType(me.token, { name: "CPU" })).id;
-    const stGpu = (await makeSubjectType(me.token, { name: "GPU" })).id;
-    const b = await makeBenchmark(me.token, { subject_type: stCpu });
+    // The subject type's public id is now its key; benchmark create still references it by internal
+    // UUID (benchmark slice pending), while subject create accepts the key — so feed each accordingly.
+    const stCpu = await makeSubjectType(me.token, { name: "CPU" });
+    const stGpu = await makeSubjectType(me.token, { name: "GPU" });
+    const b = await makeBenchmark(me.token, { subject_type: await subjectTypeUuid(stCpu) });
 
-    const gpu = await makeAccountSubject(me.token, "gpu-1", { subject_type: stGpu });
+    const gpu = await makeAccountSubject(me.token, "gpu-1", { subject_type: stGpu.id });
     expect((await link(me.token, b.id, gpu.id)).status).toBe(409);
 
-    const cpu = await makeAccountSubject(me.token, "cpu-1", { subject_type: stCpu });
+    const cpu = await makeAccountSubject(me.token, "cpu-1", { subject_type: stCpu.id });
     expect((await link(me.token, b.id, cpu.id)).status).toBe(201);
   });
 });

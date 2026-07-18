@@ -138,7 +138,7 @@ export interface ListBenchmarkSubjectsInput {
 export async function listBenchmarkSubjects(
   db: D1Database,
   input: ListBenchmarkSubjectsInput,
-): Promise<{ rows: BenchmarkSubjectRow[]; total?: number }> {
+): Promise<{ rows: (BenchmarkSubjectRow & { subject_key: string })[]; total?: number }> {
   const clauses: string[] = [];
   const binds: unknown[] = [];
   if (input.benchmarkId !== undefined) {
@@ -149,18 +149,23 @@ export async function listBenchmarkSubjects(
     clauses.push("benchmark_subject.subject_id = ?");
     binds.push(input.subjectId);
   }
-  // Only join the benchmark when we must filter by its status (keeps the common path index-only).
-  const join = input.publicOnly
-    ? "FROM benchmark_subject JOIN benchmark ON benchmark.id = benchmark_subject.benchmark_id"
-    : "FROM benchmark_subject";
+  // Always join the subject to carry its key (the subject's public id, emitted on the link). Join the
+  // benchmark only when we must filter by its status.
+  const join =
+    "FROM benchmark_subject JOIN subject ON subject.id = benchmark_subject.subject_id" +
+    (input.publicOnly
+      ? " JOIN benchmark ON benchmark.id = benchmark_subject.benchmark_id"
+      : "");
   if (input.publicOnly) clauses.push("benchmark.status IN ('PUBLISHED','WITHDRAWN')");
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const order = orderByClause(input.sort, (f) => LINK_COLUMNS[f], "benchmark_subject.id");
   const rows = (
     await db
-      .prepare(`SELECT benchmark_subject.* ${join} ${where} ${order} LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT benchmark_subject.*, subject.key AS subject_key ${join} ${where} ${order} LIMIT ? OFFSET ?`,
+      )
       .bind(...binds, input.limit, input.offset)
-      .all<BenchmarkSubjectRow>()
+      .all<BenchmarkSubjectRow & { subject_key: string }>()
   ).results;
 
   let total: number | undefined;

@@ -18,6 +18,7 @@ import {
   publish,
   register,
   resetDb,
+  runUuid,
   type Resource,
 } from "./helpers";
 
@@ -174,7 +175,7 @@ describe("POST /api/v1/jobs/benchmark-takedown (operator-only true delete)", () 
     const metric = await makeMetric(token);
     await linkMetric(token, bm.id, metric.id);
     await mintKey(token, { scope_type: "BENCHMARK", scope_ref: bm.id });
-    await mintKey(token, { scope_type: "RUN", scope_ref: run.id });
+    await mintKey(token, { scope_type: "RUN", scope_ref: await runUuid(run) });
     await publish(token, user_id, bm.id);
     expect((await apiPost("/api/v1/takedown_requests", takedownBody(bm.id))).status).toBe(201);
     auditPosts = [];

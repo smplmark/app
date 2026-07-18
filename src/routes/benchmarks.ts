@@ -40,7 +40,7 @@ import {
 import { countLinksForBenchmark } from "../data/benchmark_subjects";
 import { countRunsForBenchmark } from "../data/runs";
 import { benchmarkHasMeasurements } from "../data/measurements";
-import { getSubjectTypeById } from "../data/subject_types";
+import { resolveOwnedSubjectType } from "../data/subject_types";
 import { getUserById } from "../data/users";
 import {
   BadRequestError,
@@ -81,14 +81,15 @@ import { assertBenchmarkEditable, readAttributes, readPagination, readSort } fro
 const EMPTY_SCHEMA: MeasurementSchema = { metrics: [], derived: [] };
 
 /** A benchmark compares like against like: `subject_type` is required and must name a subject type in
- *  the caller's account. Returns the validated id. */
+ *  the caller's account. The reference is the type's public key (or its legacy UUID); returns the
+ *  resolved internal id, which is what the benchmark row stores. */
 async function requireSubjectType(db: D1Database, accountId: string, attrs: Record<string, unknown>): Promise<string> {
-  const id = requireString(attrs, "subject_type");
-  const type = await getSubjectTypeById(db, id);
+  const ref = requireString(attrs, "subject_type");
+  const type = await resolveOwnedSubjectType(db, accountId, ref);
   if (!type || type.account_id !== accountId) {
     throw new BadRequestError("subject_type must name a subject type in this account.");
   }
-  return id;
+  return type.id;
 }
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = [

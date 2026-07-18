@@ -189,10 +189,12 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
 /**
  * `tags` comes from the benchmark_tag join — callers fetch it alongside the row(s). The row carries
  * `publisher_slug` (the owning account's key) from the read-path resolution; it pairs with `key` to
- * form the benchmark's public URL, `/{publisher_slug}/{key}`.
+ * form the benchmark's public URL, `/{publisher_slug}/{key}`. It also carries `subject_type_key` —
+ * the referenced subject type's public key — resolved via a join on the internal subject_type UUID;
+ * the raw UUID (row.subject_type) is never surfaced. Null when the benchmark has no subject type.
  */
 export function serializeBenchmark(
-  row: BenchmarkRow & { publisher_slug: string },
+  row: BenchmarkRow & { publisher_slug: string; subject_type_key: string | null },
   tags: readonly string[],
 ): ResourceObject {
   const attributes: Record<string, unknown> = {
@@ -203,7 +205,9 @@ export function serializeBenchmark(
     description: row.description,
     about: row.about,
     methodology: row.methodology,
-    subject_type: row.subject_type,
+    // The subject type is referenced by its key (its public id), consistent with the subject_type
+    // resource; the internal subject_type UUID is never surfaced. Null when the benchmark is untyped.
+    subject_type: row.subject_type_key,
     status: row.status,
     draft: row.draft === 1,
     created_by: row.created_by_user_id,
@@ -245,13 +249,18 @@ export function serializePublisher(row: PublisherRow): ResourceObject {
   };
 }
 
-export function serializeSubject(row: SubjectRow): ResourceObject {
+export function serializeSubject(
+  row: SubjectRow & { subject_type_key: string | null },
+): ResourceObject {
   return {
     type: "subject",
-    id: row.id,
+    // The customer's key is the public id for a subject; the internal UUID (row.id) is never surfaced.
+    id: row.key,
     attributes: {
       account: row.account_id,
-      subject_type: row.subject_type_id,
+      // The subject_type is referenced by its key (its public id), consistent with the subject_type
+      // resource; the internal subject_type_id UUID is never surfaced. Null when the subject is untyped.
+      subject_type: row.subject_type_key,
       key: row.key,
       name: row.name,
       details: parseJsonOrNull(row.details),
@@ -264,7 +273,8 @@ export function serializeSubject(row: SubjectRow): ResourceObject {
 export function serializeSubjectType(row: SubjectTypeRow): ResourceObject {
   return {
     type: "subject_type",
-    id: row.id,
+    // The customer's key is the public id for a subject type; the internal UUID (row.id) is never surfaced.
+    id: row.key,
     attributes: {
       account: row.account_id,
       key: row.key,
@@ -300,13 +310,16 @@ export function serializeMetric(row: MetricRow): ResourceObject {
 }
 
 /** One membership of a subject in a benchmark (the M:N link). */
-export function serializeBenchmarkSubject(row: BenchmarkSubjectRow): ResourceObject {
+export function serializeBenchmarkSubject(
+  row: BenchmarkSubjectRow & { subject_key: string },
+): ResourceObject {
   return {
     type: "benchmark_subject",
     id: row.id,
     attributes: {
       benchmark: row.benchmark_id,
-      subject: row.subject_id,
+      // The subject is referenced by its key (its public id), consistent with the subject resource.
+      subject: row.subject_key,
       created_at: iso(row.created_at),
     },
   };
@@ -328,8 +341,10 @@ export function serializeBenchmarkMetric(row: BenchmarkMetricRow): ResourceObjec
 export function serializeRun(row: RunRow): ResourceObject {
   return {
     type: "run",
-    id: row.id,
+    // The customer's key is the public id for a run; the internal UUID (row.id) is never surfaced.
+    id: row.key,
     attributes: {
+      // The benchmark stays a UUID — benchmarks are a later slice of the key-as-id migration.
       benchmark: row.benchmark_id,
       key: row.key,
       name: row.name,
@@ -348,16 +363,20 @@ export function serializeRun(row: RunRow): ResourceObject {
 }
 
 export function serializeMeasurement(
-  row: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta">,
+  row: Pick<MeasurementRow, "id" | "run_id" | "subject_id" | "created_at" | "metrics" | "meta"> & {
+    subject_key: string;
+    run_key: string;
+  },
   schema: MeasurementSchema,
   ctx: DerivedContext,
 ): ResourceObject {
   // client_ip is never surfaced. id (rowid INTEGER) is stringified on the wire. A measurement names
-  // both its run (the occasion) and its subject (the thing measured).
+  // both its run (the occasion) and its subject (the thing measured). Both are referenced by their
+  // key (their public id): the run by run_key, the subject by subject_key — never their internal UUIDs.
   const attributes: Record<string, unknown> = {
     created_at: iso(row.created_at),
-    run: row.run_id,
-    subject: row.subject_id,
+    run: row.run_key,
+    subject: row.subject_key,
   };
   const metrics = computeMetrics(row.metrics, schema, ctx);
   if (metrics !== null) attributes.metrics = metrics;

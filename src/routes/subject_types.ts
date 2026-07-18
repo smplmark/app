@@ -9,9 +9,9 @@ import {
   countSubjectTypesForAccount,
   createSubjectType,
   deleteSubjectType,
-  getSubjectTypeById,
   getSubjectTypeByKey,
   listSubjectTypes,
+  resolveOwnedSubjectType,
   updateSubjectType,
   countBenchmarksOfType,
 } from "../data/subject_types";
@@ -38,11 +38,13 @@ function requireAccountScope(auth: AuthContext): void {
 }
 
 /** Load an account-owned subject type for a mutation, or 404. */
-async function loadOwnedForWrite(c: Context<AppBindings>, id: string): Promise<SubjectTypeRow> {
+async function loadOwnedForWrite(c: Context<AppBindings>, idOrKey: string): Promise<SubjectTypeRow> {
   const auth = getAuth(c);
   requireAccountScope(auth);
   requireWrite(auth);
-  const row = await getSubjectTypeById(c.env.DB, id);
+  // Resolve by the account's key first, then a raw UUID (legacy path); the account_id check below is
+  // unchanged, so a foreign row resolved by raw id still 404s (existence is never leaked to a non-owner).
+  const row = await resolveOwnedSubjectType(c.env.DB, auth.account_id, idOrKey);
   if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
   return row;
 }
@@ -93,7 +95,9 @@ subjectTypes.get("/", requireAuth, async (c) => {
 subjectTypes.get("/:id", requireAuth, async (c) => {
   const auth = getAuth(c);
   requireAccountScope(auth);
-  const row = await getSubjectTypeById(c.env.DB, c.req.param("id"));
+  // The reference may be the subject type's key (its public id) or a raw UUID (legacy path); the
+  // account_id check is unchanged, so a foreign row resolved by raw id 404s just as before.
+  const row = await resolveOwnedSubjectType(c.env.DB, auth.account_id, c.req.param("id"));
   if (!row || row.account_id !== auth.account_id) throw new NotFoundError();
   return resourceResponse(serializeSubjectType(row));
 });

@@ -12,19 +12,49 @@ import { isUniqueViolation } from "./d1";
 
 /**
  * A benchmark row plus its owning account's key — the publisher slug that forms the first path
- * segment of its public URL (`/{publisher_slug}/{key}`). Read paths resolve it (JOIN for a single
- * row, a batched lookup for a list) so the API never leaks the internal account id as the only
- * handle on the owner.
+ * segment of its public URL (`/{publisher_slug}/{key}`) — and the referenced subject type's public
+ * key (`subject_type_key`), the wire reference emitted by serializeBenchmark. Read paths resolve both
+ * (a JOIN for a single row, batched over the list) so the API never leaks the internal account id or
+ * subject_type UUID as the only handle. `subject_type_key` is null when the benchmark has no subject
+ * type (nullable at the DB level; see 0024) or its referenced type row is missing; the raw
+ * subject_type UUID stays on the row for authz/FK use, only serialization reads the key.
  */
-export type BenchmarkRowWithPublisher = BenchmarkRow & { publisher_slug: string };
+export type BenchmarkRowWithPublisher = BenchmarkRow & {
+  publisher_slug: string;
+  subject_type_key: string | null;
+};
 
 /**
- * Stamp each row with its owning account's key, resolved in one batched lookup over the distinct
- * account ids (a public list spans many publishers). Mirrors the tags-batching pattern and keeps
- * the list query free of an account JOIN, which would make `key`/`name`/`created_at` ambiguous in
- * the shared WHERE/ORDER builders.
+ * The URL slug for a benchmark's public path (`/{publisher_slug}/{key}`). An ORGANIZATION publish is
+ * addressed by the verified domain it was published under — read from the frozen attribution snapshot
+ * so the slug survives a later domain lapse or identity deletion — while every other benchmark is
+ * addressed by its owning account's key.
  */
-async function attachPublisherSlug<T extends { account_id: string }>(
+function publisherSlugFor(
+  row: Pick<BenchmarkRow, "published_as_kind" | "attribution_snapshot">,
+  accountKey: string,
+): string {
+  if (row.published_as_kind === "ORGANIZATION" && row.attribution_snapshot) {
+    try {
+      const domain = (JSON.parse(row.attribution_snapshot) as { domain?: unknown }).domain;
+      if (typeof domain === "string" && domain) return domain;
+    } catch {
+      /* malformed snapshot — fall through to the account key */
+    }
+  }
+  return accountKey;
+}
+
+/**
+ * Stamp each row with its publisher slug, resolving the owning account's key in one batched lookup
+ * over the distinct account ids (a public list spans many publishers). Mirrors the tags-batching
+ * pattern and keeps the list query free of an account JOIN, which would make `key`/`name`/`created_at`
+ * ambiguous in the shared WHERE/ORDER builders. Org publishes then override the slug with their
+ * verified domain (see publisherSlugFor).
+ */
+async function attachPublisherSlug<
+  T extends Pick<BenchmarkRow, "account_id" | "published_as_kind" | "attribution_snapshot">,
+>(
   db: D1Database,
   rows: T[],
 ): Promise<(T & { publisher_slug: string })[]> {
@@ -37,7 +67,7 @@ async function attachPublisherSlug<T extends { account_id: string }>(
       .all<{ id: string; key: string }>();
     for (const a of res.results) keyById.set(a.id, a.key);
   }
-  return rows.map((r) => ({ ...r, publisher_slug: keyById.get(r.account_id) ?? "" }));
+  return rows.map((r) => ({ ...r, publisher_slug: publisherSlugFor(r, keyById.get(r.account_id) ?? "") }));
 }
 
 export interface CreateBenchmarkInput {
@@ -119,13 +149,18 @@ export async function createBenchmark(
     }
     throw e;
   }
-  // Round out the in-memory row with the owning account's key so it serializes like the read
-  // paths; the account is guaranteed to exist (the INSERT's FK would have failed otherwise).
+  // Round out the in-memory row with the owning account's key and the subject type's key so it
+  // serializes like the read paths. The account is guaranteed to exist (the INSERT's FK would have
+  // failed otherwise); the subject type was validated by the route, so its key resolves too.
   const acct = await db
     .prepare("SELECT key FROM account WHERE id = ?")
     .bind(input.account_id)
     .first<{ key: string }>();
-  return { ...row, publisher_slug: acct?.key ?? "" };
+  const st = await db
+    .prepare("SELECT key FROM subject_type WHERE id = ?")
+    .bind(input.subject_type)
+    .first<{ key: string }>();
+  return { ...row, publisher_slug: acct?.key ?? "", subject_type_key: st?.key ?? null };
 }
 
 // The one search_text expression, shared verbatim with migration 0005's backfill and the
@@ -181,14 +216,15 @@ export async function getBenchmarkById(
   db: D1Database,
   id: string,
 ): Promise<BenchmarkRowWithPublisher | null> {
-  return (
-    (await db
-      .prepare(
-        "SELECT benchmark.*, account.key AS publisher_slug FROM benchmark JOIN account ON account.id = benchmark.account_id WHERE benchmark.id = ?",
-      )
-      .bind(id)
-      .first<BenchmarkRowWithPublisher>()) ?? null
-  );
+  const row = await db
+    .prepare(
+      "SELECT benchmark.*, account.key AS publisher_slug, st.key AS subject_type_key FROM benchmark JOIN account ON account.id = benchmark.account_id LEFT JOIN subject_type st ON st.id = benchmark.subject_type WHERE benchmark.id = ?",
+    )
+    .bind(id)
+    .first<BenchmarkRowWithPublisher>();
+  if (row === null) return null;
+  // The JOIN resolves the owning account's key; org publishes override it with their verified domain.
+  return { ...row, publisher_slug: publisherSlugFor(row, row.publisher_slug) };
 }
 
 export interface ListBenchmarksInput {
@@ -209,13 +245,15 @@ export interface ListBenchmarksInput {
   includeTotal: boolean;
 }
 
+// Qualified with the `benchmark.` table alias: the list query joins subject_type (which shares column
+// names like key/name/account_id/created_at), so a bare name would be ambiguous.
 const BENCHMARK_COLUMNS: Record<string, string> = {
-  name: "name",
-  created_at: "created_at",
-  updated_at: "updated_at",
+  name: "benchmark.name",
+  created_at: "benchmark.created_at",
+  updated_at: "benchmark.updated_at",
   // NULL for never-published rows; SQLite sorts NULL smallest, so -published_at puts them last.
-  published_at: "published_at",
-  views: "views_total",
+  published_at: "benchmark.published_at",
+  views: "benchmark.views_total",
 };
 
 // Rolling popularity windows (UTC day buckets, inclusive of today).
@@ -239,17 +277,25 @@ function benchmarkWhere(input: ListBenchmarksInput): { sql: string; binds: unkno
     binds.push(...input.statuses);
   }
   if (input.accountId !== undefined) {
-    clauses.push("account_id = ?");
+    // Qualified: the list query joins subject_type, which also has an account_id (the COUNT query has
+    // no join, but benchmark.account_id is valid there too).
+    clauses.push("benchmark.account_id = ?");
     binds.push(input.accountId);
   }
   if (input.publisherSlug !== undefined) {
-    // Slug → owner via a subquery (no account JOIN, so the outer query's bare `key`/`created_at`
-    // stay benchmark-scoped). An unknown slug simply matches nothing.
-    clauses.push("account_id IN (SELECT id FROM account WHERE key = ?)");
-    binds.push(input.publisherSlug);
+    // Slug → owner via a subquery (no account JOIN, so the outer query's bare `key`/`created_at` stay
+    // benchmark-scoped). Match the owning account's key (personal/default addressing) OR, for an
+    // organization publish, its verified attribution domain — so `/{org-domain}/{key}` resolves too.
+    // An unknown slug simply matches nothing.
+    clauses.push(
+      "(benchmark.account_id IN (SELECT id FROM account WHERE key = ?)" +
+        " OR (published_as_kind = 'ORGANIZATION' AND json_extract(attribution_snapshot, '$.domain') = ?))",
+    );
+    binds.push(input.publisherSlug, input.publisherSlug);
   }
   if (input.filterKey !== undefined) {
-    clauses.push("key = ?");
+    // Qualified: subject_type also has a `key` column once the list query joins it.
+    clauses.push("benchmark.key = ?");
     binds.push(input.filterKey);
   }
   if (input.category !== undefined) {
@@ -294,13 +340,17 @@ export async function listBenchmarks(
     joinBinds.push(windowCutoffDay(windowDays));
     order = `ORDER BY coalesce(wv.window_views, 0) ${input.sort.desc ? "DESC" : "ASC"}, benchmark.id`;
   } else {
-    order = orderByClause(input.sort, (f) => BENCHMARK_COLUMNS[f], "id");
+    order = orderByClause(input.sort, (f) => BENCHMARK_COLUMNS[f], "benchmark.id");
   }
+  // LEFT JOIN subject_type so every list row carries its subject type's public key (nullable — an
+  // untyped benchmark or a missing type row yields null). `benchmark.*` keeps the row shape intact.
   const rawRows = (
     await db
-      .prepare(`SELECT benchmark.* FROM benchmark${join} ${where.sql} ${order} LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT benchmark.*, st.key AS subject_type_key FROM benchmark LEFT JOIN subject_type st ON st.id = benchmark.subject_type${join} ${where.sql} ${order} LIMIT ? OFFSET ?`,
+      )
       .bind(...joinBinds, ...where.binds, input.limit, input.offset)
-      .all<BenchmarkRow>()
+      .all<BenchmarkRow & { subject_type_key: string | null }>()
   ).results;
   const rows = await attachPublisherSlug(db, rawRows);
 
@@ -335,6 +385,11 @@ export async function updateBenchmark(
 ): Promise<BenchmarkRowWithPublisher | null> {
   const existing = await getBenchmarkById(db, id);
   if (!existing) return null;
+  // The subject type may change on update, so re-resolve its key (the route validated the ref).
+  const st = await db
+    .prepare("SELECT key FROM subject_type WHERE id = ?")
+    .bind(input.subject_type)
+    .first<{ key: string }>();
   const updated: BenchmarkRowWithPublisher = {
     ...existing,
     name: input.name,
@@ -342,6 +397,7 @@ export async function updateBenchmark(
     about: input.about,
     methodology: input.methodology,
     subject_type: input.subject_type,
+    subject_type_key: st?.key ?? null,
     measurement_schema: JSON.stringify(input.measurement_schema),
     category: input.category,
     updated_at: Date.now(),

@@ -419,13 +419,13 @@ const benchmark = registerEntity(
   "benchmark",
   z.object({
     account: idRef("The account that owns the benchmark."),
-    publisher_slug: z.string().openapi({ description: "The owning account's URL-safe key. Together with the benchmark's own key it forms the benchmark's public path, /{publisher_slug}/{key}." }),
+    publisher_slug: z.string().openapi({ description: "The URL-safe slug identifying the publisher. Together with the benchmark's own key it forms the benchmark's public path, /{publisher_slug}/{key}. For a benchmark published under an organization this is that organization's verified domain; otherwise it is the owning account's key." }),
     key: z.string().openapi({ description: "The benchmark's human-readable, URL-safe identifier, unique within its account." }),
     name: z.string().openapi({ description: "The benchmark's display name." }),
     description: z.string().nullable().openapi({ description: "A one-line summary of the benchmark, or null." }),
     about: z.string().nullable().openapi({ description: "A longer description of the benchmark, or null." }),
     methodology: z.string().nullable().openapi({ description: "How the benchmark is run and measured, or null." }),
-    subject_type: z.string().nullable().openapi({ description: "The subject type every linked subject conforms to — a benchmark compares like against like. Null only on legacy benchmarks that predate the field and have no subjects yet." }),
+    subject_type: z.string().nullable().openapi({ description: "The key of the subject type every linked subject conforms to — a benchmark compares like against like. Null only on legacy benchmarks that predate the field and have no subjects yet." }),
     status: z
       .enum(["PRIVATE", "PUBLISHED", "WITHDRAWN"])
       .openapi({ description: "The benchmark's lifecycle state. PRIVATE benchmarks are visible only to the account; PUBLISHED benchmarks are public; WITHDRAWN benchmarks are no longer public." }),
@@ -458,7 +458,7 @@ const benchmark = registerEntity(
     description: z.string().max(500).optional().openapi({ description: "A one-line summary of the benchmark. At most 500 characters." }),
     about: z.string().max(20000).optional().openapi({ description: "A longer description of the benchmark. At most 20,000 characters." }),
     methodology: z.string().max(20000).optional().openapi({ description: "How the benchmark is run and measured. At most 20,000 characters." }),
-    subject_type: z.string().openapi({ description: "The id of the subject type every linked subject must conform to (a benchmark compares like against like). Must name a subject type in the same account. Fixed while any subjects are linked." }),
+    subject_type: z.string().openapi({ description: "The key of the subject type every linked subject must conform to (a benchmark compares like against like). Must name a subject type in the same account. Fixed while any subjects are linked." }),
     measurement_schema: MeasurementSchema.optional(),
     category: z
       .enum(["HARDWARE", "DATABASE", "ML_AI", "STORAGE", "NETWORK", "OTHER"])

@@ -18,6 +18,7 @@ import {
   publish,
   register,
   resetDb,
+  runUuid,
   type Resource,
 } from "./helpers";
 
@@ -114,8 +115,10 @@ describe("api key scope resolution", () => {
 
     const bench = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
     expect(bench.resource.attributes.scope_type).toBe("BENCHMARK");
-    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
-    expect(run.resource.attributes.scope_ref).toBe(r.id);
+    // A RUN key's scope_ref is an internal reference — still keyed by the run's UUID.
+    const rId = await runUuid(r);
+    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: rId });
+    expect(run.resource.attributes.scope_ref).toBe(rId);
 
     // scope_ref required for non-ACCOUNT scopes.
     const missingRef = await apiPost("/api/v1/api_keys", { data: { type: "api_key", attributes: { name: "x", scope_type: "BENCHMARK" } } }, bearer(me.token));

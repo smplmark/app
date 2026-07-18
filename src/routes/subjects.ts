@@ -8,13 +8,15 @@ import {
   countSubjectsForAccount,
   createSubject,
   deleteSubjectCascade,
-  getSubjectById,
   listAccountSubjects,
   listSubjectsForBenchmark,
+  resolveOwnedSubject,
+  resolveSubjectForRead,
   subjectKeyExists,
   updateSubject,
+  type SubjectRowWithType,
 } from "../data/subjects";
-import { getSubjectTypeById } from "../data/subject_types";
+import { getSubjectTypeById, resolveOwnedSubjectType } from "../data/subject_types";
 import { ConflictError, NotFoundError } from "../errors";
 import { requireString } from "../http/body";
 import { canonical } from "../schema/measurement_schema";
@@ -37,12 +39,13 @@ const SORT_ALLOWED = ["name", "key", "created_at", "updated_at"] as const;
 export const subjects = new Hono<AppBindings>();
 
 /** Load an account-owned subject the caller may mutate, or 404 (existence not leaked to a non-owner). */
-async function loadOwned(c: Context<AppBindings>, id: string): Promise<SubjectRow> {
+async function loadOwned(c: Context<AppBindings>, idOrKey: string): Promise<SubjectRow> {
   const auth = getAuth(c);
   requireWrite(auth); // loadOwned backs only mutating handlers.
-  const subject = await getSubjectById(c.env.DB, id);
-  // A subject is account-owned; only an ACCOUNT-authority credential in its tenant covers it (a
-  // benchmark/run-scoped key can't reach across the account's shared subject namespace).
+  // Resolve by the caller's account key first, then the raw UUID (legacy path). Authorization is
+  // unchanged: a subject is account-owned, so only an ACCOUNT-authority credential in its tenant
+  // covers it (a benchmark/run-scoped key can't reach across the account's shared subject namespace).
+  const subject = await resolveOwnedSubject(c.env.DB, auth.account_id, idOrKey);
   if (!subject || !covers(auth, { account_id: subject.account_id })) {
     throw new NotFoundError();
   }
@@ -94,9 +97,10 @@ subjects.post("/", requireAuth, async (c) => {
   const name = requireString(attrs, "name", LIMITS.nameLength);
   // The key is optional: when omitted it's auto-generated from the name (unique within the account).
   const key = await resolveSubjectKey(c.env.DB, auth.account_id, attrs, name);
-  // Every subject picks a subject_type; its details are validated against that type's fields.
-  const subjectTypeId = requireString(attrs, "subject_type");
-  const type = await getSubjectTypeById(c.env.DB, subjectTypeId);
+  // Every subject picks a subject_type; its details are validated against that type's fields. The
+  // reference may be the subject type's key (its public id) or a raw UUID (legacy path).
+  const subjectTypeRef = requireString(attrs, "subject_type");
+  const type = await resolveOwnedSubjectType(c.env.DB, auth.account_id, subjectTypeRef);
   if (!type || type.account_id !== auth.account_id) {
     throw new NotFoundError("No such subject type in this account.");
   }
@@ -123,7 +127,8 @@ subjects.post("/", requireAuth, async (c) => {
     description: `Subject "${name}" created.`,
     actor: auth,
   });
-  return resourceResponse(serializeSubject(row), { status: 201 });
+  // createSubject builds the row in-memory (no join), so supply the resolved type's key for the wire.
+  return resourceResponse(serializeSubject({ ...row, subject_type_key: type.key }), { status: 201 });
 });
 
 subjects.get("/", optionalAuth, async (c) => {
@@ -158,10 +163,19 @@ subjects.get("/", optionalAuth, async (c) => {
   // Unscoped: the caller's own account subjects (auth required — an anonymous list must scope to a
   // benchmark). No cross-account listing exists; tenant isolation is the floor.
   if (!auth) throw new NotFoundError();
+  // filter[subject_type] may be the subject type's key or a raw UUID; resolve it to the internal UUID
+  // the column stores. An unresolved (unknown or cross-account) reference falls through as-is, which
+  // matches no owned subject — the existing "no matches" behavior, with no existence leak.
+  const subjectTypeRef = c.req.query("filter[subject_type]");
+  let filterSubjectTypeId = subjectTypeRef;
+  if (subjectTypeRef !== undefined) {
+    const type = await resolveOwnedSubjectType(c.env.DB, auth.account_id, subjectTypeRef);
+    if (type && type.account_id === auth.account_id) filterSubjectTypeId = type.id;
+  }
   const { rows, total } = await listAccountSubjects(c.env.DB, {
     accountId: auth.account_id,
     filterKey,
-    filterSubjectTypeId: c.req.query("filter[subject_type]"),
+    filterSubjectTypeId,
     sort,
     limit: pagination.limit,
     offset: pagination.offset,
@@ -174,7 +188,7 @@ subjects.get("/", optionalAuth, async (c) => {
 
 subjects.get("/:id", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
-  const subject = await getSubjectById(c.env.DB, c.req.param("id"));
+  const subject = await resolveSubjectForRead(c.env.DB, auth?.account_id ?? null, c.req.param("id"));
   if (!subject) throw new NotFoundError();
   // Visible if the caller covers the owning account, or the subject is linked to a public benchmark.
   const covered = auth !== undefined && covers(auth, { account_id: subject.account_id });
@@ -216,7 +230,7 @@ subjects.put("/:id", requireAuth, async (c) => {
       actor: auth,
     });
   }
-  return resourceResponse(serializeSubject(row as SubjectRow));
+  return resourceResponse(serializeSubject(row as SubjectRowWithType));
 });
 
 // The subject's own audit trail (console detail page). Subject events are account-level and
@@ -224,7 +238,7 @@ subjects.put("/:id", requireAuth, async (c) => {
 // gets the public filter, which for subjects yields nothing rather than a leak.
 subjects.get("/:id/history", optionalAuth, async (c) => {
   const auth = getOptionalAuth(c);
-  const subject = await getSubjectById(c.env.DB, c.req.param("id"));
+  const subject = await resolveSubjectForRead(c.env.DB, auth?.account_id ?? null, c.req.param("id"));
   if (!subject) throw new NotFoundError();
   const covered = auth !== undefined && covers(auth, { account_id: subject.account_id });
   if (!covered && !(await isSubjectPublic(c.env.DB, subject.id))) {

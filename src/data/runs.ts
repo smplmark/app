@@ -1,6 +1,6 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
-import type { RunRow } from "../types";
+import type { AuthContext, RunRow } from "../types";
 import { isUniqueViolation, jsonOrNull } from "./d1";
 
 export interface CreateRunInput {
@@ -78,6 +78,121 @@ export async function getRunById(
   return (
     (await db.prepare("SELECT * FROM run WHERE id = ?").bind(id).first<RunRow>()) ?? null
   );
+}
+
+/** Resolve a run within a benchmark by its human key (unique per benchmark, per UNIQUE(benchmark_id, key)). */
+export async function getRunByBenchmarkKey(
+  db: D1Database,
+  benchmarkId: string,
+  key: string,
+): Promise<RunRow | null> {
+  return (
+    (await db
+      .prepare("SELECT * FROM run WHERE benchmark_id = ? AND key = ?")
+      .bind(benchmarkId, key)
+      .first<RunRow>()) ?? null
+  );
+}
+
+/**
+ * Resolve a world-visible run by its key, with no benchmark context — the anonymous read path, where
+ * a bare key can't be scoped to a benchmark. Restricted to runs whose benchmark is PUBLISHED/WITHDRAWN
+ * so a private run is never disclosed. Run keys are unique only per benchmark (not per account), so a
+ * key shared by two accounts' public runs resolves to one arbitrarily; both are public, so no private
+ * data is exposed either way.
+ */
+export async function getPublicRunByKey(
+  db: D1Database,
+  key: string,
+): Promise<RunRow | null> {
+  return (
+    (await db
+      .prepare(
+        "SELECT run.* FROM run" +
+          " JOIN benchmark b ON b.id = run.benchmark_id" +
+          " WHERE run.key = ? AND b.status IN ('PUBLISHED','WITHDRAWN') LIMIT 1",
+      )
+      .bind(key)
+      .first<RunRow>()) ?? null
+  );
+}
+
+/**
+ * Resolve a run reference (its key, or a raw UUID) for a mutating/ingest caller expected to own it.
+ * A raw id is tried first (the legacy-UUID path); otherwise the key is resolved using the caller's
+ * effective scope, because run keys are unique only within a benchmark and a bare key needs a
+ * benchmark context to disambiguate:
+ *  - RUN scope: the one scoped run, and only when its key matches the reference;
+ *  - BENCHMARK scope: the run with that key under the scoped benchmark;
+ *  - ACCOUNT scope: an account-wide match by key, which is ambiguous (409) if two of the account's
+ *    benchmarks share the key.
+ * The caller still authorizes the resolved row (covers()), so a cross-account UUID still 404s there.
+ */
+export async function resolveOwnedRun(
+  db: D1Database,
+  auth: AuthContext,
+  runRef: string,
+): Promise<RunRow | null> {
+  const byId = await getRunById(db, runRef);
+  if (byId) return byId;
+  switch (auth.scope_type) {
+    case "RUN": {
+      // A RUN-scoped credential always carries its run's id in scope_ref (enforced at mint, per
+      // covers()); a stray null would resolve to no run and fall through to null harmlessly.
+      const row = await getRunById(db, auth.scope_ref as string);
+      return row !== null && row.key === runRef ? row : null;
+    }
+    case "BENCHMARK":
+      // A BENCHMARK-scoped credential always carries its benchmark's id in scope_ref (as above).
+      return getRunByBenchmarkKey(db, auth.scope_ref as string, runRef);
+    case "ACCOUNT": {
+      const rows = (
+        await db
+          .prepare(
+            "SELECT run.* FROM run" +
+              " JOIN benchmark b ON b.id = run.benchmark_id" +
+              " WHERE b.account_id = ? AND run.key = ? LIMIT 2",
+          )
+          .bind(auth.account_id, runRef)
+          .all<RunRow>()
+      ).results;
+      if (rows.length === 1) return rows[0];
+      if (rows.length >= 2) {
+        throw new ConflictError(
+          "Ambiguous run key across benchmarks; scope the API key to the benchmark.",
+        );
+      }
+      return null;
+    }
+  }
+}
+
+/**
+ * Resolve a run reference (its key, or a raw UUID) for a reader. A raw id first (the legacy-UUID
+ * path); then, when the caller is authed, an account-wide match by key (reads may pick any match
+ * arbitrarily); otherwise a world-visible run by key (the anonymous/public path). The caller still
+ * applies its own visibility rule (covers()/isPublicStatus) to the returned row; this only resolves.
+ */
+export async function resolveRunForRead(
+  db: D1Database,
+  auth: AuthContext | null,
+  runRef: string,
+): Promise<RunRow | null> {
+  const byId = await getRunById(db, runRef);
+  if (byId) return byId;
+  if (auth !== null) {
+    return (
+      (await db
+        .prepare(
+          "SELECT run.* FROM run" +
+            " JOIN benchmark b ON b.id = run.benchmark_id" +
+            " WHERE b.account_id = ? AND run.key = ? LIMIT 1",
+        )
+        .bind(auth.account_id, runRef)
+        .first<RunRow>()) ?? null
+    );
+  }
+  return getPublicRunByKey(db, runRef);
 }
 
 /** Is `key` already taken by a run under this benchmark? Backs auto-generated-key uniqueness. */

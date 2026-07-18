@@ -19,6 +19,7 @@ import {
   publish,
   register,
   resetDb,
+  runUuid,
   SKEW_SCHEMA,
   type Resource,
 } from "./helpers";
@@ -274,7 +275,8 @@ describe("audit events on runs and measurements", () => {
     await vi.waitFor(() => expect(byType("run.appended")).toHaveLength(1));
     const ev = byType("run.appended")[0];
     expect(ev.resource_type).toBe("run");
-    expect(ev.resource_id).toBe(run.id);
+    // Audit records the run by its internal id (audit references stay UUID, per the invariant).
+    expect(ev.resource_id).toBe(await runUuid(run));
     expect(ev.data.measurement_id).toBe(m.id);
     expect(ev.data.visibility).toBe("public");
     expect(byType("run.ended")).toHaveLength(1);
@@ -496,6 +498,7 @@ describe("history endpoints", () => {
     const { token, user_id } = await register();
     const bm = await makeBenchmark(token);
     const run = await makeRun(token, bm.id);
+    const runId = await runUuid(run); // the internal id the history endpoint queries audit by
     await makeSubject(token, bm.id);
     await publish(token, user_id, bm.id);
     const urls: string[] = [];
@@ -517,7 +520,7 @@ describe("history endpoints", () => {
     expect(owner.status).toBe(200);
     expect(((await owner.json()) as { data: Resource[] }).data).toHaveLength(2);
     expect(decodeURIComponent(urls.find((u) => u.startsWith(AUDIT_EVENTS_URL)) ?? "")).toContain(
-      `filter[resource_id]=${run.id}`,
+      `filter[resource_id]=${runId}`,
     );
 
     const anon = await apiGet(`/api/v1/runs/${run.id}/history`);
@@ -602,7 +605,7 @@ describe("review fixes: scoped keys, close/reopen, canonical diffs", () => {
     const run = await makeRun(token, bm.id);
     await makeSubject(token, bm.id);
     await publish(token, user_id, bm.id);
-    const { key } = await mintKey(token, { scope_type: "RUN", scope_ref: run.id });
+    const { key } = await mintKey(token, { scope_type: "RUN", scope_ref: await runUuid(run) });
     auditGetResponse = () =>
       Response.json({
         data: [

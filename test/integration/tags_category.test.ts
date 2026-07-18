@@ -14,12 +14,13 @@ import {
   type Registered,
   type Resource,
   makeSubjectType,
+  subjectTypeUuid,
 } from "./helpers";
 
 beforeEach(resetDb);
 
 async function post(token: string, attrs: Record<string, unknown>) {
-  const subject_type = (await makeSubjectType(token, { name: `T${Date.now()}${Math.random()}` })).id;
+  const subject_type = await subjectTypeUuid(await makeSubjectType(token, { name: `T${Date.now()}${Math.random()}` }));
   return apiPost(
     "/api/v1/benchmarks",
     { data: { type: "benchmark", attributes: { key: "b", name: "B", subject_type, ...attrs } } },

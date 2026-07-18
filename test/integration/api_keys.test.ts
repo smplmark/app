@@ -11,6 +11,7 @@ import {
   mintKey,
   register,
   resetDb,
+  runUuid,
   type Resource,
 } from "./helpers";
 
@@ -34,7 +35,9 @@ describe("minting + authority ceiling", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
-    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+    // An api_key's scope_ref is an internal reference and stays a UUID (not part of the key-as-id
+    // wire migration), so scope a RUN key by the run's internal id.
+    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
 
     const escalate = await apiPost(
       "/api/v1/api_keys",
@@ -57,9 +60,10 @@ describe("scope enforcement", () => {
       bearer(me.token),
     );
     const run2 = ((await r2.json()) as { data: Resource }).data;
-    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r1.id });
+    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r1) });
 
-    // Its own run, naming a valid same-benchmark subject → 201; another run → 404 (out of scope).
+    // Its own run (referenced by key), naming a valid same-benchmark subject → 201; another run's key
+    // resolves within the RUN scope to a non-matching run → 404 (out of scope).
     expect((await apiPost("/api/v1/measurements", measurement(r1.id, t.id), bearer(runKey))).status).toBe(201);
     expect((await apiPost("/api/v1/measurements", measurement(run2.id, t.id), bearer(runKey))).status).toBe(404);
     // Cannot create a benchmark (scope < ACCOUNT).
@@ -85,12 +89,13 @@ describe("scope enforcement", () => {
     expect((await apiPost("/api/v1/measurements", measurement(r.id, subjectA.id), bearer(benchKey))).status).toBe(201);
     expect((await apiPost("/api/v1/measurements", measurement(r.id, subjectB.id), bearer(benchKey))).status).toBe(201);
 
-    // A run in a different benchmark is out of the key's scope → 404.
+    // A run in a different benchmark is out of the key's scope → 404. Referenced by the foreign run's
+    // internal id so it resolves to that run (its key would resolve within b's scope, not other's).
     const other = await makeBenchmark(me.token, { key: "other-benchmark", name: "Other" });
     const otherSubject = await makeSubject(me.token, other.id, "other-a");
     const otherRun = await makeRun(me.token, other.id);
     expect(
-      (await apiPost("/api/v1/measurements", measurement(otherRun.id, otherSubject.id), bearer(benchKey))).status,
+      (await apiPost("/api/v1/measurements", measurement(await runUuid(otherRun), otherSubject.id), bearer(benchKey))).status,
     ).toBe(404);
   });
 });
@@ -156,9 +161,10 @@ describe("list scope filter", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
+    const rId = await runUuid(r); // scope_ref stays the run's internal id
     const acct = await mintKey(me.token, { scope_type: "ACCOUNT" });
     const bench = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
-    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
+    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: rId });
 
     const ids = async (qs: string) => {
       const res = await apiGet("/api/v1/api_keys" + qs, bearer(me.token));
@@ -169,7 +175,7 @@ describe("list scope filter", () => {
     expect(await ids("")).toEqual([acct.resource.id, bench.resource.id, run.resource.id].sort());
     expect(await ids("?filter[scope_type]=ACCOUNT")).toEqual([acct.resource.id]);
     expect(await ids(`?filter[scope_type]=BENCHMARK&filter[scope_ref]=${b.id}`)).toEqual([bench.resource.id]);
-    expect(await ids(`?filter[scope_type]=RUN&filter[scope_ref]=${r.id}`)).toEqual([run.resource.id]);
+    expect(await ids(`?filter[scope_type]=RUN&filter[scope_ref]=${rId}`)).toEqual([run.resource.id]);
 
     // A different benchmark's filter returns nothing; an invalid scope_type is a 400.
     const b2 = await makeBenchmark(me.token, { key: "second", name: "Second" });

@@ -62,6 +62,21 @@ export async function getSubjectTypeByKey(
   );
 }
 
+/**
+ * Resolve a subject-type reference (its public key, or a raw UUID) for a caller expected to own it:
+ * the account's key first, then the raw id (the legacy-UUID path). Subject types are account-unique
+ * (UNIQUE(account_id, key)) and every route is authed, so no public-by-key variant is needed. The
+ * caller still authorizes the resolved row (the account_id check); this only turns a wire reference
+ * into a row — the raw-id branch can return a foreign row, which the caller's check then rejects.
+ */
+export async function resolveOwnedSubjectType(
+  db: D1Database,
+  accountId: string,
+  idOrKey: string,
+): Promise<SubjectTypeRow | null> {
+  return (await getSubjectTypeByKey(db, accountId, idOrKey)) ?? (await getSubjectTypeById(db, idOrKey));
+}
+
 const SUBJECT_TYPE_COLUMNS: Record<string, string> = {
   name: "name",
   key: "key",

@@ -11,8 +11,8 @@ import {
   type MeasurementScope,
 } from "../data/measurements";
 import { isSubjectLinked, isSubjectPublic } from "../data/benchmark_subjects";
-import { getRunById } from "../data/runs";
-import { getSubjectById } from "../data/subjects";
+import { getRunById, resolveOwnedRun, resolveRunForRead } from "../data/runs";
+import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
 import {
   BadRequestError,
   ConflictError,
@@ -64,8 +64,9 @@ measurements.post("/", requireAuth, async (c) => {
 
   // Authorize the RUN first, before the subject is ever looked up — so an uncovered/foreign run is an
   // indistinguishable 404 and the subject probe below can't leak cross-account existence (the no-leak
-  // invariant every loader in this repo upholds).
-  const run = await getRunById(c.env.DB, runId);
+  // invariant every loader in this repo upholds). The reference may be the run's key (resolved within
+  // the caller's scope, since a key is unique only per benchmark) or a raw UUID.
+  const run = await resolveOwnedRun(c.env.DB, auth, runId);
   if (!run) throw new NotFoundError();
   const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (
@@ -79,10 +80,11 @@ measurements.post("/", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   // The caller covers the run's benchmark. Only now resolve the named subject and validate it is
-  // linked to that same benchmark (D1 can't enforce the cross-pair rule; benchmark_subject does). A
+  // linked to that same benchmark (D1 can't enforce the cross-pair rule; benchmark_subject does). The
+  // reference may be the subject's key (resolved within the benchmark's account) or a raw UUID. A
   // missing subject and a subject not linked to the run's benchmark are rejected identically (same
   // 409) so neither leaks whether a foreign id exists.
-  const subject = await getSubjectById(c.env.DB, subjectId);
+  const subject = await resolveOwnedSubject(c.env.DB, benchmark.account_id, subjectId);
   if (!subject || !(await isSubjectLinked(c.env.DB, benchmark.id, subject.id))) {
     throw new ConflictError("The subject is not linked to the run's benchmark.");
   }
@@ -143,7 +145,7 @@ measurements.post("/", requireAuth, async (c) => {
 
   const schema = parseMeasurementSchema(benchmark.measurement_schema);
   const resource = serializeMeasurement(
-    { id, run_id: run.id, subject_id: subject.id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+    { id, run_id: run.id, subject_id: subject.id, subject_key: subject.key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },
     schema,
     { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
   );
@@ -166,23 +168,28 @@ async function resolveScope(
   }
 
   // A subject spans benchmarks (M:N), so it has no single owning benchmark — resolve its visibility
-  // directly: the caller covers its account, or it's linked to at least one public benchmark.
+  // directly: the caller covers its account, or it's linked to at least one public benchmark. The
+  // filter value may be the subject's key or a raw UUID; the scope filters on the resolved UUID.
   if (subject !== undefined) {
-    const t = await getSubjectById(c.env.DB, subject);
+    const t = await resolveSubjectForRead(c.env.DB, auth?.account_id ?? null, subject);
     if (!t) throw new NotFoundError();
     const covered = auth !== undefined && covers(auth, { account_id: t.account_id });
     if (!covered && !(await isSubjectPublic(c.env.DB, t.id))) throw new NotFoundError();
     // A covered account caller sees all their measurements; anyone else sees only those recorded
     // under the subject's public benchmarks (a private sibling benchmark must not leak).
-    return { subject, subjectPublicOnly: !covered };
+    return { subject: t.id, subjectPublicOnly: !covered };
   }
 
   // run / benchmark: resolve to the owning benchmark (for visibility) and the scope chain (coverage).
   let bench = null;
   let chain: { account_id: string; benchmark_id: string; run_id?: string } | null = null;
+  // The filter[run] value may be the run's key or a raw UUID; the scope filters measurement.run_id
+  // on the resolved UUID (mirrors the subject fix, which filters on the resolved subject UUID).
+  let runId: string | undefined;
   if (run !== undefined) {
-    const r = await getRunById(c.env.DB, run);
+    const r = await resolveRunForRead(c.env.DB, auth ?? null, run);
     if (r) {
+      runId = r.id;
       bench = await getBenchmarkById(c.env.DB, r.benchmark_id);
       if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, run_id: r.id };
     }
@@ -195,7 +202,7 @@ async function resolveScope(
   if (!isPublicStatus(bench.status)) {
     if (!auth || !covers(auth, chain)) throw new NotFoundError();
   }
-  return { run, benchmark };
+  return { run: runId, benchmark };
 }
 
 measurements.get("/", optionalAuth, async (c) => {
@@ -225,7 +232,7 @@ measurements.get("/", optionalAuth, async (c) => {
       schemaCache.set(r.measurement_schema, schema);
     }
     return serializeMeasurement(
-      { id: r.id, run_id: r.run_id, subject_id: r.subject_id, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
+      { id: r.id, run_id: r.run_id, subject_id: r.subject_id, subject_key: r.subject_key, run_key: r.run_key, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
       schema,
       { created_at: r.created_at, run: { started_at: r.run_started_at, ended_at: r.run_ended_at } },
     );
@@ -252,7 +259,7 @@ measurements.get("/", optionalAuth, async (c) => {
 async function loadOwnedMeasurement(
   c: Parameters<typeof getAuth>[0],
   rawId: string,
-): Promise<{ id: number; measurement: MeasurementRow; run: RunRow; benchmark: BenchmarkRowWithPublisher }> {
+): Promise<{ id: number; measurement: MeasurementRow & { subject_key: string }; run: RunRow; benchmark: BenchmarkRowWithPublisher }> {
   const auth = getAuth(c);
   requireWrite(auth);
   const id = Number(rawId);
@@ -325,7 +332,7 @@ measurements.put("/:id", requireAuth, async (c) => {
   const schema = parseMeasurementSchema(benchmark.measurement_schema);
   return resourceResponse(
     serializeMeasurement(
-      { id, run_id: run.id, subject_id: measurement.subject_id, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+      { id, run_id: run.id, subject_id: measurement.subject_id, subject_key: measurement.subject_key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },
       schema,
       { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
     ),
