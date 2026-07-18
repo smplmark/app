@@ -81,7 +81,7 @@ describe("POST /measurements", () => {
     expect((body.attributes.metrics as Record<string, number>).skew_ms).toBe(87);
   });
 
-  it("accepts the subject by key or by UUID, emits the key, and 409s an unlinked subject", async () => {
+  it("names the subject by its key (UUID no longer accepted), emits the key, and 409s an unlinked subject", async () => {
     const me = await register();
     const { t, r } = await scaffold(me.token); // t.id is the subject key, linked to the run's benchmark
 
@@ -94,15 +94,16 @@ describe("POST /measurements", () => {
     expect(byKey.status).toBe(201);
     expect(((await byKey.json()) as { data: Resource }).data.attributes.subject).toBe(t.id);
 
-    // By the internal UUID (legacy path still accepted): 201, and the response still emits the key.
+    // Keys-only (post-cutover): the internal UUID is no longer accepted — it matches no subject key,
+    // so the subject resolves to nothing and the post is rejected with the same 409 as an unlinked
+    // subject (no-leak: a bad key and an unlinked subject are indistinguishable).
     const uuid = await subjectUuid(t.id as string);
     const byUuid = await apiPost(
       "/api/v1/measurements",
       measurement({ run: r.id, subject: uuid }),
       bearer(me.token),
     );
-    expect(byUuid.status).toBe(201);
-    expect(((await byUuid.json()) as { data: Resource }).data.attributes.subject).toBe(t.id);
+    expect(byUuid.status).toBe(409);
 
     // A subject that exists in the account but is not linked to the run's benchmark → 409 (unchanged).
     const unlinked = await makeAccountSubject(me.token, "unlinked");
@@ -255,7 +256,7 @@ describe("GET /measurements", () => {
 });
 
 describe("run reference by key (key-as-id migration)", () => {
-  it("POST accepts the run by key or UUID (account session), emits the run key, and 404s a foreign run", async () => {
+  it("names the run by its key (UUID no longer accepted), emits the run key, and 404s a foreign run", async () => {
     const me = await register();
     const { t, r } = await scaffold(me.token); // r.id is the run key, linked to the run's benchmark
 
@@ -264,13 +265,11 @@ describe("run reference by key (key-as-id migration)", () => {
     expect(byKey.status).toBe(201);
     expect(((await byKey.json()) as { data: Resource }).data.attributes.run).toBe(r.id);
 
-    // By the internal UUID (legacy path still accepted): 201, and the response still emits the key.
+    // Keys-only (post-cutover): the internal UUID no longer resolves — it matches no run key → 404.
     const byUuid = await apiPost("/api/v1/measurements", measurement({ run: await runUuid(r), subject: t.id }), bearer(me.token));
-    expect(byUuid.status).toBe(201);
-    expect(((await byUuid.json()) as { data: Resource }).data.attributes.run).toBe(r.id);
+    expect(byUuid.status).toBe(404);
 
-    // A run owned by another account → 404 (no-leak). Referenced by its UUID so it resolves to that
-    // foreign run and fails coverage (its key would resolve to the caller's own same-keyed run).
+    // A run owned by another account → 404 (no-leak): its UUID matches no run key in this account.
     const other = await register("other@example.com");
     const foreign = await scaffold(other.token);
     const foreignRun = await apiPost(

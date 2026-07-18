@@ -134,16 +134,19 @@ export async function getPublicSubjectByKey(
 }
 
 /**
- * Resolve a subject reference (its public key, or a raw UUID) for a mutating caller who is expected to
- * own it: the account's key first, then the raw id (the legacy-UUID path). The caller still authorizes
- * the resolved row (covers()/account check); this only turns a wire reference into a row.
+ * Resolve a subject reference for a mutating caller who is expected to own it: the account's key
+ * first, then (unless `keyOnly`) the raw UUID (the legacy path). The caller still authorizes the
+ * resolved row (covers()/account check); this only turns a wire reference into a row. `keyOnly` is the
+ * post-cutover mode used by the measurements POST, which accepts only the subject's key.
  */
 export async function resolveOwnedSubject(
   db: D1Database,
   accountId: string,
   idOrKey: string,
+  keyOnly = false,
 ): Promise<SubjectRowWithType | null> {
-  return (await getSubjectByKey(db, accountId, idOrKey)) ?? (await getSubjectById(db, idOrKey));
+  const byKey = await getSubjectByKey(db, accountId, idOrKey);
+  return byKey ?? (keyOnly ? null : await getSubjectById(db, idOrKey));
 }
 
 /**

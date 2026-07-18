@@ -64,9 +64,9 @@ measurements.post("/", requireAuth, async (c) => {
 
   // Authorize the RUN first, before the subject is ever looked up — so an uncovered/foreign run is an
   // indistinguishable 404 and the subject probe below can't leak cross-account existence (the no-leak
-  // invariant every loader in this repo upholds). The reference may be the run's key (resolved within
-  // the caller's scope, since a key is unique only per benchmark) or a raw UUID.
-  const run = await resolveOwnedRun(c.env.DB, auth, runId);
+  // invariant every loader in this repo upholds). Ingest names the run by its KEY (resolved within the
+  // caller's scope, since a key is unique only per benchmark); raw UUIDs are not accepted here.
+  const run = await resolveOwnedRun(c.env.DB, auth, runId, true);
   if (!run) throw new NotFoundError();
   const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
   if (
@@ -81,10 +81,10 @@ measurements.post("/", requireAuth, async (c) => {
   }
   // The caller covers the run's benchmark. Only now resolve the named subject and validate it is
   // linked to that same benchmark (D1 can't enforce the cross-pair rule; benchmark_subject does). The
-  // reference may be the subject's key (resolved within the benchmark's account) or a raw UUID. A
-  // missing subject and a subject not linked to the run's benchmark are rejected identically (same
+  // subject is named by its KEY (resolved within the benchmark's account); raw UUIDs are not accepted.
+  // A missing subject and a subject not linked to the run's benchmark are rejected identically (same
   // 409) so neither leaks whether a foreign id exists.
-  const subject = await resolveOwnedSubject(c.env.DB, benchmark.account_id, subjectId);
+  const subject = await resolveOwnedSubject(c.env.DB, benchmark.account_id, subjectId, true);
   if (!subject || !(await isSubjectLinked(c.env.DB, benchmark.id, subject.id))) {
     throw new ConflictError("The subject is not linked to the run's benchmark.");
   }

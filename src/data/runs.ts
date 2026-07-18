@@ -132,9 +132,14 @@ export async function resolveOwnedRun(
   db: D1Database,
   auth: AuthContext,
   runRef: string,
+  keyOnly = false,
 ): Promise<RunRow | null> {
-  const byId = await getRunById(db, runRef);
-  if (byId) return byId;
+  // `keyOnly` (the post-cutover measurements-POST mode) skips the legacy raw-UUID path so a run is
+  // addressed only by its key, resolved within the caller's scope below.
+  if (!keyOnly) {
+    const byId = await getRunById(db, runRef);
+    if (byId) return byId;
+  }
   switch (auth.scope_type) {
     case "RUN": {
       // A RUN-scoped credential always carries its run's id in scope_ref (enforced at mint, per

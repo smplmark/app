@@ -649,8 +649,8 @@ const measurement = registerEntity(
   "Measurement",
   "measurement",
   z.object({
-    run: idRef("The run (occasion) this measurement belongs to."),
-    subject: idRef("The subject this measurement is of."),
+    run: idRef("The key of the run (occasion) this measurement belongs to."),
+    subject: idRef("The key of the subject this measurement is of."),
     created_at: dateTime("When the measurement was recorded."),
     metrics: z
       .record(z.number())
@@ -663,8 +663,8 @@ const measurement = registerEntity(
     meta: jsonObject("Arbitrary structured metadata attached to the measurement.").optional(),
   }),
   z.object({
-    run: idRef("The run (occasion) to attach the measurement to."),
-    subject: idRef("The subject being measured. Must be linked to the same benchmark as the run."),
+    run: idRef("The key of the run (occasion) to attach the measurement to."),
+    subject: idRef("The key of the subject being measured. Must be linked to the same benchmark as the run."),
     created_at: dateTime("When the measurement occurred. On create, defaults to the time of ingest; on a correction (PUT), omitting it keeps the recorded time.").optional(),
     metrics: z
       .record(z.number())
