@@ -139,6 +139,7 @@
     if (cur) cur.textContent = a.name || a.key || "Subject";
     document.title = (a.name || "Subject") + " — smplmark";
 
+    SM.wireCopyButtons($("detail-root"));
     $("detail-root").querySelectorAll(".modalTabBar .modalTabBtn").forEach((el) =>
       el.addEventListener("click", () => switchTab(el.dataset.tab)));
     renderTab();
@@ -173,7 +174,7 @@
     return actor.type ? String(actor.type).toLowerCase() : "—";
   }
   async function renderHistory(panel) {
-    panel.innerHTML = '<div class="detailsTabPanel"><div id="history-table"></div></div>';
+    panel.innerHTML = '<div id="history-table"></div>';
     const table = SM.pagedTable($("history-table"), {
       columns: [
         { key: "when", label: "When", sortable: true, sortValue: (e) => (e.attributes || {}).occurred_at || "", render: (e) => esc(fmtDate((e.attributes || {}).occurred_at) || "—") },
@@ -215,7 +216,6 @@
         '<div class="subjectFormFields" id="detail-fields">' + SMSubjectForm.render(fs, details) + "</div>";
     } else {
       left = SM.detailField("Name", { value: a.name }) +
-        SM.detailField("Key", { value: a.key, mono: true }) +
         SM.detailField("Subject type", { value: typeName }) +
         fs.map((f) => SM.detailField(f.label, { value: SMSubjectForm.display(f, details[f.name]), emptyText: "—" })).join("");
     }

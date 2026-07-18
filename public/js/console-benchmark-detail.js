@@ -205,6 +205,7 @@
     if (cur) cur.textContent = a.name || a.key || "Benchmark";
     document.title = (a.name || "Benchmark") + " — smplmark";
 
+    SM.wireCopyButtons($("detail-root"));
     $("detail-root").querySelectorAll(".modalTabBar .modalTabBtn").forEach((el) =>
       el.addEventListener("click", () => switchTab(el.dataset.tab)));
 
@@ -447,7 +448,7 @@
     }
     panel.innerHTML = '<div id="subjects-table"></div>';
     const cols = [
-      { key: "key", label: "Key", sortable: true, sortValue: (t) => (t.attributes || {}).key || "", render: (t) => "<code>" + esc((t.attributes || {}).key || "") + "</code>" },
+      { key: "key", label: "ID", sortable: true, sortValue: (t) => (t.attributes || {}).key || "", render: (t) => "<code>" + esc((t.attributes || {}).key || "") + "</code>" },
       { key: "name", label: "Name", sortable: true, sortValue: (t) => (t.attributes || {}).name || "", render: (t) => esc((t.attributes || {}).name || "") },
     ];
     if (CAN_WRITE && priv) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>

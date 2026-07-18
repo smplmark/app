@@ -106,7 +106,7 @@
   // A column per subject-type field, plus Key + Name. Field columns key/sort/display by field name.
   function subjectColumns(t) {
     const cols = [
-      { key: "key", label: "Key", sortable: true, sortValue: (s) => (s.attributes || {}).key || "", render: (s) => "<code>" + esc((s.attributes || {}).key || "") + "</code>" },
+      { key: "key", label: "ID", sortable: true, sortValue: (s) => (s.attributes || {}).key || "", render: (s) => "<code>" + esc((s.attributes || {}).key || "") + "</code>" },
       { key: "name", label: "Name", sortable: true, sortValue: (s) => (s.attributes || {}).name || "", render: (s) => esc((s.attributes || {}).name || "") },
     ];
     fieldsOf(t).forEach((f) => {

@@ -99,6 +99,7 @@
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>';
 
+    SM.wireCopyButtons($("detail-root"));
     $("detail-root").querySelectorAll(".modalTabBtn").forEach((el) =>
       el.addEventListener("click", () => { if (el.dataset.tab !== activeTab()) location.hash = el.dataset.tab; }));
 
@@ -289,7 +290,7 @@
       $("tab-actions").innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-meas-btn">' + SM.icon("plus", 14) + " Add measurement</button>";
       $("add-meas-btn").addEventListener("click", openAddMeasurementModal);
     }
-    $("tab-panel").innerHTML = '<div class="detailsTabPanel"><div id="meas-table"></div><div id="meas-msg" class="form-status" style="margin-top:0.5rem;"></div></div>';
+    $("tab-panel").innerHTML = '<div id="meas-table"></div><div id="meas-msg" class="form-status" style="margin-top:0.5rem;"></div>';
 
     const cols = [
       { key: "subject", label: "Subject", sortable: true, sortValue: (m) => subjectLabel((m.attributes || {}).subject), render: (m) => esc(subjectLabel((m.attributes || {}).subject)) },
@@ -467,7 +468,7 @@
     return actor.type ? String(actor.type).toLowerCase() : "—";
   }
   async function renderHistory() {
-    $("tab-panel").innerHTML = '<div class="detailsTabPanel"><div id="history-table"></div></div>';
+    $("tab-panel").innerHTML = '<div id="history-table"></div>';
     const table = SM.pagedTable($("history-table"), {
       columns: [
         { key: "when", label: "When", sortable: true, sortValue: (e) => (e.attributes || {}).occurred_at || "", render: (e) => esc(fmtDateTime((e.attributes || {}).occurred_at)) },

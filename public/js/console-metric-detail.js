@@ -71,6 +71,7 @@
     if (cur) cur.textContent = a.label || a.name || "Metric";
     document.title = (a.label || a.name || "Metric") + " — smplmark";
 
+    SM.wireCopyButtons($("detail-root"));
     $("detail-root").querySelectorAll(".modalTabBar .modalTabBtn").forEach((el) =>
       el.addEventListener("click", () => { if (el.dataset.tab !== activeTab) { activeTab = el.dataset.tab; renderView(); } }));
 
@@ -136,6 +137,7 @@
     if (cur) cur.textContent = title;
     document.title = title + " — smplmark";
 
+    SM.wireCopyButtons($("detail-root"));
     const form = $("metric-edit-form");
     const actions = form.querySelector("#mf-tab-actions");
     if (actions) {

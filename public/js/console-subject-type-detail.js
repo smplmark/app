@@ -108,6 +108,7 @@
     if (cur) cur.textContent = a.name || a.key || "Subject type";
     document.title = (a.name || "Subject type") + " — smplmark";
 
+    SM.wireCopyButtons($("detail-root"));
     $("detail-root").querySelectorAll(".modalTabBar .modalTabBtn").forEach((el) =>
       el.addEventListener("click", () => switchTab(el.dataset.tab)));
     renderTab();

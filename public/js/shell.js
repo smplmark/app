@@ -565,7 +565,7 @@
     return (
       '<div class="detailHeader"><div class="detailHeaderLeft">' +
       '<div class="detailHeaderTitleRow"><h1>' + esc(opts.name || "") + "</h1>" + (opts.decorations || "") + "</div>" +
-      (opts.secondaryId ? '<div class="detailHeaderSecondary">' + esc(opts.secondaryId) + "</div>" : "") +
+      (opts.secondaryId ? '<div class="detailHeaderSecondary">' + esc(opts.secondaryId) + window.SM.copyButton(opts.secondaryId) + "</div>" : "") +
       "</div>" +
       (opts.actions ? '<div class="detailHeaderActions">' + opts.actions + "</div>" : "") +
       "</div>"
