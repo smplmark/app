@@ -98,7 +98,7 @@
       rows: [],
       sort: { key: "key", dir: "asc" },
       emptyText: "No subjects of this type yet.",
-      onRowClick: (s) => { location.href = "/account/subjects/detail?id=" + encodeURIComponent(s.id); },
+      onRowClick: (s) => { location.href = "/subjects/" + encodeURIComponent((s.attributes || {}).key || s.id); },
     });
     loadSubjects(t);
   }

@@ -54,6 +54,19 @@ function consoleBenchmarkAsset(p: string): string | null {
 }
 
 /**
+ * The console's subject section mirrors benchmarks at the app-host root: `/subjects` is the signed-in
+ * list and `/subjects/{key}` a subject (a subject's key is now its id, so the page JS resolves it from
+ * the URL). Unlike benchmarks, subjects have no public page, so there is nothing under `/subjects/…` to
+ * redirect to the website — every matching shape maps to a console shell. Returns the underlying asset
+ * path, or null when `p` isn't a console subject path.
+ */
+function consoleSubjectAsset(p: string): string | null {
+  if (p === "/subjects" || p === "/subjects/") return "/account/subjects";
+  if (/^\/subjects\/[^/]+\/?$/.test(p)) return "/account/subjects/detail";
+  return null;
+}
+
+/**
  * One-time browser cache heal.
  *
  * Before `/benchmarks` became the console list, this app served a permanent (301) redirect for it to
@@ -122,13 +135,14 @@ export function createApp() {
       res.headers.append("Vary", "Cookie");
       return applyCacheReset(c.req.header("Cookie"), res);
     }
-    // The console's benchmark pages live at pretty app-host paths (/benchmarks[/{key}[/runs/{run}]])
-    // that map to a static shell; serve the shell and let the page JS resolve the keys. Like "/", the
-    // response varies by auth (the shell requires a token client-side), so it must never be shared.
-    const benchAsset = consoleBenchmarkAsset(p);
-    if (benchAsset !== null) {
+    // The console's benchmark and subject pages live at pretty app-host paths (/benchmarks[/{key}[/runs/
+    // {run}]] and /subjects[/{key}]) that map to a static shell; serve the shell and let the page JS
+    // resolve the keys. Like "/", the response varies by auth (the shell requires a token client-side),
+    // so it must never be shared.
+    const consoleAsset = consoleBenchmarkAsset(p) ?? consoleSubjectAsset(p);
+    if (consoleAsset !== null) {
       const subject = new URL(url);
-      subject.pathname = benchAsset;
+      subject.pathname = consoleAsset;
       const asset = await c.env.ASSETS.fetch(
         new Request(subject, { method: "GET", headers: c.req.raw.headers }),
       );

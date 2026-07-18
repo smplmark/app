@@ -52,6 +52,21 @@ describe("app routing", () => {
     expect(await res.text()).toContain("console-run-detail.js");
   });
 
+  it("serves the console subject list at /subjects (app host)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/subjects");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="subjects-root"'); // the console list shell, not a redirect
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("serves the console subject-detail shell at /subjects/{key}", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/subjects/smpl-jobs");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="detail-root"');
+    expect(body).toContain("console-subject-detail.js");
+  });
+
   it("redirects a PUBLIC benchmark page (/benchmarks/{publisher}/{key}) to the website — 302, uncached", async () => {
     const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/stanford-helm/scheduler-latency");
     // 302 (not 301): /benchmarks/* is a shared namespace, so its redirects must never be cached —

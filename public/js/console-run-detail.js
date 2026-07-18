@@ -656,30 +656,57 @@
   async function renderApiReference() {
     const url = location.origin + "/api/v1/measurements";
     const stored = measSchema().metrics || [];
-    let subjectId = "<subject-id>";
-    let subjectNote = "";
+    // Fetch ALL the benchmark's subjects (same fetch the Measurements tab uses), so the example can be
+    // built for any of them via the picker below. Default to the first; fall back to a placeholder id
+    // when the benchmark has none. A subject's id is its key post-migration, so the example's run and
+    // subject fields show keys (e.g. "smpl-jobs"), never UUIDs.
+    let subjects = [];
     try {
       const benchId = (RUN.attributes || {}).benchmark;
-      const sd = benchId ? await apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(benchId) + "&page[size]=1") : null;
-      const s0 = sd && sd.data && sd.data[0];
-      if (s0) subjectId = s0.id;
-      else subjectNote = "This benchmark has no subjects yet — link one on the benchmark’s Subjects tab, then use its id as “subject” below.";
+      const sd = benchId ? await apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(benchId) + "&page[size]=1000") : null;
+      subjects = (sd && sd.data) || [];
     } catch (_e) { /* fall back to the placeholder id */ }
+    // Option value is the subject's key; the label shows its name (falling back to the key).
+    const subjOptions = subjects.map((su) => { const sa = su.attributes || {}; return { key: sa.key || su.id, name: sa.name || sa.key || su.id }; });
+    const hasSubjects = subjOptions.length > 0;
+    const subjectNote = hasSubjects ? "" : "This benchmark has no subjects yet — link one on the benchmark’s Subjects tab, then use its id as “subject” below.";
 
     const metricsExample = {};
     stored.forEach((mm, i) => { metricsExample[mm.name] = i === 0 ? 123.4 : 42; });
-    const payload = { data: { type: "measurement", attributes: { run: ID, subject: subjectId, metrics: metricsExample } } };
-    const payloadStr = JSON.stringify(payload, null, 2);
-    const curl =
-      "curl -X POST '" + url + "' \\\n" +
-      "  -H 'Authorization: Bearer <run-scoped-api-key>' \\\n" +
-      "  -H 'Content-Type: application/vnd.api+json' \\\n" +
-      "  -d '" + JSON.stringify(payload) + "'";
+
+    // Build the request-body + curl blocks for a chosen subject key. Factored out so the subject
+    // picker can re-render them live without rebuilding the whole tab.
+    function exampleHtml(subjectId) {
+      const payload = { data: { type: "measurement", attributes: { run: ID, subject: subjectId, metrics: metricsExample } } };
+      const curl =
+        "curl -X POST '" + url + "' \\\n" +
+        "  -H 'Authorization: Bearer <run-scoped-api-key>' \\\n" +
+        "  -H 'Content-Type: application/vnd.api+json' \\\n" +
+        "  -d '" + JSON.stringify(payload) + "'";
+      return codeBlock("apiref-body", JSON.stringify(payload, null, 2)) +
+        '<h3 class="apiRefH">Example (curl)</h3>' +
+        codeBlock("apiref-curl", curl);
+    }
+    function wireCopy(host) {
+      host.querySelectorAll(".apiRefCopy").forEach((btn) => btn.addEventListener("click", () => {
+        const pre = $(btn.dataset.copy);
+        if (pre && navigator.clipboard) navigator.clipboard.writeText(pre.textContent).then(() => SM.toast("Copied.", { kind: "success" })).catch(() => {});
+      }));
+    }
 
     const headersRows = [
       ["Authorization", "Bearer &lt;run-scoped-api-key&gt;"],
       ["Content-Type", "application/vnd.api+json"],
     ].map(([k, v]) => '<tr><td class="apiRefHKey">' + esc(k) + '</td><td class="apiRefHVal">' + v + "</td></tr>").join("");
+
+    // A themed subject picker (the measRange label idiom) — only when the benchmark has subjects.
+    const subjectPicker = hasSubjects
+      ? '<label class="measRange" style="margin:0 0 0.6rem;">Subject' +
+        '<select id="apiref-subject">' +
+        subjOptions.map((o) => '<option value="' + esc(o.key) + '">' + esc(o.name) + "</option>").join("") +
+        "</select></label>"
+      : "";
+    const initialSubject = hasSubjects ? subjOptions[0].key : "<subject-id>";
 
     $("tab-panel").innerHTML =
       '<div class="detailsTabPanel apiRef">' +
@@ -688,17 +715,22 @@
       '<h3 class="apiRefH">Headers</h3><table class="apiRefHeaders">' + headersRows + "</table>" +
       '<h3 class="apiRefH">Request body</h3>' +
       (subjectNote ? '<p class="detailFieldHelp" style="margin:0 0 0.5rem;">' + esc(subjectNote) + "</p>" : "") +
-      codeBlock("apiref-body", payloadStr) +
-      '<h3 class="apiRefH">Example (curl)</h3>' +
-      codeBlock("apiref-curl", curl) +
+      subjectPicker +
+      '<div id="apiref-example">' + exampleHtml(initialSubject) + "</div>" +
       "</div>";
 
     // Deep-link the API Keys tab, and wire the copy buttons.
     $("tab-panel").querySelectorAll('a[href="#apikeys"]').forEach((el) => el.addEventListener("click", (ev) => { ev.preventDefault(); location.hash = "apikeys"; }));
-    $("tab-panel").querySelectorAll(".apiRefCopy").forEach((btn) => btn.addEventListener("click", () => {
-      const pre = $(btn.dataset.copy);
-      if (pre && navigator.clipboard) navigator.clipboard.writeText(pre.textContent).then(() => SM.toast("Copied.", { kind: "success" })).catch(() => {});
-    }));
+    wireCopy($("tab-panel"));
+
+    // On change, re-render just the example (body + curl) with the chosen subject's key, then re-wire
+    // its copy buttons (the old buttons are discarded with the replaced markup).
+    const subjSel = $("apiref-subject");
+    if (subjSel) subjSel.addEventListener("change", () => {
+      const host = $("apiref-example");
+      host.innerHTML = exampleHtml(subjSel.value);
+      wireCopy(host);
+    });
   }
 
   function renderApiKeys() {

@@ -1,16 +1,24 @@
 "use strict";
 
-// Subject detail (/account/subjects/detail?id=…) — a conforming detail page: DetailHeader, a Details
-// tab (view/edit the subject's typed field values, generated from its subject type), and a Benchmarks
-// tab listing the benchmarks this subject is linked to (with unlink for private ones). Depends on
-// api.js + shell.js (SM helpers) + subject-form.js (SMSubjectForm).
+// Subject detail (/subjects/{key}; legacy ?id= fallback) — a conforming detail page: DetailHeader, a
+// Details tab (view/edit the subject's typed field values, generated from its subject type), and a
+// Benchmarks tab listing the benchmarks this subject is linked to (with unlink for private ones).
+// Depends on api.js + shell.js (SM helpers) + subject-form.js (SMSubjectForm).
 
 (function () {
   const esc = SM.esc;
   const $ = (id) => document.getElementById(id);
 
   const PARAMS = new URLSearchParams(location.search);
-  const ID = PARAMS.get("id") || "";
+  // Pretty route /subjects/{key}; ?id= is kept as a fallback (old links). A subject's key is now its id,
+  // so both resolve with a plain GET /api/v1/subjects/{…}; ID then tracks the loaded subject's id and
+  // everything downstream keys off it.
+  const PATH_KEY = (function () {
+    const m = /^\/subjects\/([^/]+)\/?$/.exec(location.pathname);
+    return m ? decodeURIComponent(m[1]) : "";
+  })();
+  const QUERY_ID = PARAMS.get("id") || "";
+  let ID = QUERY_ID || PATH_KEY;
   const NEW = PARAMS.get("new") === "1"; // create mode: no id, a subject_type is supplied instead
   const NEW_TYPE_ID = PARAMS.get("subject_type") || "";
   let TG = null; // the subject resource
@@ -79,7 +87,7 @@
     const nameEl = $("detail-root").querySelector('[data-edit="name"]');
     nameEl.addEventListener("input", () => SM.clearFieldError(nameEl));
     SMSubjectForm.wire($("detail-fields"));
-    $("t-cancel").addEventListener("click", () => { location.href = "/account/subjects"; });
+    $("t-cancel").addEventListener("click", () => { location.href = "/subjects"; });
     $("t-save").addEventListener("click", saveNew);
     nameEl.focus();
   }
@@ -102,16 +110,17 @@
         body: jsonapiBody("subject", { subject_type: NEW_TYPE_ID, name: name, details: collected.values }),
       });
       const created = doc && doc.data;
-      location.href = "/account/subjects/detail?id=" + encodeURIComponent(created.id);
+      location.href = "/subjects/" + encodeURIComponent((created.attributes || {}).key || created.id);
     } catch (err) { btn.disabled = false; setMsg(err.message, "error"); }
   }
 
   async function load() {
-    if (!ID) { fail("No subject id."); return; }
+    if (!ID) { fail("No subject specified."); return; }
     try {
       const doc = await apiFetch("/api/v1/subjects/" + encodeURIComponent(ID));
       TG = (doc && doc.data) || null;
       if (!TG) { fail("Subject not found."); return; }
+      ID = TG.id; // canonical id (the key); everything downstream keys off it
       const typeId = (TG.attributes || {}).subject_type;
       if (typeId) {
         try { const td = await apiFetch("/api/v1/subject_types/" + encodeURIComponent(typeId)); TYPE = (td && td.data) || null; }
@@ -276,7 +285,7 @@
     setMsg("");
     try {
       await apiFetch("/api/v1/subjects/" + encodeURIComponent(ID), { method: "DELETE" });
-      location.href = "/account/subjects";
+      location.href = "/subjects";
     } catch (err) { setMsg(err.message, "error"); }
   }
 

@@ -89,7 +89,7 @@
     { divider: true },
     { key: "benchmarks", label: "Benchmarks", href: "/benchmarks", icon: "benchmarks" },
     { key: "metrics", label: "Metrics", href: "/account/metrics", icon: "activity" },
-    { key: "subjects", label: "Subjects", href: "/account/subjects", icon: "subjects" },
+    { key: "subjects", label: "Subjects", href: "/subjects", icon: "subjects" },
     { key: "subject_types", label: "Subject types", href: "/account/subject-types", icon: "layers" },
   ];
   const ADMIN_NAV = [
