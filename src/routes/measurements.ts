@@ -339,17 +339,27 @@ measurements.put("/:id", requireAuth, async (c) => {
   );
 });
 
-// Delete a single measurement. Allowed only while the benchmark is a draft: a published
-// measurement must never silently vanish — correct it in place (PUT, audited with before/after) or
-// invalidate its run to retract it visibly. The id is the measurement's rowid.
+// Delete a single measurement. Allowed at any publish stage (owner-approved policy): deletion is
+// no longer refused on a published benchmark — instead the removal is part of the public record, so
+// it emits an audited `measurement.deleted` event (public when the benchmark is world-visible, else
+// internal) carrying the run/subject correlation, leaving a trail rather than a silent vanish. The
+// marked-ready pre-publish freeze (assertBenchmarkEditable) and the owning-caller auth
+// (loadOwnedMeasurement: write + covers) still apply. The id is the measurement's rowid.
 measurements.delete("/:id", requireAuth, async (c) => {
-  const { id, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
+  const auth = getAuth(c);
+  const { id, measurement, run, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
-    throw new ConflictError(
-      "A published measurement can't be deleted — the public record must not vanish. Correct it in place or invalidate its run instead.",
-    );
-  }
+  // Emit before deleteMeasurement so the correlation is captured from the still-live row.
+  emitAuditEvent(c, {
+    event_type: "measurement.deleted",
+    resource_type: "measurement",
+    resource_id: String(id),
+    benchmark_id: benchmark.id,
+    visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+    description: "Measurement deleted.",
+    extra: { run_id: run.id, subject_id: measurement.subject_id },
+    actor: auth,
+  });
   await deleteMeasurement(c.env.DB, id);
   return noContentResponse();
 });

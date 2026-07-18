@@ -533,6 +533,33 @@
 .toolbarIconBtn:hover { background: var(--surface-alt); color: var(--text); }
 
 /* ================================================================
+   Measurements tab — subject-filter rail (left) + table (right), with a range/refresh toolbar.
+   ================================================================ */
+.measLayout { display: flex; gap: 1.25rem; align-items: flex-start; }
+.measFilter { flex: 0 0 210px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.55rem; box-sizing: border-box; }
+.measMain { flex: 1; min-width: 0; }
+.measFilterHead { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0.4rem 0.5rem; }
+.measFilterTitle { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.measFilterAll { appearance: none; border: 0; background: transparent; color: var(--accent-strong); font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 0; }
+.measFilterAll:hover { text-decoration: underline; }
+.measFilterEmpty { margin: 0.3rem 0.4rem; font-size: 0.82rem; color: var(--text-muted); }
+.measFilterList { display: flex; flex-direction: column; gap: 1px; }
+.measFilterRow { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 7px; }
+.measFilterRow:hover { background: var(--surface-alt); }
+.measFilterCheck { display: flex; align-items: center; gap: 0.45rem; flex: 1; min-width: 0; cursor: pointer; font-size: 0.86rem; color: var(--text); }
+.measFilterCheck input { flex-shrink: 0; cursor: pointer; }
+.measFilterName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.measFilterOnly { appearance: none; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; opacity: 0; padding: 0.1rem 0.35rem; border-radius: 5px; flex-shrink: 0; }
+.measFilterRow:hover .measFilterOnly, .measFilterOnly:focus-visible { opacity: 1; }
+.measFilterOnly:hover { color: var(--accent-strong); background: var(--accent-soft); }
+.measRange { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--text-muted); }
+.measRange select { height: 38px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: 0.85rem; padding: 0 0.5rem; cursor: pointer; }
+@media (max-width: 860px) {
+  .measLayout { flex-direction: column; align-items: stretch; }
+  .measFilter { flex: none; }
+}
+
+/* ================================================================
    Subjects — two-pane (subject types | subjects of the selected type)
    ================================================================ */
 .subjectsLayout { display: grid; grid-template-columns: 240px 1fr; gap: 1.25rem; align-items: start; }
@@ -688,6 +715,9 @@
 .toast.toast-success svg { color: var(--success); }
 .toast.toast-error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .toast.toast-error svg { color: var(--danger); }
+.toast .toastMsg { min-width: 0; }
+.toastAction { flex-shrink: 0; margin-left: 0.35rem; appearance: none; border: 1px solid var(--border); background: transparent; color: var(--accent-strong); font: inherit; font-weight: 700; font-size: 0.82rem; padding: 0.2rem 0.6rem; border-radius: 6px; cursor: pointer; }
+.toastAction:hover { background: var(--accent-soft); border-color: var(--accent-strong); }
 
 /* Guidance list (e.g. the "not verified yet" modal) + inline DNS hints. */
 .tipList { margin: 0 0 1rem; padding-left: 1.15rem; display: grid; gap: 0.5rem; }

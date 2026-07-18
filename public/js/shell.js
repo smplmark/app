@@ -529,6 +529,13 @@
 
   // ── Toast — a brief, centered (top) notification. Non-blocking; auto-dismisses; click to dismiss.
   //    kind: "success" | "error" | "info". Use for confirmations and transient results. ──
+  // A brief centered notification. Back-compat signature: toast(message, { kind, duration }). Two
+  // optional additions, both inert for existing callers:
+  //   • action:   { label, onClick } — renders an inline button (e.g. "Undo"); clicking it runs
+  //               onClick and closes the toast WITHOUT firing onDismiss (the action "took").
+  //   • onDismiss: () => void — fires once when the toast goes away by timeout or a click on its body
+  //               and the action was NOT taken. This is the commit hook behind the deferred-action
+  //               pattern (do the real work when the undo window closes).
   function toast(message, opts) {
     opts = opts || {};
     const kind = opts.kind || "info";
@@ -543,16 +550,34 @@
     el.className = "toast toast-" + kind;
     el.setAttribute("role", "status");
     const glyph = kind === "success" ? icon("check", 16) : kind === "error" ? icon("close", 16) : "";
-    el.innerHTML = glyph + "<span>" + esc(message) + "</span>";
+    const action = opts.action && typeof opts.action === "object" ? opts.action : null;
+    el.innerHTML = glyph + '<span class="toastMsg">' + esc(message) + "</span>" +
+      (action ? '<button type="button" class="toastAction">' + esc(action.label || "Undo") + "</button>" : "");
     host.appendChild(el);
     requestAnimationFrame(() => el.classList.add("isIn"));
     let done = false;
-    function dismiss() {
-      if (done) return;
-      done = true;
+    let actioned = false;
+    function leave() {
       el.classList.remove("isIn");
       el.classList.add("isOut");
       setTimeout(() => el.remove(), 220);
+    }
+    function dismiss() {
+      if (done) return;
+      done = true;
+      leave();
+      if (!actioned && typeof opts.onDismiss === "function") opts.onDismiss();
+    }
+    if (action) {
+      const btn = el.querySelector(".toastAction");
+      if (btn) btn.addEventListener("click", (ev) => {
+        ev.stopPropagation(); // an action click is not a body dismiss — onDismiss must not fire
+        if (done) return;
+        actioned = true;
+        done = true;
+        leave();
+        if (typeof action.onClick === "function") action.onClick();
+      });
     }
     el.addEventListener("click", dismiss);
     setTimeout(dismiss, opts.duration || 3800);

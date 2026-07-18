@@ -861,6 +861,7 @@
       "run.invalidated": "Run invalidated",
       "measurement.created": "Measurement recorded",
       "measurement.corrected": "Measurement corrected",
+      "measurement.deleted": "Measurement deleted",
       "subject.created": "Subject created",
       "subject.edited": "Subject edited",
     };

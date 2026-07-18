@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   apiDelete,
   apiGet,
@@ -26,6 +26,32 @@ async function subjectUuid(key: string): Promise<string> {
 }
 
 beforeEach(resetDb);
+
+// Audit capture: emitAuditEvent posts to Smpl Audit via the SDK's global fetch (SELF.fetch, used by
+// the API helpers, is a separate transport and is unaffected). Tests that need to assert an emitted
+// event stub the outbound fetch and set SMPL_AUDIT_API_KEY; the afterEach undoes both.
+const AUDIT_EVENTS_URL = "https://audit.smplkit.com/api/v1/events";
+let auditPosts: { event_type: string; resource_id: string; data: Record<string, unknown>; actor_type: string | null; actor_id: string | null }[] = [];
+
+function captureAudit(): void {
+  auditPosts = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = input instanceof Request ? input : new Request(input, init);
+      if (req.url.startsWith(AUDIT_EVENTS_URL) && req.method === "POST") {
+        auditPosts.push((JSON.parse(await req.clone().text()) as { data: { attributes: (typeof auditPosts)[0] } }).data.attributes);
+        return new Response("{}", { status: 201 });
+      }
+      throw new Error(`unexpected fetch: ${req.url}`);
+    }),
+  );
+}
+
+afterEach(() => {
+  env.SMPL_AUDIT_API_KEY = undefined;
+  vi.unstubAllGlobals();
+});
 
 const measurement = (attrs: Record<string, unknown>) => ({
   data: { type: "measurement", attributes: attrs },
@@ -304,7 +330,7 @@ describe("run reference by key (key-as-id migration)", () => {
 });
 
 describe("DELETE /measurements/:id", () => {
-  it("deletes a measurement on a draft benchmark, but not once published", async () => {
+  it("deletes a measurement whether the benchmark is a draft or published, auditing the published removal", async () => {
     const me = await register();
     const { b, t, r } = await scaffold(me.token);
     const m1 = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
@@ -315,13 +341,47 @@ describe("DELETE /measurements/:id", () => {
     const after = (await (await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(me.token))).json()) as { data: Resource[] };
     expect(after.data.map((x) => x.id)).toEqual([m2.id]);
 
-    // Once published, a measurement must never silently vanish → 409 (correct or invalidate instead).
+    // Publish, then delete a published measurement: no longer refused (owner-approved policy) — it
+    // returns 204, the row is gone, and the removal leaves an audited public trail.
     await publish(me.token, me.user_id, b.id);
+    const runId = await runUuid(r);
+    const subjId = await subjectUuid(t.id); // the correlation carries internal UUIDs, not keys
+    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    captureAudit();
+
     const del = await apiDelete(`/api/v1/measurements/${m2.id}`, bearer(me.token));
-    expect(del.status).toBe(409);
-    expect(((await del.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
-      "A published measurement can't be deleted — the public record must not vanish. Correct it in place or invalidate its run instead.",
+    expect(del.status).toBe(204);
+    const gone = (await (await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(me.token))).json()) as { data: Resource[] };
+    expect(gone.data.map((x) => x.id)).toEqual([]);
+
+    // A public-record change still leaves a trail: a public `measurement.deleted` event with the
+    // run/subject correlation, attributed to the acting user.
+    await vi.waitFor(() =>
+      expect(auditPosts.filter((e) => e.event_type === "measurement.deleted")).toHaveLength(1),
     );
+    const ev = auditPosts.find((e) => e.event_type === "measurement.deleted")!;
+    expect(ev.resource_id).toBe(m2.id);
+    expect(ev.data.visibility).toBe("public");
+    expect(ev.data.benchmark_id).toBe(b.id);
+    expect(ev.data.run_id).toBe(runId);
+    expect(ev.data.subject_id).toBe(subjId);
+    expect(ev.actor_type).toBe("USER");
+    expect(ev.actor_id).toBe(me.user_id);
+  });
+
+  it("audits a draft measurement deletion as an internal event", async () => {
+    const me = await register();
+    const { t, r } = await scaffold(me.token);
+    const m = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
+
+    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    captureAudit();
+    expect((await apiDelete(`/api/v1/measurements/${m.id}`, bearer(me.token))).status).toBe(204);
+
+    await vi.waitFor(() =>
+      expect(auditPosts.filter((e) => e.event_type === "measurement.deleted")).toHaveLength(1),
+    );
+    expect(auditPosts.find((e) => e.event_type === "measurement.deleted")!.data.visibility).toBe("internal");
   });
 
   it("404s an unknown id and isolates tenants", async () => {

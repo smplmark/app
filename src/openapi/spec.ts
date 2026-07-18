@@ -2152,7 +2152,7 @@ registry.registerPath({
   tags: ["Measurements"],
   summary: "Delete a measurement",
   description:
-    "Removes a single measurement while the benchmark is a draft. A published measurement can never be deleted — the public record must not vanish; correct it in place (PUT) or invalidate its run instead.",
+    "Deletes a single measurement. Allowed while the benchmark is a draft or already published; on a published benchmark the removal is recorded in the public change history.",
   security: bearerSecurity,
   request: {
     params: z.object({
@@ -2162,7 +2162,7 @@ registry.registerPath({
   responses: {
     "204": { description: "The measurement was deleted." },
     ...commonErrors,
-    "409": errorJson("The measurement's benchmark is published; correct the measurement in place or invalidate its run instead."),
+    "409": errorJson("The benchmark is marked ready for publishing."),
   },
 });
 

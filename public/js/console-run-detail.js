@@ -25,6 +25,14 @@
   let CAN_ADMIN = false, CAN_WRITE = false;
   let SUBJECTS = {}; // subject_id → subject resource (measurement labels + the add picker)
 
+  // Measurements tab — fetched once per tab entry (measurements + the benchmark's subjects), then
+  // filtered client-side by subject and time window. A trashcan does an optimistic remove with a
+  // deferred delete (the DELETE fires when the Undo window closes; Undo cancels it).
+  let MEAS_ALL = [];             // the run's measurement resources (the master list to filter from)
+  let MEAS_TABLE = null;         // the pagedTable handle (setRows re-renders on any filter change)
+  let MEAS_SUBJECT_SHOWN = null; // Set<subjectKey> currently checked/shown; null before the first load
+  let MEAS_RANGE = "all";        // active time-window key; persists across tab re-entry
+
   function activeTab() {
     const h = (location.hash || "").replace(/^#/, "");
     return TABS.indexOf(h) >= 0 ? h : "details";
@@ -257,10 +265,13 @@
     } catch (err) { runMsg(err.message, "error"); }
   }
 
-  // ── Measurements tab — the run's recorded data. Measurements may be added and corrected at any
+  // ── Measurements tab — the run's recorded data, with a subject-filter rail (left) and a
+  //    range/refresh toolbar over the table (right). Measurements may be added and corrected at any
   //    lifecycle stage (post-publish changes are recorded in the history; appending to an ended run
-  //    gets its own history entry). Deletion is draft-only — published data never silently vanishes.
-  //    Only the benchmark's closed signal refuses new data. ──
+  //    gets its own history entry). Deletion is now allowed at any stage too (owner-approved policy):
+  //    the trashcan removes the row optimistically and defers the DELETE until the Undo window closes,
+  //    so a published removal is still audited server-side. Only the benchmark's closed signal refuses
+  //    NEW data. ──
   function benchAttrs() { return (BENCH && BENCH.attributes) || {}; }
   function measSchema() { return benchAttrs().measurement_schema || { metrics: [], derived: [] }; }
   function schemaMetrics() {
@@ -274,23 +285,51 @@
   }
   function subjectLabel(id) { const s = SUBJECTS[id]; const a = (s && s.attributes) || {}; return a.name || a.key || id || "—"; }
 
+  // Time-window presets (mirror the public viewer): a preset is "the last N as of now", or all time.
+  const MEAS_RANGES = [
+    { key: "all", label: "All time", seconds: null },
+    { key: "24h", label: "Last 24 hours", seconds: 86400 },
+    { key: "7d", label: "Last 7 days", seconds: 7 * 86400 },
+    { key: "30d", label: "Last 30 days", seconds: 30 * 86400 },
+  ];
+
   async function renderMeasurements() {
-    const a = RUN.attributes || {};
     if (!BENCH) {
       // The benchmark supplies the metric columns and the freeze/permission state — without it the
       // tab would silently render wrong (no metric columns, no add/delete). Say so instead.
       $("tab-panel").innerHTML = '<div class="detailsTabPanel"><div class="errorBanner"><p>Couldn’t load this run’s benchmark — measurements can’t be shown. Reload to retry.</p></div></div>';
       return;
     }
+    // Fresh entry: drop any prior tab's data so the first paint is a clean "Loading…" (the range
+    // selection persists — it's module state read back into the dropdown below).
+    MEAS_ALL = [];
+    MEAS_SUBJECT_SHOWN = null;
     const ba = benchAttrs();
-    const priv = String(ba.status || "").toUpperCase() === "PRIVATE";
     const canAdd = CAN_WRITE && !ba.closed;
-    const canDel = CAN_WRITE && priv;
+    // Deletion is no longer draft-only (Part A): a writer may delete at any publish stage, and the
+    // removal is audited server-side. The marked-ready freeze still refuses the write (409), which
+    // the deferred-delete's failure path surfaces.
+    const canDel = CAN_WRITE;
     if (canAdd) {
       $("tab-actions").innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-meas-btn">' + SM.icon("plus", 14) + " Add measurement</button>";
       $("add-meas-btn").addEventListener("click", openAddMeasurementModal);
     }
-    $("tab-panel").innerHTML = '<div id="meas-table"></div><div id="meas-msg" class="form-status" style="margin-top:0.5rem;"></div>';
+
+    // A range/refresh toolbar over a two-pane body: the subject filter rail (left) + the table (right).
+    const rangeSel = '<label class="measRange">Range' +
+      '<select id="meas-range">' +
+      MEAS_RANGES.map((r) => '<option value="' + esc(r.key) + '"' + (r.key === MEAS_RANGE ? " selected" : "") + ">" + esc(r.label) + "</option>").join("") +
+      "</select></label>";
+    $("tab-panel").innerHTML =
+      '<div id="meas-toolbar"></div>' +
+      '<div class="measLayout">' +
+      '<aside class="measFilter" id="meas-subjects"></aside>' +
+      '<div class="measMain"><div id="meas-table"></div></div></div>' +
+      '<div id="meas-msg" class="form-status" style="margin-top:0.5rem;"></div>';
+    const bar = SM.toolbar({ search: false, extraRight: rangeSel, onRefresh: reloadMeasurements });
+    $("meas-toolbar").appendChild(bar);
+    const rangeEl = bar.querySelector("#meas-range");
+    if (rangeEl) rangeEl.addEventListener("change", () => { MEAS_RANGE = rangeEl.value; applyMeasFilters(); });
 
     const cols = [
       { key: "subject", label: "Subject", sortable: true, sortValue: (m) => subjectLabel((m.attributes || {}).subject), render: (m) => esc(subjectLabel((m.attributes || {}).subject)) },
@@ -303,12 +342,21 @@
     cols.push({ key: "created_at", label: "Recorded", sortable: true, sortValue: (m) => (m.attributes || {}).created_at || "", render: (m) => esc(SM.fmtDateTime((m.attributes || {}).created_at)) });
     if (canDel) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (m) =>
       '<button type="button" class="iconBtn meas-del" data-id="' + esc(m.id) + '" title="Delete measurement" aria-label="Delete measurement">' + SM.icon("trash", 15) + "</button>" });
-    const table = SM.pagedTable($("meas-table"), {
+    MEAS_TABLE = SM.pagedTable($("meas-table"), {
       columns: cols, rows: [], sort: { key: "created_at", dir: "desc" }, emptyText: "No measurements in this run yet.",
       // A writer clicks a row to correct the measurement; a read-only viewer just sees its values.
       onRowClick: (m) => (CAN_WRITE ? openCorrectMeasurementModal(m) : openMeasurementModal(m)),
-      onRender: canDel ? (c) => c.querySelectorAll(".meas-del").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); deleteMeasurement(el.dataset.id); })) : undefined,
+      onRender: canDel ? (c) => c.querySelectorAll(".meas-del").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); deleteMeasurementDeferred(el.dataset.id); })) : undefined,
     });
+
+    renderSubjectFilter(); // renders "Loading…" until the fetch lands, then re-renders with subjects
+    await loadMeasurements();
+  }
+
+  // Fetch the run's measurements + the benchmark's subjects (once per tab entry). Seeds the master
+  // list and the subject-filter set (all checked), then applies the active filters to the table.
+  async function loadMeasurements() {
+    if (!MEAS_TABLE) return;
     try {
       const benchId = (RUN.attributes || {}).benchmark;
       const [measDoc, subjDoc] = await Promise.all([
@@ -317,9 +365,121 @@
       ]);
       SUBJECTS = {};
       ((subjDoc && subjDoc.data) || []).forEach((su) => { SUBJECTS[su.id] = su; });
-      table.setRows((measDoc && measDoc.data) || []);
+      MEAS_ALL = (measDoc && measDoc.data) || [];
+      MEAS_SUBJECT_SHOWN = new Set(measSubjectEntries().map((e) => e.key)); // default: every subject shown
+      renderSubjectFilter();
+      applyMeasFilters();
     } catch (err) {
+      MEAS_ALL = [];
+      MEAS_SUBJECT_SHOWN = new Set(); // settle the rail out of its "Loading…" state (the table shows the error)
+      renderSubjectFilter();
       $("meas-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
+  }
+
+  // The refresh button re-fetches from the server. The time-window stays as selected (module state);
+  // the subject checkboxes reset to all-shown, since the subject set may have changed under us.
+  async function reloadMeasurements() { await loadMeasurements(); }
+
+  // The subjects offered in the filter rail: the benchmark's linked subjects plus any subject a
+  // measurement references (so every row is representable), sorted by their display label.
+  function measSubjectEntries() {
+    const keys = new Set(Object.keys(SUBJECTS));
+    MEAS_ALL.forEach((m) => { const k = (m.attributes || {}).subject; if (k) keys.add(k); });
+    return Array.from(keys)
+      .map((k) => ({ key: k, label: subjectLabel(k) }))
+      .sort((x, y) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: "base" }));
+  }
+
+  // Re-derive the visible rows from the master list under the current subject + time-window filters.
+  function applyMeasFilters() {
+    if (!MEAS_TABLE) return;
+    const rangeSec = (MEAS_RANGES.find((r) => r.key === MEAS_RANGE) || {}).seconds;
+    const minTs = rangeSec ? Date.now() - rangeSec * 1000 : null;
+    const shown = MEAS_SUBJECT_SHOWN;
+    const rows = MEAS_ALL.filter((m) => {
+      const a = m.attributes || {};
+      if (shown && !shown.has(a.subject)) return false;
+      if (minTs !== null) { const t = new Date(a.created_at).getTime(); if (!isFinite(t) || t < minTs) return false; }
+      return true;
+    });
+    MEAS_TABLE.setRows(rows);
+  }
+
+  // ── Subject filter rail — one checkbox per subject (all checked by default), each with a hover
+  //    "Only" quick-pick that narrows to just that subject; an "All" reset appears when narrowed. ──
+  function setSubjectShown(key, on) {
+    if (!MEAS_SUBJECT_SHOWN) MEAS_SUBJECT_SHOWN = new Set(measSubjectEntries().map((e) => e.key));
+    if (on) MEAS_SUBJECT_SHOWN.add(key); else MEAS_SUBJECT_SHOWN.delete(key);
+    renderSubjectFilter();
+    applyMeasFilters();
+  }
+  function onlySubject(key) {
+    MEAS_SUBJECT_SHOWN = new Set([key]);
+    renderSubjectFilter();
+    applyMeasFilters();
+  }
+  function showAllSubjects() {
+    MEAS_SUBJECT_SHOWN = new Set(measSubjectEntries().map((e) => e.key));
+    renderSubjectFilter();
+    applyMeasFilters();
+  }
+  function renderSubjectFilter() {
+    const host = $("meas-subjects");
+    if (!host) return;
+    const entries = measSubjectEntries();
+    const shown = MEAS_SUBJECT_SHOWN;
+    const loading = shown === null;
+    const allShown = !loading && entries.length > 0 && entries.every((e) => shown.has(e.key));
+    let html = '<div class="measFilterHead"><span class="measFilterTitle">Subjects</span>' +
+      (!loading && !allShown ? '<button type="button" class="measFilterAll" id="meas-subj-all">All</button>' : "") + "</div>";
+    if (loading) {
+      html += '<p class="measFilterEmpty">Loading…</p>';
+    } else if (entries.length === 0) {
+      html += '<p class="measFilterEmpty">No subjects in this run.</p>';
+    } else {
+      html += '<div class="measFilterList">' + entries.map((e) => {
+        const on = shown.has(e.key);
+        return '<div class="measFilterRow">' +
+          '<label class="measFilterCheck"><input type="checkbox" data-subj="' + esc(e.key) + '"' + (on ? " checked" : "") + " /> " +
+          '<span class="measFilterName" title="' + esc(e.label) + '">' + esc(e.label) + "</span></label>" +
+          '<button type="button" class="measFilterOnly" data-only="' + esc(e.key) + '" title="Show only this subject">Only</button>' +
+          "</div>";
+      }).join("") + "</div>";
+    }
+    host.innerHTML = html;
+    host.querySelectorAll("input[data-subj]").forEach((cb) =>
+      cb.addEventListener("change", () => setSubjectShown(cb.getAttribute("data-subj"), cb.checked)));
+    host.querySelectorAll(".measFilterOnly").forEach((b) =>
+      b.addEventListener("click", () => onlySubject(b.getAttribute("data-only"))));
+    const allBtn = $("meas-subj-all");
+    if (allBtn) allBtn.addEventListener("click", showAllSubjects);
+  }
+
+  // ── Per-row delete — optimistic remove + deferred DELETE with an Undo window. The row leaves the
+  //    table immediately; the actual DELETE fires only when the Undo toast dismisses (~5s). Undo puts
+  //    the row back and sends no request; a failed deferred DELETE restores the row + an error toast. ──
+  function deleteMeasurementDeferred(measId) {
+    const idx = MEAS_ALL.findIndex((m) => String(m.id) === String(measId));
+    if (idx < 0) return;
+    const removed = MEAS_ALL[idx];
+    MEAS_ALL.splice(idx, 1); // optimistic remove — the table re-sorts, so exact position is cosmetic
+    applyMeasFilters();
+    SM.toast("Measurement deleted", {
+      kind: "info",
+      duration: 5000,
+      action: { label: "Undo", onClick: () => { MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed); applyMeasFilters(); } },
+      onDismiss: () => commitMeasurementDelete(measId, removed, idx),
+    });
+  }
+  async function commitMeasurementDelete(measId, removed, idx) {
+    try {
+      await apiFetch("/api/v1/measurements/" + encodeURIComponent(measId), { method: "DELETE" });
+    } catch (err) {
+      // The delete didn't happen — put the row back (if it isn't already) and surface the failure.
+      if (!MEAS_ALL.some((m) => String(m.id) === String(measId))) MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed);
+      applyMeasFilters();
+      SM.toast(err.message || "Couldn’t delete the measurement.", { kind: "error" });
     }
   }
 
@@ -484,13 +644,6 @@
     } catch (err) {
       $("history-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
     }
-  }
-
-  async function deleteMeasurement(measId) {
-    const ok = await SM.confirm({ title: "Delete measurement?", message: "Delete this measurement? This can't be undone.", confirmLabel: "Delete" });
-    if (!ok) return;
-    try { await apiFetch("/api/v1/measurements/" + encodeURIComponent(measId), { method: "DELETE" }); renderMeasurements(); }
-    catch (err) { const el = $("meas-msg"); if (el) { el.textContent = err.message; el.className = "form-status is-error"; } }
   }
 
   // ── API Reference tab — everything needed to POST measurements to this run from CI: the HTTP
