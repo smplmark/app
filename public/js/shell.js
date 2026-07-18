@@ -22,6 +22,22 @@
   const AUTO_COLLAPSE_WIDTH = 1024;
   const PAGE = window.SM_PAGE || { active: "", breadcrumbs: [] };
 
+  // Stale-while-revalidate window for the per-page-load bootstrap (identity + theme settings): within
+  // this age a repeat navigation renders the shell instantly from the sessionStorage cache and refreshes
+  // in the background; past it, the bootstrap is re-fetched before the shell renders. Kept short so a
+  // role/account change can never be shown stale for longer than the window.
+  const BOOTSTRAP_TTL_MS = 60 * 1000;
+
+  // Auth-scoped cache keys. The token hash guarantees one credential's cached bootstrap can never be
+  // read under another — a new login or account switch mints a new token, hence a new key — so cached
+  // identity/theme is impossible to serve across users. account_id is folded in for legibility only.
+  function bootstrapScope() {
+    const claims = decodeJwt(token);
+    return (claims.account_id || "") + ":" + hashToken(token);
+  }
+  function identityCacheKey() { return "identity:" + bootstrapScope(); }
+  function settingsCacheKey() { return "settings:" + bootstrapScope(); }
+
   // ── Theme (light / dark / system) ──
   // theme.js (loaded in <head>) applies the cached choice before first paint. Here we reconcile that
   // cache with the server — the source of truth across devices — and expose helpers the profile page
@@ -40,17 +56,37 @@
     }
   }
   function cacheTheme(theme) {
-    try { localStorage.setItem(THEME_KEY, normalizeTheme(theme)); } catch (_e) {}
+    const t = normalizeTheme(theme);
+    try { localStorage.setItem(THEME_KEY, t); } catch (_e) {}
+    // Keep the SWR settings cache in step with a persisted theme change (this is the funnel the profile
+    // page's Save calls too) so the next load's instant, cached theme matches what was just saved,
+    // rather than re-applying the old one for a beat before the background settings fetch corrects it.
+    // Merge onto the existing cached settings so any other preference keys in the bag survive.
+    const key = settingsCacheKey();
+    const hit = swrGet(key);
+    const base = hit && hit.value && typeof hit.value === "object" ? hit.value : {};
+    swrSet(key, Object.assign({}, base, { theme: t }));
   }
-  async function syncTheme() {
-    try {
-      const s = await apiFetch("/api/v1/users/current/settings", { json: true });
-      const theme = normalizeTheme(s && s.theme);
-      cacheTheme(theme);
-      applyThemeDom(theme);
-    } catch (_e) {
-      /* offline / not a session credential — keep whatever theme.js applied from cache. */
+  function applyThemeFromSettings(s) {
+    const theme = normalizeTheme(s && s.theme);
+    cacheTheme(theme);
+    applyThemeDom(theme);
+  }
+  // Reconcile the theme with the server (the source of truth across devices). Fire-and-forget: on a
+  // fresh cache hit it applies the cached theme instantly, and it ALWAYS revalidates in the background.
+  function syncTheme() {
+    const key = settingsCacheKey();
+    const hit = swrGet(key);
+    if (hit && hit.age < BOOTSTRAP_TTL_MS && hit.value) {
+      applyThemeFromSettings(hit.value);
     }
+    return apiFetch("/api/v1/users/current/settings", { json: true }).then((s) => {
+      const settings = s || {};
+      swrSet(key, settings);
+      applyThemeFromSettings(settings);
+    }).catch(() => {
+      /* offline / not a session credential — keep whatever theme.js or the cache applied. */
+    });
   }
 
   const ICONS = {
@@ -376,7 +412,9 @@
   let resolveReady, rejectReady;
   const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
 
-  async function loadIdentity() {
+  // The three shell-gating identity calls. Never rejects: each failure degrades that field to
+  // null / claims-only exactly as before, so the composed identity is always usable.
+  async function fetchIdentityParts() {
     const claims = decodeJwt(token);
     let accountId = claims.account_id || null;
     let role = claims.role || null;
@@ -396,13 +434,68 @@
       const mine = memberships.find((m) => (m.attributes || {}).account === accountId);
       if (mine) role = (mine.attributes || {}).role || role;
     } catch (_e) {}
+    return { account, user, accountId, role, memberships };
+  }
+
+  // Build IDENTITY (+ derived flags + CAN_ADMIN) from raw parts and the current token. The token is
+  // re-attached from the closure rather than the cache, so the cached value never holds a credential.
+  function composeIdentity(parts) {
+    parts = parts || {};
+    const role = parts.role || null;
     IDENTITY = {
-      account, user, accountId, token, role, memberships,
+      account: parts.account || null,
+      user: parts.user || null,
+      accountId: parts.accountId || null,
+      token: token,
+      role: role,
+      memberships: parts.memberships || [],
       canWrite: role === "OWNER" || role === "ADMIN" || role === "MEMBER",
       canAdmin: role === "OWNER" || role === "ADMIN",
       isOwner: role === "OWNER",
     };
     CAN_ADMIN = IDENTITY.canAdmin;
+    return IDENTITY;
+  }
+
+  // A compact signature of just the bits the shell renders from, so a background revalidation that
+  // returns an unchanged identity skips a redundant re-render (and its flicker).
+  function identitySignature(id) {
+    if (!id) return "";
+    const u = (id.user && id.user.attributes) || {};
+    return JSON.stringify([
+      id.accountId || "",
+      id.role || "",
+      u.display_name || "",
+      u.email || "",
+      (id.memberships || []).map((m) => (m.attributes || {}).account).sort(),
+    ]);
+  }
+
+  // Re-run the shell chrome that depends on identity: role-gated nav (via CAN_ADMIN), the user
+  // avatar/name/email (fillUser, inside renderSidebar), and the active-nav highlight.
+  function renderIdentity() {
+    renderSidebar();
+  }
+
+  async function loadIdentity() {
+    const key = identityCacheKey();
+    const hit = swrGet(key);
+    if (hit && hit.age < BOOTSTRAP_TTL_MS && hit.value) {
+      // Fresh cache: compose + resolve immediately so the shell renders this tick, then revalidate the
+      // three calls in the background and re-render only if the composed identity actually changed.
+      composeIdentity(hit.value);
+      const priorSig = identitySignature(IDENTITY);
+      fetchIdentityParts().then((parts) => {
+        composeIdentity(parts);
+        swrSet(key, parts);
+        if (identitySignature(IDENTITY) !== priorSig) renderIdentity();
+      }).catch(() => { /* keep the cached view; the next navigation revalidates again */ });
+      return IDENTITY;
+    }
+    // No fresh cache: original behavior — fetch the three, compose, then cache for next time.
+    const parts = await fetchIdentityParts();
+    composeIdentity(parts);
+    swrSet(key, parts);
     return IDENTITY;
   }
 
@@ -1081,7 +1174,7 @@
   renderSidebar();
   syncTheme(); // reconcile the cached theme with the server (fire-and-forget)
   loadIdentity().then((id) => {
-    renderSidebar(); // re-render with role-appropriate nav + user identity
+    renderIdentity(); // re-render with role-appropriate nav + user identity (from cache or fresh)
     resolveReady(id);
   }, (err) => { rejectReady(err); });
 })();

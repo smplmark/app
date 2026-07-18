@@ -6,6 +6,62 @@
 
 const TOKEN_KEY = "smplmark_token";
 
+// ── Stale-while-revalidate cache (sessionStorage) ──
+// A tiny, defensive cache for the cheap-to-recompute per-page-load bootstrap data (identity + theme
+// settings). Values are stored as { value, ts }; a read returns the value plus its age so the caller
+// can decide freshness against a short TTL and always revalidate in the background. Every sessionStorage
+// access is wrapped — private mode, quota, or disabled storage degrade to a cache miss, never an error.
+// Keys are namespaced so a single clear (on sign-out / token change) removes every cached entry.
+const SWR_PREFIX = "smplmark.swr:";
+
+function swrGet(key) {
+  try {
+    const raw = sessionStorage.getItem(SWR_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.ts !== "number") return null;
+    return { value: parsed.value, age: Date.now() - parsed.ts };
+  } catch (_e) {
+    return null;
+  }
+}
+
+function swrSet(key, value) {
+  try {
+    sessionStorage.setItem(SWR_PREFIX + key, JSON.stringify({ value: value, ts: Date.now() }));
+  } catch (_e) {
+    /* private mode / quota / disabled storage — skip caching; callers still revalidate from network */
+  }
+}
+
+// Drop every SWR entry. Called whenever the active credential changes (sign-in, sign-out, account
+// switch) so a cached identity/theme can never outlive the token it was scoped to.
+function swrClearAll() {
+  try {
+    const doomed = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.indexOf(SWR_PREFIX) === 0) doomed.push(k);
+    }
+    doomed.forEach((k) => { try { sessionStorage.removeItem(k); } catch (_e) {} });
+  } catch (_e) {
+    /* ignore — storage unavailable */
+  }
+}
+
+// A compact, non-cryptographic hash (FNV-1a, 32-bit) of the bearer token. Used only to derive an
+// auth-scoped cache key so entries for one token can never be read under another; it is NOT a security
+// boundary (the token itself gates the API). A collision is astronomically unlikely for our inputs and,
+// if one ever occurred, the background revalidation would correct the view within the TTL.
+function hashToken(token) {
+  const s = String(token == null ? "" : token);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  }
+  return (h >>> 0).toString(16);
+}
+
 function getToken() {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -20,6 +76,10 @@ function setToken(token) {
   } catch (_e) {
     /* ignore storage errors */
   }
+  // The active credential is changing (login, register, OIDC, account switch, invitation-accept
+  // switch). Drop any cached identity/theme so the next page load can't render a prior session's
+  // bootstrap — the auth-scoped key already prevents a cross-token read, this also frees the entries.
+  swrClearAll();
   writeAuthedCookie(true);
 }
 
@@ -29,6 +89,8 @@ function clearToken() {
   } catch (_e) {
     /* ignore storage errors */
   }
+  // Sign-out / 401 / missing-token guard — wipe the cached identity + theme along with the token.
+  swrClearAll();
   writeAuthedCookie(false);
 }
 
