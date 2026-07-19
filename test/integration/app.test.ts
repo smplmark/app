@@ -20,11 +20,22 @@ describe("app routing", () => {
   it("serves a generated OpenAPI document at /api/openapi.json", async () => {
     const res = await apiGet("/api/openapi.json");
     expect(res.status).toBe(200);
-    const doc = (await res.json()) as { openapi: string; paths: Record<string, unknown> };
+    const doc = (await res.json()) as {
+      openapi: string;
+      paths: Record<string, { get?: { parameters?: { $ref?: string }[] } }>;
+      components: { schemas: Record<string, unknown>; parameters: Record<string, unknown> };
+    };
     expect(doc.openapi).toBe("3.0.3");
     expect(doc.paths["/api/v1/benchmarks"]).toBeDefined();
     expect(doc.paths["/api/v1/measurements"]).toBeDefined();
     expect(doc.paths["/api/v1/external_sources"]).toBeDefined();
+    // The measurement-statistics surface is documented: the stats schemas + the meta[stats] param,
+    // which the measurements list path references by $ref.
+    expect(doc.components.schemas.MeasurementStats).toBeDefined();
+    expect(doc.components.schemas.MetricStats).toBeDefined();
+    expect(doc.components.parameters.MetaStats).toBeDefined();
+    const measGet = doc.paths["/api/v1/measurements"].get;
+    expect((measGet?.parameters ?? []).some((p) => p.$ref === "#/components/parameters/MetaStats")).toBe(true);
   });
 
   it("serves the Scalar API reference page", async () => {

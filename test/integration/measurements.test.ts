@@ -255,6 +255,102 @@ describe("GET /measurements", () => {
   });
 });
 
+describe("GET /measurements meta[stats]", () => {
+  const TOP = Date.UTC(2026, 6, 1, 10, 0, 0); // top-of-minute → skew_ms is the +offset
+
+  // A benchmark whose schema carries a stored metric (latency_ms) and the derived skew_ms.
+  async function statsScaffold(token: string) {
+    const b = await makeBenchmark(token, {
+      measurement_schema: {
+        metrics: [{ name: "latency_ms", type: "DECIMAL" }],
+        derived: [{ name: "skew_ms", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }],
+        chart: { x: "created_at", y: "latency_ms", x_kind: "TIME" },
+      },
+    });
+    const t1 = await makeSubject(token, b.id, "sub-a");
+    const t2 = await makeSubject(token, b.id, "sub-b");
+    const r = await makeRun(token, b.id);
+    // sub-a: three measurements (latency 10/20/30, skew 100/200/300); sub-b: one (latency 5, skew 50).
+    await makeMeasurement(token, r.id, t1.id, { created_at: TOP + 100, metrics: { latency_ms: 10 } });
+    await makeMeasurement(token, r.id, t1.id, { created_at: TOP + 200, metrics: { latency_ms: 20 } });
+    await makeMeasurement(token, r.id, t1.id, { created_at: TOP + 300, metrics: { latency_ms: 30 } });
+    await makeMeasurement(token, r.id, t2.id, { created_at: TOP + 50, metrics: { latency_ms: 5 } });
+    return { b, t1, t2, r };
+  }
+
+  interface MetricStats { count: number; sum: number; min: number; max: number; avg: number; median: number; p75: number; p90: number; p95: number; p99: number }
+  interface StatsMeta { measurements: number; truncated: boolean; subjects: { subject: string; metrics: Record<string, MetricStats> }[] }
+
+  async function getStats(token: string, query: string): Promise<{ data: Resource[]; meta: { stats?: StatsMeta } }> {
+    const res = await apiGet(`/api/v1/measurements?${query}`, bearer(token));
+    expect(res.status).toBe(200);
+    return (await res.json()) as { data: Resource[]; meta: { stats?: StatsMeta } };
+  }
+
+  it("summarizes stored and derived metrics per subject over the full set", async () => {
+    const me = await register();
+    const { t1, t2, r } = await statsScaffold(me.token);
+
+    const body = await getStats(me.token, `filter[run]=${r.id}&meta[stats]=true&page[size]=1`);
+    // Statistics cover all four measurements even though only one row is returned in the page.
+    expect(body.data.length).toBe(1);
+    const stats = body.meta.stats!;
+    expect(stats.measurements).toBe(4);
+    expect(stats.truncated).toBe(false);
+    expect(stats.subjects.length).toBe(2);
+
+    const a = stats.subjects.find((s) => s.subject === t1.id)!.metrics;
+    expect(a.latency_ms).toMatchObject({ count: 3, min: 10, max: 30, avg: 20, median: 20, sum: 60 });
+    expect(a.latency_ms.p75).toBeCloseTo(25);
+    expect(a.skew_ms).toMatchObject({ count: 3, min: 100, max: 300, avg: 200, median: 200 });
+
+    const b = stats.subjects.find((s) => s.subject === t2.id)!.metrics;
+    expect(b.latency_ms).toMatchObject({ count: 1, avg: 5 });
+    expect(b.skew_ms).toMatchObject({ count: 1, avg: 50 });
+  });
+
+  it("omits stats unless meta[stats]=true", async () => {
+    const me = await register();
+    const { r } = await statsScaffold(me.token);
+    const body = await getStats(me.token, `filter[run]=${r.id}`);
+    expect(body.meta.stats).toBeUndefined();
+    const off = await getStats(me.token, `filter[run]=${r.id}&meta[stats]=false`);
+    expect(off.meta.stats).toBeUndefined();
+  });
+
+  it("honors filter[created_at] when computing stats", async () => {
+    const me = await register();
+    const { t1, t2, r } = await statsScaffold(me.token);
+    // Keep only measurements at/after TOP+150 → sub-a's 20 & 30 remain; sub-b (TOP+50) drops out.
+    const from = new Date(TOP + 150).toISOString();
+    const body = await getStats(me.token, `filter[run]=${r.id}&meta[stats]=true&filter[created_at]=${encodeURIComponent(`[${from},*)`)}&page[size]=1`);
+    const stats = body.meta.stats!;
+    expect(stats.measurements).toBe(2);
+    expect(stats.subjects.length).toBe(1);
+    const a = stats.subjects.find((s) => s.subject === t1.id)!.metrics;
+    expect(a.latency_ms).toMatchObject({ count: 2, min: 20, max: 30, avg: 25 });
+    expect(stats.subjects.find((s) => s.subject === t2.id)).toBeUndefined();
+  });
+
+  it("rejects a malformed meta[stats] value", async () => {
+    const me = await register();
+    const { r } = await statsScaffold(me.token);
+    const res = await apiGet(`/api/v1/measurements?filter[run]=${r.id}&meta[stats]=yes`, bearer(me.token));
+    expect(res.status).toBe(400);
+  });
+
+  it("ignores meta[stats] for a CSV export (CSV carries no meta)", async () => {
+    const me = await register();
+    const { r } = await statsScaffold(me.token);
+    const res = await apiGet(`/api/v1/measurements?filter[run]=${r.id}&meta[stats]=true`, {
+      ...bearer(me.token),
+      Accept: "text/csv",
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/csv");
+  });
+});
+
 describe("run reference by key (key-as-id migration)", () => {
   it("names the run by its key (UUID no longer accepted), emits the run key, and 404s a foreign run", async () => {
     const me = await register();

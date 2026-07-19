@@ -815,6 +815,14 @@ const metaTotalParam = registry.registerParameter(
     description: "Set to request a total item count in the response meta.",
   }),
 );
+const metaStatsParam = registry.registerParameter(
+  "MetaStats",
+  z.string().optional().openapi({
+    param: { name: "meta[stats]", in: "query" },
+    description:
+      "Set to 'true' to include aggregate statistics (count, sum, min, max, avg, median, p75, p90, p95, p99) in the response meta, grouped by subject and metric. Computed over the full filtered set (all matching measurements, not just the returned page).",
+  }),
+);
 const sortParam = registry.registerParameter(
   "Sort",
   z.string().optional().openapi({
@@ -2111,13 +2119,82 @@ registry.registerPath({
   },
 });
 
+// ── Measurement statistics (optional meta on the list endpoint) ───────────────
+
+const MetricStats = registry.register(
+  "MetricStats",
+  z
+    .object({
+      count: z.number().int().openapi({ description: "Number of measurements that had a finite value for this metric." }),
+      sum: z.number().openapi({ description: "Sum of the values." }),
+      min: z.number().openapi({ description: "The smallest value." }),
+      max: z.number().openapi({ description: "The largest value." }),
+      avg: z.number().openapi({ description: "The arithmetic mean of the values." }),
+      median: z.number().openapi({ description: "The 50th percentile." }),
+      p75: z.number().openapi({ description: "The 75th percentile." }),
+      p90: z.number().openapi({ description: "The 90th percentile." }),
+      p95: z.number().openapi({ description: "The 95th percentile." }),
+      p99: z.number().openapi({ description: "The 99th percentile." }),
+    })
+    .openapi({
+      description:
+        "Descriptive statistics for one metric over a set of measurements. Percentiles (including the median) are computed by linear interpolation between adjacent values, matching Excel's PERCENTILE.INC.",
+    }),
+);
+
+const SubjectStats = registry.register(
+  "SubjectStats",
+  z
+    .object({
+      subject: idRef("The key of the subject these statistics are for."),
+      metrics: z.record(MetricStats).openapi({
+        description: "Statistics keyed by metric name. A metric appears only when it had at least one value in the set.",
+        type: "object",
+      }),
+    })
+    .openapi({ description: "Aggregate statistics for one subject, across every numeric metric (stored and derived)." }),
+);
+
+const MeasurementStats = registry.register(
+  "MeasurementStats",
+  z
+    .object({
+      measurements: z.number().int().openapi({ description: "Total measurements summarized (after any timeframe filter)." }),
+      truncated: z
+        .boolean()
+        .openapi({ description: "True when the set exceeded the summary scan limit, so the figures cover a subset — narrow the timeframe for exact values." }),
+      subjects: z.array(SubjectStats).openapi({ description: "One entry per subject that has measurements in the set." }),
+    })
+    .openapi({
+      description:
+        "Aggregate statistics over a set of measurements, grouped by subject. Present in the measurements list meta when meta[stats]=true.",
+    }),
+);
+
+const MeasurementStatsListResponse = registry.register(
+  "MeasurementStatsListResponse",
+  z
+    .object({
+      data: z.array(measurement.Resource).openapi({ description: "The page of measurement resources." }),
+      meta: z
+        .object({
+          pagination: PaginationMeta.shape.pagination,
+          stats: MeasurementStats.optional().openapi({
+            description: "Present only when meta[stats]=true was requested.",
+          }),
+        })
+        .openapi({ description: "Pagination details, plus aggregate statistics when requested." }),
+    })
+    .openapi({ description: "A page of measurements, with aggregate statistics in the meta when meta[stats]=true." }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/api/v1/measurements",
   tags: ["Measurements"],
   summary: "List measurements",
   description:
-    "Reads measurements for exactly one of a run, subject, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data.",
+    "Reads measurements for exactly one of a run, subject, or benchmark. With an Accept header of text/csv, the response is a CSV export of the same data. Pass meta[stats]=true to include aggregate statistics (per subject and metric) over the full filtered set in the response meta.",
   parameters: [
     filterParam("run", "Read measurements for this run id. Provide exactly one of filter[run], filter[subject], or filter[benchmark]."),
     filterParam("subject", "Read measurements for this subject id. Provide exactly one of filter[run], filter[subject], or filter[benchmark]."),
@@ -2127,12 +2204,13 @@ registry.registerPath({
       "Restrict to a time interval using the grammar [start,end) — a half-open range where start is inclusive and end is exclusive; use * for an open edge, e.g. [2026-01-01T00:00:00Z,*).",
     ),
     ...paginationParams,
+    { $ref: "#/components/parameters/MetaStats" },
   ],
   responses: {
     "200": {
-      description: "A page of measurements, as JSON or CSV depending on the Accept header.",
+      description: "A page of measurements, as JSON or CSV depending on the Accept header. When meta[stats]=true, the JSON meta also carries a stats summary.",
       content: {
-        "application/vnd.api+json": { schema: measurement.ListResponse },
+        "application/vnd.api+json": { schema: MeasurementStatsListResponse },
         "text/csv": {
           schema: {
             type: "string",

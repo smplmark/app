@@ -18,7 +18,7 @@
   const QUERY_ID = new URLSearchParams(location.search).get("id") || "";
   let ID = QUERY_ID;  // the run's uuid, resolved on load (from the keys when pretty-routed)
   let ACCOUNT_ID = null;
-  const TABS = ["details", "measurements", "history", "apikeys", "apireference"];
+  const TABS = ["details", "measurements", "statistics", "history", "apikeys", "apireference"];
 
   let RUN = null;
   let BENCH = null; // the parent benchmark (breadcrumb, measurement schema, freeze state)
@@ -32,6 +32,12 @@
   let MEAS_TABLE = null;         // the pagedTable handle (setRows re-renders on any filter change)
   let MEAS_SUBJECT_SHOWN = null; // Set<subjectKey> currently checked/shown; null before the first load
   let MEAS_RANGE = "all";        // active time-window key; persists across tab re-entry
+
+  // Statistics tab — a server-computed summary (meta.stats) over the run's measurements, one row per
+  // (subject × metric). The time window is applied server-side via filter[created_at], so changing it
+  // re-fetches. Persists across tab re-entry.
+  let STATS_TABLE = null;
+  let STATS_RANGE = "all";
 
   function activeTab() {
     const h = (location.hash || "").replace(/^#/, "");
@@ -103,7 +109,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.key || "Run", decorations: statusPill(a), secondaryId: a.name || "" }) +
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
-      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + tabBtn("apireference", "API Reference") + "</nav>" +
+      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("statistics", "Statistics") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + tabBtn("apireference", "API Reference") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>';
 
@@ -125,6 +131,7 @@
     $("tab-actions").innerHTML = "";
     if (tab === "apikeys") renderApiKeys();
     else if (tab === "measurements") renderMeasurements();
+    else if (tab === "statistics") renderStatistics();
     else if (tab === "history") renderHistory();
     else if (tab === "apireference") renderApiReference();
     else renderDetails();
@@ -611,6 +618,93 @@
         renderMeasurements();
       } catch (err) { submit.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
     });
+  }
+
+  // ── Statistics tab — descriptive statistics over the run's measurements, computed server-side and
+  //    returned in meta.stats (one row per subject × metric). Every numeric metric is summarized,
+  //    stored and derived alike (e.g. skew_ms). The Range control narrows the set via a server-side
+  //    created_at filter, so changing it re-fetches. ──
+  const STATS_COLS = [
+    { key: "count", label: "Count" }, { key: "min", label: "Min" }, { key: "avg", label: "Avg" },
+    { key: "median", label: "Median" }, { key: "p75", label: "P75" }, { key: "p90", label: "P90" },
+    { key: "p95", label: "P95" }, { key: "p99", label: "P99" }, { key: "max", label: "Max" },
+    { key: "sum", label: "Sum" },
+  ];
+
+  function renderStatistics() {
+    if (!BENCH) {
+      $("tab-panel").innerHTML = '<div class="detailsTabPanel"><div class="errorBanner"><p>Couldn’t load this run’s benchmark — statistics can’t be shown. Reload to retry.</p></div></div>';
+      return;
+    }
+    const rangeSel = '<label class="measRange">Range' +
+      '<select id="stats-range">' +
+      MEAS_RANGES.map((r) => '<option value="' + esc(r.key) + '"' + (r.key === STATS_RANGE ? " selected" : "") + ">" + esc(r.label) + "</option>").join("") +
+      "</select></label>";
+    $("tab-panel").innerHTML =
+      '<div id="stats-toolbar"></div>' +
+      '<p class="muted" id="stats-note" style="margin:0 0 0.6rem;"></p>' +
+      '<div id="stats-table"></div>';
+    const bar = SM.toolbar({ search: false, extraRight: rangeSel, onRefresh: loadStatistics });
+    $("stats-toolbar").appendChild(bar);
+    const rangeEl = bar.querySelector("#stats-range");
+    if (rangeEl) rangeEl.addEventListener("change", () => { STATS_RANGE = rangeEl.value; loadStatistics(); });
+
+    const derivedByName = {};
+    schemaMetrics().forEach((mc) => { derivedByName[mc.name] = mc.derived; });
+    const cols = [
+      { key: "subject", label: "Subject", sortable: true, sortValue: (r) => subjectLabel(r.subject), render: (r) => esc(subjectLabel(r.subject)) },
+      { key: "metric", label: "Metric", sortable: true, sortValue: (r) => r.metric,
+        render: (r) => esc(r.metric) + (derivedByName[r.metric] ? ' <span class="typePill kindDerived">derived</span>' : "") },
+    ];
+    STATS_COLS.forEach((sc) => cols.push({
+      key: sc.key, label: sc.label, sortable: true,
+      sortValue: (r) => { const v = r.stats[sc.key]; return typeof v === "number" ? v : ""; },
+      render: (r) => esc(fmtNum(r.stats[sc.key])),
+    }));
+    STATS_TABLE = SM.pagedTable($("stats-table"), {
+      columns: cols, rows: [], sort: { key: "subject", dir: "asc" },
+      emptyText: "No measurements to summarize in this run yet.",
+    });
+    loadStatistics();
+  }
+
+  // The created_at interval for a range preset: "[<now - N>,*)" (unbounded end), or null for all time.
+  function statsRangeInterval() {
+    const seconds = (MEAS_RANGES.find((r) => r.key === STATS_RANGE) || {}).seconds;
+    if (!seconds) return null;
+    return "[" + new Date(Date.now() - seconds * 1000).toISOString() + ",*)";
+  }
+
+  async function loadStatistics() {
+    if (!STATS_TABLE) return;
+    const note = $("stats-note");
+    if (note) note.textContent = "Summarizing…";
+    try {
+      let url = "/api/v1/measurements?filter[run]=" + encodeURIComponent(ID) + "&meta[stats]=true&page[size]=1";
+      const interval = statsRangeInterval();
+      if (interval) url += "&filter[created_at]=" + encodeURIComponent(interval);
+      const benchId = (RUN.attributes || {}).benchmark;
+      const [doc, subjDoc] = await Promise.all([
+        apiFetch(url),
+        benchId ? apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(benchId) + "&page[size]=1000") : Promise.resolve(null),
+      ]);
+      SUBJECTS = {};
+      ((subjDoc && subjDoc.data) || []).forEach((su) => { SUBJECTS[su.id] = su; });
+      const stats = (doc && doc.meta && doc.meta.stats) || { measurements: 0, truncated: false, subjects: [] };
+      const rows = [];
+      (stats.subjects || []).forEach((s) => {
+        Object.entries(s.metrics || {}).forEach(([name, st]) => rows.push({ subject: s.subject, metric: name, stats: st }));
+      });
+      STATS_TABLE.setRows(rows);
+      if (note) {
+        const n = stats.measurements || 0;
+        note.textContent = n + " measurement" + (n === 1 ? "" : "s") + " summarized" +
+          (stats.truncated ? " — capped at the scan limit; narrow the range for exact figures" : "") + ".";
+      }
+    } catch (err) {
+      if (note) note.textContent = "";
+      $("stats-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
   }
 
   // ── History tab — this run's audit trail. ──

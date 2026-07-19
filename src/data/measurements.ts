@@ -142,31 +142,31 @@ const MEASUREMENT_COLUMNS: Record<string, string> = {
   created_at: "measurement.created_at",
 };
 
-function buildWhere(input: ListMeasurementsInput): { sql: string; binds: unknown[] } {
+function buildScopeWhere(scope: MeasurementScope, range?: DateRange): { sql: string; binds: unknown[] } {
   const clauses: string[] = [];
   const binds: unknown[] = [];
 
-  if (input.range) {
-    const pred = dateRangePredicate("measurement.created_at", input.range);
+  if (range) {
+    const pred = dateRangePredicate("measurement.created_at", range);
     if (pred.sql) {
       clauses.push(pred.sql);
       binds.push(...pred.binds);
     }
   }
 
-  if (input.scope.run !== undefined) {
+  if (scope.run !== undefined) {
     clauses.push("measurement.run_id = ?");
-    binds.push(input.scope.run);
-  } else if (input.scope.subject !== undefined) {
+    binds.push(scope.run);
+  } else if (scope.subject !== undefined) {
     clauses.push("measurement.subject_id = ?");
-    binds.push(input.scope.subject);
+    binds.push(scope.subject);
     // A subject spans benchmarks; an uncovered caller only sees measurements under its public ones.
-    if (input.scope.subjectPublicOnly) {
+    if (scope.subjectPublicOnly) {
       clauses.push("benchmark.status IN ('PUBLISHED','WITHDRAWN')");
     }
-  } else if (input.scope.benchmark !== undefined) {
+  } else if (scope.benchmark !== undefined) {
     clauses.push("benchmark.id = ?");
-    binds.push(input.scope.benchmark);
+    binds.push(scope.benchmark);
   }
 
   return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", binds };
@@ -176,7 +176,7 @@ export async function listMeasurements(
   db: D1Database,
   input: ListMeasurementsInput,
 ): Promise<{ rows: MeasurementListRow[]; total?: number }> {
-  const where = buildWhere(input);
+  const where = buildScopeWhere(input.scope, input.range);
   const order = orderByClause(input.sort, (f) => MEASUREMENT_COLUMNS[f], "measurement.id");
   const rows = (
     await db
@@ -201,4 +201,52 @@ export async function listMeasurements(
     total = r?.n ?? 0;
   }
   return { rows, total };
+}
+
+/**
+ * A lean measurement projection for aggregate statistics: just what's needed to compute the merged
+ * (stored + derived) metric bag per row and group by subject. No id/meta/client_ip — those never
+ * enter a summary.
+ */
+export interface AggMeasurementRow {
+  /** The subject's public key — the grouping dimension (matches a measurement's `subject` field). */
+  subject_key: string;
+  created_at: number;
+  metrics: string | null;
+  measurement_schema: string;
+  run_started_at: number | null;
+  run_ended_at: number | null;
+}
+
+export interface AggregateMeasurementsInput {
+  scope: MeasurementScope;
+  range?: DateRange;
+  /** Row-scan ceiling. Beyond this the result is flagged `truncated` (a run is bounded, so this is a
+   *  guardrail, not an expected path). */
+  cap: number;
+}
+
+/**
+ * Pull every measurement matching the scope (+ optional timeframe) for a statistics summary — the full
+ * filtered set, NOT a page. Fetches one extra row past `cap` to detect truncation without a COUNT.
+ */
+export async function aggregateMeasurements(
+  db: D1Database,
+  input: AggregateMeasurementsInput,
+): Promise<{ rows: AggMeasurementRow[]; truncated: boolean }> {
+  const where = buildScopeWhere(input.scope, input.range);
+  const rows = (
+    await db
+      .prepare(
+        `SELECT subject.key AS subject_key, measurement.created_at AS created_at,` +
+          ` measurement.metrics AS metrics, benchmark.measurement_schema AS measurement_schema,` +
+          ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
+          ` ${JOINS} ${where.sql} LIMIT ?`,
+      )
+      .bind(...where.binds, input.cap + 1)
+      .all<AggMeasurementRow>()
+  ).results;
+
+  const truncated = rows.length > input.cap;
+  return { rows: truncated ? rows.slice(0, input.cap) : rows, truncated };
 }

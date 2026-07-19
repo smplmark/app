@@ -3,6 +3,7 @@ import { emitAuditEvent } from "../audit/smpl_audit";
 import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById, type BenchmarkRowWithPublisher } from "../data/benchmarks";
 import {
+  aggregateMeasurements,
   deleteMeasurement,
   getMeasurementById,
   insertMeasurement,
@@ -10,6 +11,7 @@ import {
   updateMeasurement,
   type MeasurementScope,
 } from "../data/measurements";
+import { summarizeMeasurements } from "../logic/stats";
 import { isSubjectLinked, isSubjectPublic } from "../data/benchmark_subjects";
 import { getRunById, resolveOwnedRun, resolveRunForRead } from "../data/runs";
 import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
@@ -38,7 +40,18 @@ import { assertBenchmarkEditable, readAttributes, readPagination, readSort } fro
 
 const SORT_ALLOWED = ["created_at"] as const;
 
+// Row-scan ceiling for the statistics summary. A run is a bounded occasion, so this only bites
+// pathological sets; beyond it the summary is flagged `truncated` and the viewer narrows the timeframe.
+const STATS_ROW_CAP = 50000;
+
 export const measurements = new Hono<AppBindings>();
+
+/** Parse a `'true' | 'false'` query flag (mirrors meta[total]); absent → false. */
+function parseBoolFlag(value: string | undefined, field: string): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new BadRequestError(`${field} must be 'true' or 'false'.`);
+}
 
 /** Validate a stored-metrics bag: an object whose every value is a finite number (§4). */
 function validateMetrics(value: unknown): Record<string, number> {
@@ -211,6 +224,7 @@ measurements.get("/", optionalAuth, async (c) => {
 
   const createdAt = c.req.query("filter[created_at]");
   const range = createdAt !== undefined ? parseDateRange(createdAt) : undefined;
+  const wantStats = parseBoolFlag(c.req.query("meta[stats]"), "meta[stats]");
 
   const pagination = readPagination(c);
   const sort = readSort(c, "created_at", SORT_ALLOWED);
@@ -239,6 +253,7 @@ measurements.get("/", optionalAuth, async (c) => {
   });
 
   if (wantsCsv(c.req.header("Accept"))) {
+    // CSV carries no meta, so meta[stats] is silently ignored for a CSV export.
     return new Response(measurementsToCsv(resources), {
       status: 200,
       headers: {
@@ -249,10 +264,20 @@ measurements.get("/", optionalAuth, async (c) => {
     });
   }
 
-  return collectionResponse(resources, {
-    meta: { pagination: paginationMeta(pagination, total) },
-    headers: { Vary: "Accept" },
-  });
+  const meta: Record<string, unknown> = { pagination: paginationMeta(pagination, total) };
+  if (wantStats) {
+    // Statistics cover the FULL filtered set (same scope + timeframe), not the returned page — so the
+    // page params don't apply. count/sum/min/max/avg would be native SQL aggregates, but median /
+    // percentiles are not in D1 and derived metrics aren't stored, so we pull the set and reduce in JS.
+    const { rows: statRows, truncated } = await aggregateMeasurements(c.env.DB, {
+      scope,
+      range,
+      cap: STATS_ROW_CAP,
+    });
+    meta.stats = summarizeMeasurements(statRows, truncated);
+  }
+
+  return collectionResponse(resources, { meta, headers: { Vary: "Accept" } });
 });
 
 /** Load a measurement + its run/benchmark chain for a covered mutating caller, or 404 (no-leak). */
