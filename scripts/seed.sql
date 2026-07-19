@@ -7,15 +7,21 @@
 -- No benchmarks are seeded — create them through the console (that IS the product test drive).
 -- Ingested reference data: node ingestion/import.mjs
 
-DELETE FROM measurement; DELETE FROM run; DELETE FROM target;
-DELETE FROM benchmark_tag; DELETE FROM tag; DELETE FROM benchmark_view_day; DELETE FROM benchmark;
-DELETE FROM api_key; DELETE FROM email_verification; DELETE FROM session;
+-- Wipe every data table (children before parents so foreign keys stay satisfied). All ingested
+-- reference data — benchmarks, subjects, metrics, sources, publishers — is intentionally cleared;
+-- the importer (node ingestion/import.mjs) repopulates it. The seed only re-creates login + accounts.
+DELETE FROM measurement; DELETE FROM run;
+DELETE FROM benchmark_metric; DELETE FROM benchmark_subject; DELETE FROM benchmark_tag;
+DELETE FROM benchmark_view_day; DELETE FROM takedown_request; DELETE FROM benchmark;
+DELETE FROM subject; DELETE FROM metric; DELETE FROM tag; DELETE FROM subject_type;
+DELETE FROM external_source; DELETE FROM publisher;
+DELETE FROM api_key; DELETE FROM email_verification; DELETE FROM session; DELETE FROM invitation;
 DELETE FROM account_user; DELETE FROM account; DELETE FROM user_identity; DELETE FROM user;
 
 INSERT INTO user (id, email, email_verified, display_name, created_at) VALUES
   ('usr-dev', 'dev@smplkit.test', 1, 'smplkit dev', 1782864000000);
 INSERT INTO user_identity (id, user_id, provider, provider_subject, password_hash, created_at) VALUES
-  ('293e513d-88c9-4267-abc9-d75c919de389', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$CT1lElP8jGnbvpUMUeAFTg$o2MfIzO5Z2TLvPDsduBIivTFWLKPvlA49TU-MQNY_SA', 1782864000000);
+  ('d7293504-dbb2-4bda-9fac-4fd50b156364', 'usr-dev', 'PASSWORD', NULL, 'pbkdf2$sha256$210000$1lUJlI1X-TaAVPO7cx9ubg$2p5QBcjLUlfooYHfVdBtDXGT-efILv6JxpocasmfbaM', 1782864000000);
 
 -- The built-in system account (0004 seeds it in prod; the wipe above removes it, so re-create it).
 INSERT INTO account (id, key, name, description, created_at, allow_personal_publish) VALUES
