@@ -336,7 +336,7 @@
     const bar = SM.toolbar({ search: false, extraRight: rangeSel, onRefresh: reloadMeasurements });
     $("meas-toolbar").appendChild(bar);
     const rangeEl = bar.querySelector("#meas-range");
-    if (rangeEl) rangeEl.addEventListener("change", () => { MEAS_RANGE = rangeEl.value; applyMeasFilters(); });
+    if (rangeEl) rangeEl.addEventListener("change", () => { MEAS_RANGE = rangeEl.value; renderSubjectFilter(); applyMeasFilters(); });
 
     const cols = [
       { key: "subject", label: "Subject", sortable: true, sortValue: (m) => subjectLabel((m.attributes || {}).subject), render: (m) => esc(subjectLabel((m.attributes || {}).subject)) },
@@ -411,6 +411,21 @@
       .sort((x, y) => x.label.localeCompare(y.label, undefined, { numeric: true, sensitivity: "base" }));
   }
 
+  // Per-subject measurement counts within the selected timeframe (the badge beside each subject in the
+  // rail). Independent of the checkbox selection — it reports each subject's own volume in the window,
+  // whether that subject is currently shown or hidden. Mirrors applyMeasFilters' time-window test.
+  function measSubjectCounts() {
+    const rangeSec = (MEAS_RANGES.find((r) => r.key === MEAS_RANGE) || {}).seconds;
+    const minTs = rangeSec ? Date.now() - rangeSec * 1000 : null;
+    const counts = new Map();
+    MEAS_ALL.forEach((m) => {
+      const a = m.attributes || {};
+      if (minTs !== null) { const t = new Date(a.created_at).getTime(); if (!isFinite(t) || t < minTs) return; }
+      if (a.subject) counts.set(a.subject, (counts.get(a.subject) || 0) + 1);
+    });
+    return counts;
+  }
+
   // Re-derive the visible rows from the master list under the current subject + time-window filters.
   function applyMeasFilters() {
     if (!MEAS_TABLE) return;
@@ -448,6 +463,7 @@
     const host = $("meas-subjects");
     if (!host) return;
     const entries = measSubjectEntries();
+    const counts = measSubjectCounts();
     const shown = MEAS_SUBJECT_SHOWN;
     const loading = shown === null;
     const allShown = !loading && entries.length > 0 && entries.every((e) => shown.has(e.key));
@@ -460,9 +476,11 @@
     } else {
       html += '<div class="measFilterList">' + entries.map((e) => {
         const on = shown.has(e.key);
+        const n = counts.get(e.key) || 0;
         return '<div class="measFilterRow">' +
           '<label class="measFilterCheck"><input type="checkbox" data-subj="' + esc(e.key) + '"' + (on ? " checked" : "") + " /> " +
           '<span class="measFilterName" title="' + esc(e.label) + '">' + esc(e.label) + "</span></label>" +
+          '<span class="measFilterCount' + (n === 0 ? " measFilterCountZero" : "") + '" title="' + n + " measurement" + (n === 1 ? "" : "s") + ' in the selected range">' + n + "</span>" +
           '<button type="button" class="measFilterOnly" data-only="' + esc(e.key) + '" title="Show only this subject">Only</button>' +
           "</div>";
       }).join("") + "</div>";
@@ -485,10 +503,11 @@
     const removed = MEAS_ALL[idx];
     MEAS_ALL.splice(idx, 1); // optimistic remove — the table re-sorts, so exact position is cosmetic
     applyMeasFilters();
+    renderSubjectFilter(); // the removed subject's badge count drops with the row
     SM.toast("Measurement deleted", {
       kind: "info",
       duration: 5000,
-      action: { label: "Undo", onClick: () => { MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed); applyMeasFilters(); } },
+      action: { label: "Undo", onClick: () => { MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed); applyMeasFilters(); renderSubjectFilter(); } },
       onDismiss: () => commitMeasurementDelete(measId, removed, idx),
     });
   }
@@ -499,6 +518,7 @@
       // The delete didn't happen — put the row back (if it isn't already) and surface the failure.
       if (!MEAS_ALL.some((m) => String(m.id) === String(measId))) MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed);
       applyMeasFilters();
+      renderSubjectFilter();
       SM.toast(err.message || "Couldn’t delete the measurement.", { kind: "error" });
     }
   }
