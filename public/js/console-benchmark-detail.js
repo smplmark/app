@@ -25,9 +25,25 @@
 
   // Edit-mode state for the Details tab.
   let editing = false;
-  let form = { name: "", description: "", about: "", methodology: "", subject_type: "" };
+  let form = { name: "", description: "", about: "", methodology: "", subject_type: "", tags: "" };
 
-  const TABS = ["details", "subjects", "metrics", "runs", "history", "apikeys"];
+  // Tags are typed as a space/comma-separated string in the form; the API takes an array of lowercase
+  // slugs (validated server-side). Parse to a deduped, lowercased list; compare as a set (the API
+  // returns them sorted, the form keeps typed order).
+  function parseTags(s) {
+    const seen = new Set();
+    const out = [];
+    String(s || "").split(/[\s,]+/).forEach((t) => {
+      const k = t.trim().toLowerCase();
+      if (k && !seen.has(k)) { seen.add(k); out.push(k); }
+    });
+    return out;
+  }
+  function sameTags(a, b) {
+    return a.slice().sort().join("\n") === b.slice().sort().join("\n");
+  }
+
+  const TABS = ["details", "subjects", "metrics", "runs", "apikeys", "history"];
   function activeTab() {
     const h = (location.hash || "").replace(/^#/, "");
     return TABS.indexOf(h) >= 0 ? h : "details";
@@ -194,7 +210,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.name || a.key || "Benchmark", decorations: decorations(), secondaryId: a.key || "", actions: "" }) +
       '<div class="detailsTabHeader">' +
-      '<nav class="modalTabBar" role="tablist">' + tabBtn("details", "Details") + tabBtn("subjects", "Subjects") + tabBtn("metrics", "Metrics") + tabBtn("runs", "Runs") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + "</nav>" +
+      '<nav class="modalTabBar" role="tablist">' + tabBtn("details", "Details") + tabBtn("subjects", "Subjects") + tabBtn("metrics", "Metrics") + tabBtn("runs", "Runs") + tabBtn("apikeys", "API Keys") + tabBtn("history", "History") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div>' +
       "</div>" +
       '<div id="tab-panel"></div>' +
@@ -256,13 +272,14 @@
       form.description !== (a.description || "") ||
       form.about !== (a.about || "") ||
       form.methodology !== (a.methodology || "") ||
-      form.subject_type !== (a.subject_type || "")
+      form.subject_type !== (a.subject_type || "") ||
+      !sameTags(parseTags(form.tags), a.tags || [])
     );
   }
   function enterEdit() {
     const a = BM.attributes || {};
     editing = true;
-    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "", subject_type: a.subject_type || "" };
+    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "", subject_type: a.subject_type || "", tags: (a.tags || []).join(" ") };
     renderTab();
   }
   function exitEdit() { editing = false; window.removeEventListener("beforeunload", onBeforeUnload); }
@@ -310,7 +327,7 @@
         const el = p.querySelector('[data-edit="' + name + '"]');
         if (el) el.addEventListener("input", () => { form[name] = el.value; SM.clearFieldError(el); });
       };
-      ["name", "description", "about", "methodology"].forEach(bind);
+      ["name", "description", "about", "methodology", "tags"].forEach(bind);
       const stSel = p.querySelector('[data-edit="subject_type"]');
       if (stSel) stSel.addEventListener("change", () => { form.subject_type = stSel.value; SM.clearFieldError(stSel); });
       $("d-cancel").addEventListener("click", cancelEdit);
@@ -328,17 +345,20 @@
       SM.detailField("Name", { value: a.name }) +
       SM.detailField("Subject type", { value: typeName(a.subject_type) }) +
       SM.detailField("Description", { value: a.description }) +
-      SM.detailField("About", { value: a.about, multiline: true }) +
-      SM.detailField("Methodology", { value: a.methodology, multiline: true })
+      SM.detailField("Overview", { value: a.about, multiline: true }) +
+      SM.detailField("Methodology", { value: a.methodology, multiline: true }) +
+      SM.detailField("Tags", { value: (a.tags && a.tags.length) ? a.tags.join(", ") : "", emptyText: "—" })
     );
   }
   function editFields() {
     const f = (label, name, opts) => {
       opts = opts || {};
+      const ph = opts.placeholder ? ' placeholder="' + esc(opts.placeholder) + '"' : "";
       const input = opts.textarea
-        ? '<textarea data-edit="' + name + '" rows="' + (opts.rows || 4) + '">' + esc(form[name]) + "</textarea>"
-        : '<input data-edit="' + name + '" type="text" value="' + esc(form[name]) + '" />';
+        ? '<textarea data-edit="' + name + '" rows="' + (opts.rows || 4) + '"' + ph + ">" + esc(form[name]) + "</textarea>"
+        : '<input data-edit="' + name + '" type="text" value="' + esc(form[name]) + '"' + ph + " />";
       return '<div class="field"><span class="detailFieldLabel' + (opts.required ? " fieldRequired" : "") + '">' + esc(label) + "</span>" + input +
+        (opts.help ? '<p class="detailFieldHelp">' + esc(opts.help) + "</p>" : "") +
         '<p class="fieldErrorMessage" hidden></p></div>';
     };
     // The subject type is fixed while subjects are linked (they conform to it) — shown disabled then.
@@ -358,8 +378,9 @@
       f("Name", "name", { required: true }) +
       typeField +
       f("Description", "description") +
-      f("About", "about", { textarea: true, rows: 4 }) +
-      f("Methodology", "methodology", { textarea: true, rows: 5 })
+      f("Overview", "about", { textarea: true, rows: 10, help: "Supports Markdown." }) +
+      f("Methodology", "methodology", { textarea: true, rows: 12, help: "Supports Markdown." }) +
+      f("Tags", "tags", { placeholder: "e.g. llm evaluation latency", help: "Separate with spaces or commas. Lowercase letters, digits, and . _ - — up to 20 tags." })
     );
   }
 
@@ -400,7 +421,7 @@
         methodology: form.methodology.trim() || null,
         subject_type: form.subject_type,
         measurement_schema: a.measurement_schema,
-        tags: a.tags || [],
+        tags: parseTags(form.tags),
         category: a.category,
       };
       const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID), { method: "PUT", body: jsonapiBody("benchmark", attrs) });

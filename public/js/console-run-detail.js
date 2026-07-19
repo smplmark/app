@@ -18,7 +18,7 @@
   const QUERY_ID = new URLSearchParams(location.search).get("id") || "";
   let ID = QUERY_ID;  // the run's uuid, resolved on load (from the keys when pretty-routed)
   let ACCOUNT_ID = null;
-  const TABS = ["details", "measurements", "statistics", "history", "apikeys", "apireference"];
+  const TABS = ["details", "measurements", "statistics", "apikeys", "apireference", "history"];
 
   let RUN = null;
   let BENCH = null; // the parent benchmark (breadcrumb, measurement schema, freeze state)
@@ -109,7 +109,7 @@
     $("detail-root").innerHTML =
       SM.detailHeader({ name: a.key || "Run", decorations: statusPill(a), secondaryId: a.name || "" }) +
       '<div class="detailsTabHeader"><nav class="modalTabBar" role="tablist">' +
-      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("statistics", "Statistics") + tabBtn("history", "History") + tabBtn("apikeys", "API Keys") + tabBtn("apireference", "API Reference") + "</nav>" +
+      tabBtn("details", "Details") + tabBtn("measurements", "Measurements") + tabBtn("statistics", "Statistics") + tabBtn("apikeys", "API Keys") + tabBtn("apireference", "API Reference") + tabBtn("history", "History") + "</nav>" +
       '<div class="detailsTabActions" id="tab-actions"></div></div>' +
       '<div id="tab-panel"></div>';
 
@@ -788,10 +788,13 @@
       }));
     }
 
+    // Header values are raw here (esc'd for display) so each copy button copies the literal value.
     const headersRows = [
-      ["Authorization", "Bearer &lt;run-scoped-api-key&gt;"],
+      ["Authorization", "Bearer <run-scoped-api-key>"],
       ["Content-Type", "application/vnd.api+json"],
-    ].map(([k, v]) => '<tr><td class="apiRefHKey">' + esc(k) + '</td><td class="apiRefHVal">' + v + "</td></tr>").join("");
+    ].map(([k, v]) =>
+      '<tr><td class="apiRefHKey">' + esc(k) + '</td><td class="apiRefHVal">' + esc(v) +
+      SM.copyButton(v, { title: "Copy " + k + " value" }) + "</td></tr>").join("");
 
     // A themed subject picker (the measRange label idiom) — only when the benchmark has subjects.
     const subjectPicker = hasSubjects
@@ -805,7 +808,7 @@
     $("tab-panel").innerHTML =
       '<div class="detailsTabPanel apiRef">' +
       '<p class="muted" style="margin:0 0 1rem;">Record measurements for this run from anywhere (CI, a script) by POSTing to the measurements endpoint. Authenticate with an API key scoped to this run — create one on the <a class="authTextLink" href="#apikeys">API Keys</a> tab.</p>' +
-      '<div class="apiRefRow"><span class="apiRefMethod">POST</span><code class="apiRefUrl">' + esc(url) + "</code></div>" +
+      '<div class="apiRefRow"><span class="apiRefMethod">POST</span><code class="apiRefUrl">' + esc(url) + "</code>" + SM.copyButton(url, { title: "Copy URL" }) + "</div>" +
       '<h3 class="apiRefH">Headers</h3><table class="apiRefHeaders">' + headersRows + "</table>" +
       '<h3 class="apiRefH">Request body</h3>' +
       (subjectNote ? '<p class="detailFieldHelp" style="margin:0 0 0.5rem;">' + esc(subjectNote) + "</p>" : "") +
@@ -816,6 +819,7 @@
     // Deep-link the API Keys tab, and wire the copy buttons.
     $("tab-panel").querySelectorAll('a[href="#apikeys"]').forEach((el) => el.addEventListener("click", (ev) => { ev.preventDefault(); location.hash = "apikeys"; }));
     wireCopy($("tab-panel"));
+    SM.wireCopyButtons($("tab-panel")); // the URL + per-header copy icons
 
     // On change, re-render just the example (body + curl) with the chosen subject's key, then re-wire
     // its copy buttons (the old buttons are discarded with the replaced markup).
