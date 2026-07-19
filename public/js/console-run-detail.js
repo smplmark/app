@@ -360,8 +360,8 @@
     await loadMeasurements();
   }
 
-  // Fetch the run's measurements + the benchmark's subjects (once per tab entry). Seeds the master
-  // list and the subject-filter set (all checked), then applies the active filters to the table.
+  // Fetch the run's measurements + the benchmark's subjects. On first entry every subject is checked;
+  // on a refresh the existing selection is preserved (see the shown-set reconcile below).
   async function loadMeasurements() {
     if (!MEAS_TABLE) return;
     try {
@@ -370,10 +370,23 @@
         apiFetch("/api/v1/measurements?filter[run]=" + encodeURIComponent(ID) + "&page[size]=1000"),
         benchId ? apiFetch("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(benchId) + "&page[size]=1000") : Promise.resolve(null),
       ]);
+      // Snapshot the pre-fetch state so a refresh can keep the user's checkbox choices: which subjects
+      // we knew about, and which were checked. Read before SUBJECTS/MEAS_ALL are overwritten below.
+      const prevKnown = new Set(measSubjectEntries().map((e) => e.key));
+      const prevShown = MEAS_SUBJECT_SHOWN;
       SUBJECTS = {};
       ((subjDoc && subjDoc.data) || []).forEach((su) => { SUBJECTS[su.id] = su; });
       MEAS_ALL = (measDoc && measDoc.data) || [];
-      MEAS_SUBJECT_SHOWN = new Set(measSubjectEntries().map((e) => e.key)); // default: every subject shown
+      const entries = measSubjectEntries();
+      if (!prevShown) {
+        MEAS_SUBJECT_SHOWN = new Set(entries.map((e) => e.key)); // first entry: every subject shown
+      } else {
+        // Refresh: retain the prior selection. A subject stays hidden only if it was known before and
+        // was unchecked then; anything new (a subject that appeared since) defaults to shown.
+        MEAS_SUBJECT_SHOWN = new Set(
+          entries.filter((e) => !prevKnown.has(e.key) || prevShown.has(e.key)).map((e) => e.key)
+        );
+      }
       renderSubjectFilter();
       applyMeasFilters();
     } catch (err) {
@@ -384,8 +397,8 @@
     }
   }
 
-  // The refresh button re-fetches from the server. The time-window stays as selected (module state);
-  // the subject checkboxes reset to all-shown, since the subject set may have changed under us.
+  // The refresh button re-fetches from the server. Both the time-window and the subject checkboxes
+  // stay as the user left them (module state); subjects that appeared since default to shown.
   async function reloadMeasurements() { await loadMeasurements(); }
 
   // The subjects offered in the filter rail: the benchmark's linked subjects plus any subject a
