@@ -12,6 +12,7 @@ import {
   type MeasurementScope,
 } from "../data/measurements";
 import { summarizeMeasurements } from "../logic/stats";
+import { loadLiveDerivedByBenchmark } from "../logic/live_derived";
 import { isSubjectLinked, isSubjectPublic } from "../data/benchmark_subjects";
 import { getRunById, resolveOwnedRun, resolveRunForRead } from "../data/runs";
 import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
@@ -45,6 +46,23 @@ const SORT_ALLOWED = ["created_at"] as const;
 const STATS_ROW_CAP = 50000;
 
 export const measurements = new Hono<AppBindings>();
+
+/**
+ * Parse a benchmark's stored measurement_schema but substitute its LIVE derived metrics (resolved from
+ * its linked FORMULA metrics) for the stored `.derived` snapshot. Compute-on-read thus reflects the
+ * current library metric definition; the snapshot is the fallback only when no live FORMULA metric is
+ * linked. Used by the single-benchmark serialize sites (measurement create / correct).
+ */
+async function liveSchema(
+  db: D1Database,
+  benchmarkId: string,
+  measurementSchemaJson: string,
+): Promise<MeasurementSchema> {
+  const parsed = parseMeasurementSchema(measurementSchemaJson);
+  const live = (await loadLiveDerivedByBenchmark(db, [benchmarkId])).get(benchmarkId);
+  if (live !== undefined) parsed.derived = live;
+  return parsed;
+}
 
 /** Parse a `'true' | 'false'` query flag (mirrors meta[total]); absent → false. */
 function parseBoolFlag(value: string | undefined, field: string): boolean {
@@ -156,7 +174,10 @@ measurements.post("/", requireAuth, async (c) => {
     });
   }
 
-  const schema = parseMeasurementSchema(benchmark.measurement_schema);
+  // Derived metrics are computed from the LIVE library definition (loadLiveDerivedByBenchmark), not the
+  // stored measurement_schema.derived snapshot — so an edit to a linked FORMULA metric shows up here at
+  // once. The snapshot is the fallback only when the benchmark has no live FORMULA metric linked.
+  const schema = await liveSchema(c.env.DB, benchmark.id, benchmark.measurement_schema);
   const resource = serializeMeasurement(
     { id, run_id: run.id, subject_id: subject.id, subject_key: subject.key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },
     schema,
@@ -237,14 +258,27 @@ measurements.get("/", optionalAuth, async (c) => {
     includeTotal: pagination.includeTotal,
   });
 
+  // Derived metrics are computed from the LIVE library definition, not the stored
+  // measurement_schema.derived snapshot: resolve every benchmark's live derived once, then substitute
+  // it per row (fall back to the snapshot for a benchmark with no live FORMULA metric linked).
+  const liveMap = await loadLiveDerivedByBenchmark(
+    c.env.DB,
+    [...new Set(rows.map((r) => r.benchmark_id))],
+  );
   // Parse each benchmark's schema once per request (compute-on-read is O(rows × derived)).
   const schemaCache = new Map<string, MeasurementSchema>();
   const resources = rows.map((r) => {
-    let schema = schemaCache.get(r.measurement_schema);
-    if (schema === undefined) {
-      schema = parseMeasurementSchema(r.measurement_schema);
-      schemaCache.set(r.measurement_schema, schema);
+    let parsed = schemaCache.get(r.measurement_schema);
+    if (parsed === undefined) {
+      parsed = parseMeasurementSchema(r.measurement_schema);
+      schemaCache.set(r.measurement_schema, parsed);
     }
+    const live = liveMap.get(r.benchmark_id);
+    const schema: MeasurementSchema = {
+      metrics: parsed.metrics,
+      derived: live ?? parsed.derived,
+      chart: parsed.chart,
+    };
     return serializeMeasurement(
       { id: r.id, run_id: r.run_id, subject_id: r.subject_id, subject_key: r.subject_key, run_key: r.run_key, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
       schema,
@@ -274,7 +308,13 @@ measurements.get("/", optionalAuth, async (c) => {
       range,
       cap: STATS_ROW_CAP,
     });
-    meta.stats = summarizeMeasurements(statRows, truncated);
+    // Same live-derived substitution as the row serialization: the summary must match the table, so it
+    // computes derived metrics from the current library definition, not the stored schema snapshot.
+    const statLiveMap = await loadLiveDerivedByBenchmark(
+      c.env.DB,
+      [...new Set(statRows.map((r) => r.benchmark_id))],
+    );
+    meta.stats = summarizeMeasurements(statRows, truncated, statLiveMap);
   }
 
   return collectionResponse(resources, { meta, headers: { Vary: "Accept" } });
@@ -354,7 +394,8 @@ measurements.put("/:id", requireAuth, async (c) => {
     });
   }
 
-  const schema = parseMeasurementSchema(benchmark.measurement_schema);
+  // Derived metrics recomputed from the LIVE library definition (see the create path above).
+  const schema = await liveSchema(c.env.DB, benchmark.id, benchmark.measurement_schema);
   return resourceResponse(
     serializeMeasurement(
       { id, run_id: run.id, subject_id: measurement.subject_id, subject_key: measurement.subject_key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },

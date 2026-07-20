@@ -74,12 +74,16 @@ describe("summarizeMeasurements", () => {
 
   const row = (subject_key: string, offset: number, latency: number): AggMeasurementRow => ({
     subject_key,
+    benchmark_id: "bench-1",
     created_at: TOP + offset,
     metrics: JSON.stringify({ latency_ms: latency }),
     measurement_schema: SCHEMA,
     run_started_at: null,
     run_ended_at: null,
   });
+
+  // No live FORMULA metrics linked → summarizeMeasurements falls back to the stored snapshot.
+  const NO_LIVE = new Map<string, import("../../src/types").DerivedDecl[]>();
 
   it("groups by subject and summarizes stored + derived metrics", () => {
     const rows = [
@@ -88,7 +92,7 @@ describe("summarizeMeasurements", () => {
       row("sub-a", 300, 30),
       row("sub-b", 50, 5),
     ];
-    const out = summarizeMeasurements(rows, false);
+    const out = summarizeMeasurements(rows, false, NO_LIVE);
     expect(out.measurements).toBe(4);
     expect(out.truncated).toBe(false);
     expect(out.subjects.map((s) => s.subject)).toEqual(["sub-a", "sub-b"]); // first-seen order
@@ -103,8 +107,20 @@ describe("summarizeMeasurements", () => {
     expect(b.skew_ms).toMatchObject({ count: 1, avg: 50 });
   });
 
+  it("computes derived metrics from the LIVE map, not the stored snapshot", () => {
+    // The live map replaces the snapshot's derived (skew_ms) with a differently-named derived metric,
+    // proving compute-on-read uses the live definition. The stored latency_ms still merges in.
+    const live = new Map<string, import("../../src/types").DerivedDecl[]>([
+      ["bench-1", [{ name: "live_skew", unit: "ms", expr: { minute_offset_ms: [{ var: "created_at" }] } }]],
+    ]);
+    const out = summarizeMeasurements([row("sub-a", 250, 10)], false, live);
+    const m = out.subjects[0].metrics;
+    expect(Object.keys(m).sort()).toEqual(["latency_ms", "live_skew"]); // snapshot's skew_ms is gone
+    expect(m.live_skew).toMatchObject({ count: 1, avg: 250 });
+  });
+
   it("passes truncated through and counts every scanned row", () => {
-    const out = summarizeMeasurements([row("sub-a", 100, 10)], true);
+    const out = summarizeMeasurements([row("sub-a", 100, 10)], true, NO_LIVE);
     expect(out.truncated).toBe(true);
     expect(out.measurements).toBe(1);
   });
@@ -114,13 +130,14 @@ describe("summarizeMeasurements", () => {
     // "note" is a string (typeof !== number); "big" (1e999) parses to Infinity (a number, not finite).
     const rows: AggMeasurementRow[] = [{
       subject_key: "s",
+      benchmark_id: "bench-1",
       created_at: TOP,
       metrics: '{"latency_ms":10,"note":"x","big":1e999}',
       measurement_schema: schema,
       run_started_at: null,
       run_ended_at: null,
     }];
-    const out = summarizeMeasurements(rows, false);
+    const out = summarizeMeasurements(rows, false, NO_LIVE);
     expect(Object.keys(out.subjects[0].metrics)).toEqual(["latency_ms"]);
     expect(out.subjects[0].metrics.latency_ms).toMatchObject({ count: 1, avg: 10 });
   });
@@ -128,13 +145,14 @@ describe("summarizeMeasurements", () => {
   it("counts a row with nothing to summarize but emits no subject entry for it", () => {
     const empty: AggMeasurementRow = {
       subject_key: "sub-empty",
+      benchmark_id: "bench-1",
       created_at: TOP,
       metrics: null,
       measurement_schema: JSON.stringify({ metrics: [], derived: [] }),
       run_started_at: null,
       run_ended_at: null,
     };
-    const out = summarizeMeasurements([empty], false);
+    const out = summarizeMeasurements([empty], false, NO_LIVE);
     expect(out.measurements).toBe(1);
     expect(out.subjects).toEqual([]);
   });

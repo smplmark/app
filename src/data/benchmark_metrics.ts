@@ -1,7 +1,14 @@
 // Data-access for the benchmark_metric M:N link. Linking/unlinking is not just a join-row change: it
-// also appends/removes the metric's snapshot in the benchmark's measurement_schema (which is what the
-// compute-on-read engine + publish-freeze read). The route computes the new schema JSON; this layer
-// persists the join-row change and the schema update ATOMICALLY via db.batch so the two never diverge.
+// also appends/removes the metric's snapshot in the benchmark's measurement_schema. The route computes
+// the new schema JSON; this layer persists the join-row change and the schema update ATOMICALLY via
+// db.batch so the two never diverge.
+//
+// NOTE (live compute-on-read): the measurement_schema.derived snapshot written here is RETAINED (for
+// schema change-detection / History) but is NO LONGER AUTHORITATIVE for compute. Derived metrics are
+// resolved on read from the LIVE `metric` definition via this very benchmark_metric join (see
+// src/logic/live_derived.ts `loadLiveDerivedByBenchmark`), so editing a library metric takes effect on
+// published benchmarks immediately. The snapshot storage format is unchanged and still written on
+// every link/unlink; immutability-via-snapshot is deferred and may be revisited.
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
 import type { BenchmarkMetricRow } from "../types";
@@ -31,6 +38,8 @@ export async function createBenchmarkMetricLink(
       db
         .prepare("INSERT INTO benchmark_metric (id, benchmark_id, metric_id, created_at) VALUES (?,?,?,?)")
         .bind(row.id, row.benchmark_id, row.metric_id, row.created_at),
+      // The snapshot is still written (retained for change-detection / History), but reads resolve
+      // derived metrics from the live metric via this join — see loadLiveDerivedByBenchmark.
       db
         .prepare("UPDATE benchmark SET measurement_schema = ?, updated_at = ? WHERE id = ?")
         .bind(input.schemaJson, now, input.benchmark_id),
@@ -146,6 +155,8 @@ export async function deleteBenchmarkMetricLink(
   const now = Date.now();
   await db.batch([
     db.prepare("DELETE FROM benchmark_metric WHERE id = ?").bind(input.id),
+    // The snapshot is still updated (retained for change-detection / History), but reads resolve
+    // derived metrics from the live metric via this join — see loadLiveDerivedByBenchmark.
     db
       .prepare("UPDATE benchmark SET measurement_schema = ?, updated_at = ? WHERE id = ?")
       .bind(input.schemaJson, now, input.benchmark_id),

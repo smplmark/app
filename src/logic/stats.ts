@@ -5,7 +5,7 @@
 // matches what the measurements table shows. Grouped by subject: the "run, per subject" grain.
 import type { AggMeasurementRow } from "../data/measurements";
 import { parseMeasurementSchema } from "../schema/measurement_schema";
-import type { MeasurementSchema } from "../types";
+import type { DerivedDecl, MeasurementSchema } from "../types";
 import { computeMetrics } from "./derived";
 
 /** The ten descriptive statistics computed for one metric over a set of measurements. */
@@ -80,21 +80,36 @@ export function computeStats(values: number[]): MetricStats | null {
  * Group aggregate rows by subject, computing each measurement's merged (stored + derived) metric bag
  * with `computeMetrics`, then reduce each subject×metric bucket to its statistics. Subjects keep
  * first-seen order; a benchmark's schema is parsed once and cached (compute-on-read is O(rows × derived)).
+ *
+ * Derived metrics are computed from the LIVE library definition: `liveDerived` maps a benchmark id to
+ * the DerivedDecls resolved from its linked FORMULA metrics (loadLiveDerivedByBenchmark). The stored
+ * `measurement_schema.derived` snapshot is used only as a fallback for a benchmark absent from the map
+ * (i.e. one with no live FORMULA metric). This keeps the summary consistent with what the measurements
+ * table shows when an author edits a library metric.
  */
 export function summarizeMeasurements(
   rows: AggMeasurementRow[],
   truncated: boolean,
+  liveDerived: Map<string, DerivedDecl[]>,
 ): MeasurementStats {
   const schemaCache = new Map<string, MeasurementSchema>();
   const bySubject = new Map<string, Map<string, number[]>>();
   const order: string[] = [];
 
   for (const row of rows) {
-    let schema = schemaCache.get(row.measurement_schema);
-    if (schema === undefined) {
-      schema = parseMeasurementSchema(row.measurement_schema);
-      schemaCache.set(row.measurement_schema, schema);
+    let parsed = schemaCache.get(row.measurement_schema);
+    if (parsed === undefined) {
+      parsed = parseMeasurementSchema(row.measurement_schema);
+      schemaCache.set(row.measurement_schema, parsed);
     }
+    // Live derived (from the current library metric) wins over the stored snapshot; fall back to the
+    // snapshot only when the benchmark has no live FORMULA metric linked.
+    const live = liveDerived.get(row.benchmark_id);
+    const schema: MeasurementSchema = {
+      metrics: parsed.metrics,
+      derived: live ?? parsed.derived,
+      chart: parsed.chart,
+    };
     const merged = computeMetrics(row.metrics, schema, {
       created_at: row.created_at,
       run: { started_at: row.run_started_at, ended_at: row.run_ended_at },

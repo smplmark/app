@@ -66,6 +66,7 @@ import {
 } from "../schema/measurement_schema";
 import { kebab } from "../schema/subject_type";
 import { publisherLabel, serializeBenchmark, serializeHistoryEvent } from "../serialize/resource";
+import { loadLiveDerivedByBenchmark } from "../logic/live_derived";
 import {
   CATEGORIES,
   type AuthContext,
@@ -246,8 +247,15 @@ benchmarks.get("/", optionalAuth, async (c) => {
     c.env.DB,
     rows.map((r) => r.id),
   );
+  // Surface each benchmark's LIVE derived metrics (resolved from its linked FORMULA metrics) in place
+  // of the stored measurement_schema.derived snapshot, so the console reflects a library-metric edit
+  // immediately. loadLiveDerivedByBenchmark omits benchmarks with no live FORMULA metric → snapshot.
+  const liveMap = await loadLiveDerivedByBenchmark(
+    c.env.DB,
+    rows.map((r) => r.id),
+  );
   return collectionResponse(
-    rows.map((r) => serializeBenchmark(r, tagsByBenchmark.get(r.id) ?? [])),
+    rows.map((r) => serializeBenchmark(r, tagsByBenchmark.get(r.id) ?? [], liveMap.get(r.id))),
     { meta: { pagination: paginationMeta(pagination, total) } },
   );
 });
@@ -261,8 +269,10 @@ benchmarks.get("/:id", optionalAuth, async (c) => {
       throw new NotFoundError();
     }
   }
+  // Live derived (from the current library metric) replaces the stored snapshot in the response.
+  const live = (await loadLiveDerivedByBenchmark(c.env.DB, [row.id])).get(row.id);
   return resourceResponse(
-    serializeBenchmark(row, await listTagsForBenchmark(c.env.DB, row.id)),
+    serializeBenchmark(row, await listTagsForBenchmark(c.env.DB, row.id), live),
   );
 });
 

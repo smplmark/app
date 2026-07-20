@@ -192,6 +192,28 @@ describe("serializeBenchmark", () => {
     expect(out.attributes.tags).toEqual(["gpu", "rendering"]);
   });
 
+  it("substitutes live derived metrics for the stored snapshot when provided", () => {
+    // The stored schema carries a STALE derived snapshot; passing liveDerived replaces `.derived`
+    // (metrics/chart are preserved) so the console reflects the current library metric definition.
+    const row: BenchmarkRowWithPublisher = {
+      ...priv,
+      measurement_schema: JSON.stringify({
+        metrics: [{ name: "latency_ms", type: "DECIMAL" }],
+        derived: [{ name: "skew_ms", unit: "ms", expr: { "%": [{ var: "created_at" }, 60000] } }],
+        chart: { x: "created_at", y: "skew_ms" },
+      }),
+    };
+    const live = [{ name: "skew_ms", unit: "s", expr: { "%": [{ var: "created_at" }, 3_600_000] } }];
+    const out = serializeBenchmark(row, [], live);
+    expect(out.attributes.measurement_schema).toEqual({
+      metrics: [{ name: "latency_ms", type: "DECIMAL" }],
+      derived: [{ name: "skew_ms", unit: "s", expr: { "%": [{ var: "created_at" }, 3_600_000] } }],
+      chart: { x: "created_at", y: "skew_ms" },
+    });
+    // The empty-array case also substitutes (a benchmark whose only FORMULA metric was unlinked).
+    expect(serializeBenchmark(row, [], []).attributes.measurement_schema).toMatchObject({ derived: [] });
+  });
+
   it("renders a PERSONAL attribution badge from the frozen snapshot", () => {
     const row: BenchmarkRowWithPublisher = {
       ...priv, status: "PUBLISHED", draft: 0, published_at: T0,

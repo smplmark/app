@@ -103,6 +103,9 @@ export interface MeasurementListRow {
   subject_key: string;
   /** The run's human key — the run's public id on the wire (serialization emits this). */
   run_key: string;
+  /** The owning benchmark's id (run.benchmark_id) — used to resolve LIVE derived metrics per row
+   *  (loadLiveDerivedByBenchmark), which supersede the stored measurement_schema.derived snapshot. */
+  benchmark_id: string;
   created_at: number;
   metrics: string | null;
   meta: string | null;
@@ -182,7 +185,7 @@ export async function listMeasurements(
     await db
       .prepare(
         `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.subject_id AS subject_id,` +
-          ` subject.key AS subject_key, run.key AS run_key,` +
+          ` subject.key AS subject_key, run.key AS run_key, run.benchmark_id AS benchmark_id,` +
           ` measurement.created_at AS created_at, measurement.metrics AS metrics, measurement.meta AS meta,` +
           ` benchmark.measurement_schema AS measurement_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
@@ -211,6 +214,9 @@ export async function listMeasurements(
 export interface AggMeasurementRow {
   /** The subject's public key — the grouping dimension (matches a measurement's `subject` field). */
   subject_key: string;
+  /** The owning benchmark's id (run.benchmark_id) — used to resolve LIVE derived metrics per row
+   *  (loadLiveDerivedByBenchmark), which supersede the stored measurement_schema.derived snapshot. */
+  benchmark_id: string;
   created_at: number;
   metrics: string | null;
   measurement_schema: string;
@@ -238,7 +244,7 @@ export async function aggregateMeasurements(
   const rows = (
     await db
       .prepare(
-        `SELECT subject.key AS subject_key, measurement.created_at AS created_at,` +
+        `SELECT subject.key AS subject_key, run.benchmark_id AS benchmark_id, measurement.created_at AS created_at,` +
           ` measurement.metrics AS metrics, benchmark.measurement_schema AS measurement_schema,` +
           ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
           ` ${JOINS} ${where.sql} LIMIT ?`,

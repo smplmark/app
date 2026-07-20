@@ -14,6 +14,7 @@ import type {
   BenchmarkMetricRow,
   BenchmarkRow,
   BenchmarkSubjectRow,
+  DerivedDecl,
   ExternalSourceRow,
   IngestedAttributionSnapshot,
   InvitationRow,
@@ -196,7 +197,14 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
 export function serializeBenchmark(
   row: BenchmarkRow & { publisher_slug: string; subject_type_key: string | null },
   tags: readonly string[],
+  // The benchmark's LIVE derived metrics (resolved from its linked FORMULA metrics via
+  // loadLiveDerivedByBenchmark). When provided, they replace the stored measurement_schema.derived
+  // SNAPSHOT so the console surfaces the CURRENT formula/unit/format the moment a library metric is
+  // edited. Omitted (or undefined) → the stored snapshot is surfaced unchanged.
+  liveDerived?: DerivedDecl[],
 ): ResourceObject {
+  const measurement_schema = parseMeasurementSchema(row.measurement_schema);
+  if (liveDerived !== undefined) measurement_schema.derived = liveDerived;
   const attributes: Record<string, unknown> = {
     account: row.account_id,
     publisher_slug: row.publisher_slug,
@@ -214,7 +222,7 @@ export function serializeBenchmark(
     published_at: isoOrNull(row.published_at),
     withdrawn_at: isoOrNull(row.withdrawn_at),
     withdrawal_reason: row.withdrawal_reason,
-    measurement_schema: parseMeasurementSchema(row.measurement_schema),
+    measurement_schema,
     category: row.category,
     tags: [...tags],
     views: row.views_total,

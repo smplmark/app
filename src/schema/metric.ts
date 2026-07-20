@@ -219,6 +219,13 @@ export function parseStoredFormula(formula: string | null): MetricFormula | null
  * a `DerivedDecl` in `derived[]` whose `expr` is the compiled JSON Logic. The metric's `name` is the
  * schema key (immutable, unique per account); `description` carries over as the cosmetic label. Exactly
  * one of `{ metric, derived }` is returned.
+ *
+ * NOTE (live compute-on-read): the FORMULA branch's snapshot `expr` (and its unit/format/description)
+ * is RETAINED — for schema change-detection and the audited History — but is NO LONGER AUTHORITATIVE
+ * for compute. Derived metrics are resolved on read from the LIVE `metric` definition via the
+ * `benchmark_metric` join (see src/logic/live_derived.ts `loadLiveDerivedByBenchmark`), so editing a
+ * library metric's formula/unit/format/description takes effect on published benchmarks immediately.
+ * Immutability-via-snapshot is deferred and may be revisited; the snapshot storage format is unchanged.
  */
 export function metricSnapshot(row: MetricRow): { metric?: MetricDecl; derived?: DerivedDecl } {
   const description = row.description ?? undefined;
