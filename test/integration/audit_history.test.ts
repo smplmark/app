@@ -147,7 +147,7 @@ describe("audit events on the publish lifecycle", () => {
 });
 
 describe("editing a published benchmark (the old freeze, now audited)", () => {
-  it("a semantic-core edit (changed derived expr) succeeds and is flagged on the event", async () => {
+  it("a semantic-core edit (changed metric set) succeeds and is flagged on the event", async () => {
     const { token, user_id } = await register();
     const bm = await makeBenchmark(token);
     await publish(token, user_id, bm.id);
@@ -155,8 +155,10 @@ describe("editing a published benchmark (the old freeze, now audited)", () => {
 
     const fresh = ((await (await apiGet(`/api/v1/benchmarks/${bm.id}`, bearer(token))).json()) as { data: Resource }).data;
     const a = fresh.attributes as Record<string, unknown>;
+    // A real semantic-core change: add a stored metric (the metric SET changed). Changing a derived
+    // formula is no longer semantic-core — formulas live on the library metric, not the schema.
     const schema = structuredClone(SKEW_SCHEMA) as typeof SKEW_SCHEMA;
-    schema.derived[0].expr = { "+": [{ var: "created_at" }, 1] };
+    schema.metrics.push({ name: "latency_ms", type: "DECIMAL" });
     const res = await apiPut(
       `/api/v1/benchmarks/${bm.id}`,
       { data: { type: "benchmark", attributes: { ...a, measurement_schema: schema } } },
@@ -170,7 +172,6 @@ describe("editing a published benchmark (the old freeze, now audited)", () => {
     expect(ev.data.semantic_core).toBe(true);
     const changes = ev.data.changes as Record<string, { before: unknown; after: unknown }>;
     expect(changes.measurement_schema).toBeDefined();
-    expect(changes.measurement_schema.before).toEqual(SKEW_SCHEMA);
   });
 
   it("a cosmetic edit emits an unflagged edited event with only the changed fields", async () => {

@@ -489,8 +489,10 @@ export interface DerivedDecl {
   unit?: string;
   /** Excel-style number-format pattern for display. Cosmetic. */
   format?: string;
-  /** Semantic core — a post-publish change is allowed but flagged in the audited History. */
-  expr: JsonLogicRule;
+  /** The compiled JSON Logic formula. INTERNAL only: resolved live from the linked library metric for
+   *  compute-on-read, and never surfaced in the API — the formula is not part of the public contract.
+   *  Optional because a stored snapshot (or a client's get-mutate-put round-trip) may omit it. */
+  expr?: JsonLogicRule;
   /** Human-readable description, surfaced on the benchmark page. Cosmetic. */
   description?: string;
 }

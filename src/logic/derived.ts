@@ -44,6 +44,7 @@ export function computeMetrics(
   };
   const merged: Record<string, unknown> = { ...parseStored(metricsJson) };
   for (const d of schema.derived) {
+    if (d.expr === undefined) continue; // no formula to evaluate (the linked library metric owns it)
     try {
       const value = applyRule(d.expr, data);
       if (typeof value === "number" && Number.isFinite(value)) {

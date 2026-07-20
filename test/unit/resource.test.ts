@@ -207,7 +207,9 @@ describe("serializeBenchmark", () => {
     const out = serializeBenchmark(row, [], live);
     expect(out.attributes.measurement_schema).toEqual({
       metrics: [{ name: "latency_ms", type: "DECIMAL" }],
-      derived: [{ name: "skew_ms", unit: "s", expr: { "%": [{ var: "created_at" }, 3_600_000] } }],
+      // The formula (`expr`) is an internal detail resolved live from the library metric; it is NOT
+      // surfaced — the benchmark resource exposes only the derived metric's name + display fields.
+      derived: [{ name: "skew_ms", unit: "s" }],
       chart: { x: "created_at", y: "skew_ms" },
     });
     // The empty-array case also substitutes (a benchmark whose only FORMULA metric was unlinked).

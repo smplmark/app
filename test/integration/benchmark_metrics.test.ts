@@ -61,7 +61,9 @@ describe("benchmark_metric — snapshot on link", () => {
     await linkMetric(me.token, bm.id, metric.id);
     const schema = await schemaOf(me.token, bm.id);
     expect(schema.metrics).toEqual([]);
-    expect(schema.derived).toEqual([{ name: "skew", unit: "ms", expr: { "%": [{ var: "created_at" }, 60000] } }]);
+    // Linking surfaces the derived metric by name + display fields; the formula (`expr`) is resolved
+    // live from the library metric and is not part of the benchmark resource.
+    expect(schema.derived).toEqual([{ name: "skew", unit: "ms" }]);
   });
 
   it("rejects a double-link and a foreign-account metric", async () => {

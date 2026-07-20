@@ -59,13 +59,13 @@ function parseMetric(m: unknown, i: number): MetricDecl {
 
 function parseDerived(d: unknown, i: number): DerivedDecl {
   const dd = asObject(d, `measurement_schema.derived[${i}]`);
-  if (!("expr" in dd)) {
-    throw new BadRequestError(`measurement_schema.derived[${i}].expr is required.`);
-  }
   const decl: DerivedDecl = {
     name: nonEmptyString(dd.name, `measurement_schema.derived[${i}].name`),
-    expr: dd.expr,
   };
+  // `expr` is no longer part of the contract: a benchmark's derived metrics are defined by its linked
+  // library metrics (benchmark_metric) and the formula is resolved live on read. It is tolerated if a
+  // client still round-trips one (get-mutate-put) but is neither required nor authoritative.
+  if ("expr" in dd) decl.expr = dd.expr;
   if (dd.unit !== undefined) {
     decl.unit = nonEmptyString(dd.unit, `measurement_schema.derived[${i}].unit`);
   }
@@ -170,19 +170,28 @@ export interface SchemaDiff {
   semantic_core: boolean;
 }
 
+/** A schema normalized for diffing: derived `expr` is dropped. The formula is not part of the
+ *  contract (it lives on the library metric, resolved live on read), so round-tripping a schema whose
+ *  derived carry no `expr` — the shape the API now surfaces — is not a change. */
+function forDiff(s: MeasurementSchema): MeasurementSchema {
+  return { ...s, derived: s.derived.map(({ expr: _expr, ...rest }) => rest) };
+}
+
 /** Compare two measurement schemas: did anything change, and did the semantic core change? */
 export function diffMeasurementSchema(
   oldSchema: MeasurementSchema,
   newSchema: MeasurementSchema,
 ): SchemaDiff {
-  const changed = canonical(oldSchema) !== canonical(newSchema);
+  const changed = canonical(forDiff(oldSchema)) !== canonical(forDiff(newSchema));
   if (!changed) return { changed: false, semantic_core: false };
   const core = (s: MeasurementSchema) =>
     canonical({
       metrics: [...s.metrics.map((m) => ({ name: m.name, type: m.type }))].sort((a, b) =>
         a.name < b.name ? -1 : 1,
       ),
-      derived: [...s.derived.map((d) => ({ name: d.name, expr: d.expr }))].sort((a, b) =>
+      // Derived formulas live on the library metric now, not in this schema, so the benchmark's
+      // semantic core tracks only WHICH derived metrics are attached (by name), not their expression.
+      derived: [...s.derived.map((d) => ({ name: d.name }))].sort((a, b) =>
         a.name < b.name ? -1 : 1,
       ),
       chart: s.chart ?? null,

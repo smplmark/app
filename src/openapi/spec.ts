@@ -186,15 +186,12 @@ const MetricDecl = z
 
 const DerivedDecl = z
   .object({
-    name: z.string().openapi({ description: "The derived metric's identifier, as it appears in the computed metrics map." }),
-    expr: jsonObject(
-      "A JSON Logic expression evaluated on read against the measurement and its run context (e.g. elapsed_ms = created_at − run.started_at).",
-    ),
+    name: z.string().openapi({ description: "The derived metric's identifier, as it appears in each measurement's computed metrics map." }),
     unit: z.string().optional().openapi({ description: "A display unit for the derived value, e.g. \"ms\"." }),
     format: z.string().optional().openapi({ description: "An Excel-style number-format pattern for display, e.g. \"#,##0.00\" or \"0.0%\"." }),
     description: z.string().optional().openapi({ description: "A human-readable explanation of what the derived value represents." }),
   })
-  .openapi("DerivedDecl", { description: "A metric computed when an measurement is read, from other metrics and run context." });
+  .openapi("DerivedDecl", { description: "A metric computed on read from the benchmark's linked library metric; its value appears in each measurement's `metrics` map. The formula lives on the library metric and is not part of this resource." });
 
 const ChartDecl = z
   .object({

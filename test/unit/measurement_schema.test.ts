@@ -68,7 +68,6 @@ describe("validateMeasurementSchema", () => {
     [{ metrics: [{ name: "x", type: "number", unit: 5 }] }, "metric bad unit"],
     [{ metrics: [{ name: "x", type: "number", description: 5 }] }, "metric bad description"],
     [{ derived: [1] }, "derived not an object"],
-    [{ derived: [{ name: "x" }] }, "derived missing expr"],
     [{ derived: [{ expr: {} }] }, "derived missing name"],
     [{ derived: [{ name: "x", expr: {}, unit: 5 }] }, "derived bad unit"],
     [{ derived: [{ name: "x", expr: {}, description: 5 }] }, "derived bad description"],
@@ -201,14 +200,15 @@ describe("diffMeasurementSchema", () => {
     });
   });
 
-  it("flags a changed derived expression as semantic-core", () => {
-    const edited: MeasurementSchema = {
-      ...published,
-      derived: [{ name: "d", expr: { "+": [1, 1] }, unit: "ms" }],
+  it("ignores a changed derived expression — the formula lives on the library metric, not the schema", () => {
+    const before: MeasurementSchema = { metrics: [], derived: [{ name: "d", unit: "ms", expr: { "+": [1, 1] } }] };
+    const after: MeasurementSchema = {
+      metrics: [],
+      derived: [{ name: "d", unit: "ms", expr: { "%": [{ var: "created_at" }, 3_600_000] } }],
     };
-    expect(diffMeasurementSchema(published, edited)).toEqual({
-      changed: true,
-      semantic_core: true,
+    expect(diffMeasurementSchema(before, after)).toEqual({
+      changed: false,
+      semantic_core: false,
     });
   });
 

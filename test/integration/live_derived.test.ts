@@ -148,25 +148,22 @@ describe("live derived — every read surface reflects the live definition", () 
     expect(skewStats.max).toBe(59_995); // the % MINUTE values, never the stale % HOUR 3_599_980
     expect(skewStats.min).toBe(59_980);
 
-    // (d) The BENCHMARK resource surfaces the live derived expr/unit in measurement_schema, while the
-    // stored snapshot (read from D1) still holds the old one.
+    // (d) The BENCHMARK resource surfaces the live derived metric's name + display fields (unit) in
+    // measurement_schema — but NOT its `expr` (the formula is an internal detail). The stored snapshot
+    // in D1 still holds the old formula internally (vestigial, never surfaced).
     const benchDoc = (await (await apiGet(`/api/v1/benchmarks/${bm.id}`, bearer(me.token))).json()) as {
-      data: { attributes: { measurement_schema: { derived: Array<{ name: string; expr: unknown }> } } };
+      data: { attributes: { measurement_schema: { derived: Array<{ name: string; unit?: string }> } } };
     };
-    expect(benchDoc.data.attributes.measurement_schema.derived).toEqual([
-      { name: "skew", unit: "ms", expr: { "%": [{ var: "created_at" }, MINUTE] } },
-    ]);
+    expect(benchDoc.data.attributes.measurement_schema.derived).toEqual([{ name: "skew", unit: "ms" }]);
     expect(await storedSnapshotDerived(bm.id)).toEqual([
       { name: "skew", unit: "ms", expr: { "%": [{ var: "created_at" }, HOUR] } },
     ]);
 
-    // (e) The benchmark LIST endpoint reflects live derived as well.
+    // (e) The benchmark LIST endpoint likewise surfaces the derived metric without its formula.
     const listDoc = (await (await apiGet(`/api/v1/benchmarks?filter[account]=${me.account_id}`, bearer(me.token))).json()) as {
-      data: Array<{ id: string; attributes: { measurement_schema: { derived: Array<{ expr: unknown }> } } }>;
+      data: Array<{ id: string; attributes: { measurement_schema: { derived: Array<{ name: string; unit?: string }> } } }>;
     };
     const mine = listDoc.data.find((b) => b.id === bm.id)!;
-    expect(mine.attributes.measurement_schema.derived).toEqual([
-      { name: "skew", unit: "ms", expr: { "%": [{ var: "created_at" }, MINUTE] } },
-    ]);
+    expect(mine.attributes.measurement_schema.derived).toEqual([{ name: "skew", unit: "ms" }]);
   });
 });

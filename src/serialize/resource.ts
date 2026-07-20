@@ -204,7 +204,17 @@ export function serializeBenchmark(
   liveDerived?: DerivedDecl[],
 ): ResourceObject {
   const measurement_schema = parseMeasurementSchema(row.measurement_schema);
-  if (liveDerived !== undefined) measurement_schema.derived = liveDerived;
+  // Surface derived metrics WITHOUT their JSON Logic `expr`: the formula is an internal implementation
+  // detail (resolved live from the linked library metric), not part of the public contract. The
+  // consumer references metrics by name and reads computed values from each measurement's `metrics`.
+  const derivedSource = liveDerived ?? measurement_schema.derived;
+  measurement_schema.derived = derivedSource.map((d) => {
+    const pub: DerivedDecl = { name: d.name };
+    if (d.unit !== undefined) pub.unit = d.unit;
+    if (d.format !== undefined) pub.format = d.format;
+    if (d.description !== undefined) pub.description = d.description;
+    return pub;
+  });
   const attributes: Record<string, unknown> = {
     account: row.account_id,
     publisher_slug: row.publisher_slug,
