@@ -203,17 +203,23 @@ describe("serializeBenchmark", () => {
         chart: { x: "created_at", y: "skew_ms" },
       }),
     };
-    const live = [{ name: "skew_ms", unit: "s", expr: { "%": [{ var: "created_at" }, 3_600_000] } }];
+    const live = [
+      { name: "skew_ms", unit: "s", format: "0.0", description: "seconds past the hour", expr: { "%": [{ var: "created_at" }, 3_600_000] } },
+    ];
     const out = serializeBenchmark(row, [], live);
     expect(out.attributes.measurement_schema).toEqual({
       metrics: [{ name: "latency_ms", type: "DECIMAL" }],
       // The formula (`expr`) is an internal detail resolved live from the library metric; it is NOT
       // surfaced — the benchmark resource exposes only the derived metric's name + display fields.
-      derived: [{ name: "skew_ms", unit: "s" }],
+      derived: [{ name: "skew_ms", unit: "s", format: "0.0", description: "seconds past the hour" }],
       chart: { x: "created_at", y: "skew_ms" },
     });
     // The empty-array case also substitutes (a benchmark whose only FORMULA metric was unlinked).
     expect(serializeBenchmark(row, [], []).attributes.measurement_schema).toMatchObject({ derived: [] });
+    // With no liveDerived, the stored snapshot is surfaced — still WITHOUT its `expr` (formula).
+    expect(serializeBenchmark(row, []).attributes.measurement_schema).toMatchObject({
+      derived: [{ name: "skew_ms", unit: "ms" }],
+    });
   });
 
   it("renders a PERSONAL attribution badge from the frozen snapshot", () => {

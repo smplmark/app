@@ -72,4 +72,12 @@ describe("computeMetrics", () => {
     };
     expect(computeMetrics('{"a":1}', schema, ctx(MS))).toEqual({ a: 1 });
   });
+
+  it("skips a derived metric with no expr — its formula lives on the linked library metric", () => {
+    const schema: MeasurementSchema = {
+      metrics: [],
+      derived: [{ name: "no_formula" }],
+    };
+    expect(computeMetrics('{"a":1}', schema, ctx(MS))).toEqual({ a: 1 });
+  });
 });
