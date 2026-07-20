@@ -60,11 +60,11 @@ function baseInput(overrides: Partial<AuditEventInput> = {}): AuditEventInput {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("emitAuditEvent", () => {
-  it("is a logged no-op when SMPL_AUDIT_API_KEY is unset — no network call at all", () => {
+  it("is a logged no-op when SMPLKIT_API_KEY is unset — no network call at all", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const tasks: Promise<unknown>[] = [];
-    emitAuditEvent(fakeCtx({ ...env, SMPL_AUDIT_API_KEY: undefined } as Env, tasks), baseInput());
+    emitAuditEvent(fakeCtx({ ...env, SMPLKIT_API_KEY: undefined } as Env, tasks), baseInput());
     expect(fetchMock).not.toHaveBeenCalled();
     expect(tasks).toHaveLength(0);
   });
@@ -78,7 +78,9 @@ describe("emitAuditEvent", () => {
       return new Response("{}", { status: 201 });
     }));
     const tasks: Promise<unknown>[] = [];
-    const testEnv = { ...env, SMPL_AUDIT_API_KEY: "sk_api_test" } as Env;
+    // Explicitly unset the environment (the wrangler.jsonc var makes it "production" by default) to
+    // cover the branch where no environment is named — the SDK then omits it from the envelope.
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk_api_test", SMPLKIT_ENVIRONMENT: undefined } as Env;
     emitAuditEvent(fakeCtx(testEnv, tasks), baseInput({
       changes: { name: { before: "Old", after: "New" } },
       semantic_core: true,
@@ -113,7 +115,7 @@ describe("emitAuditEvent", () => {
     expect(typeof a.occurred_at).toBe("string");
   });
 
-  it("names the audit environment only when SMPL_AUDIT_ENVIRONMENT is set, and omits the category for account-level resources", async () => {
+  it("names the audit environment only when SMPLKIT_ENVIRONMENT is set, and omits the category for account-level resources", async () => {
     const calls: { body: string }[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = input instanceof Request ? input : new Request(input, init);
@@ -121,7 +123,7 @@ describe("emitAuditEvent", () => {
       return new Response("{}", { status: 201 });
     }));
     const tasks: Promise<unknown>[] = [];
-    const testEnv = { ...env, SMPL_AUDIT_API_KEY: "sk_api_test", SMPL_AUDIT_ENVIRONMENT: "production" } as Env;
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk_api_test", SMPLKIT_ENVIRONMENT: "production" } as Env;
     emitAuditEvent(fakeCtx(testEnv, tasks), baseInput({
       resource_type: "subject",
       resource_id: "t1",
@@ -149,7 +151,7 @@ describe("emitAuditEvent", () => {
     ).bind(userId, `${userId}@test.example`, 1, "Ada", Date.now()).run();
 
     const tasks: Promise<unknown>[] = [];
-    const testEnv = { ...env, SMPL_AUDIT_API_KEY: "sk_api_test" } as Env;
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk_api_test" } as Env;
     emitAuditEvent(fakeCtx(testEnv, tasks), baseInput({ actor: keyCtx() }));
     emitAuditEvent(fakeCtx(testEnv, tasks), baseInput({
       actor: {
@@ -177,7 +179,7 @@ describe("emitAuditEvent", () => {
       return new Response("{}", { status: 201 });
     }));
     const tasks: Promise<unknown>[] = [];
-    emitAuditEvent(fakeCtx({ ...env, SMPL_AUDIT_API_KEY: "sk" } as Env, tasks), baseInput({
+    emitAuditEvent(fakeCtx({ ...env, SMPLKIT_API_KEY: "sk" } as Env, tasks), baseInput({
       actor: {
         source: "SESSION", account_id: "a1", scope_type: "ACCOUNT", scope_ref: null,
         user_id: crypto.randomUUID(), role: "OWNER", session_id: "s1", api_key_id: null,
@@ -193,7 +195,7 @@ describe("emitAuditEvent", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
     const tasks: Promise<unknown>[] = [];
-    const testEnv = { ...env, SMPL_AUDIT_API_KEY: "sk" } as Env;
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk" } as Env;
     emitAuditEvent(fakeCtx(testEnv, tasks), baseInput());
     await expect(Promise.all(tasks)).resolves.toBeDefined();
 
@@ -208,7 +210,7 @@ describe("emitAuditEvent", () => {
   it("still sends (inline) when there is no execution context", async () => {
     const fetchMock = vi.fn(async () => new Response("{}", { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
-    emitAuditEvent(noCtx({ ...env, SMPL_AUDIT_API_KEY: "sk" } as Env), baseInput());
+    emitAuditEvent(noCtx({ ...env, SMPLKIT_API_KEY: "sk" } as Env), baseInput());
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   });
 });
@@ -219,7 +221,7 @@ describe("listHistoryEvents", () => {
   it("returns empty when unconfigured (the feature is off, not broken)", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const out = await listHistoryEvents({ ...env, SMPL_AUDIT_API_KEY: undefined } as Env, { benchmark_id: "b1" });
+    const out = await listHistoryEvents({ ...env, SMPLKIT_API_KEY: undefined } as Env, { benchmark_id: "b1" });
     expect(out).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -244,7 +246,7 @@ describe("listHistoryEvents", () => {
         links: { next: null },
       });
     }));
-    const out = await listHistoryEvents({ ...env, SMPL_AUDIT_API_KEY: "sk" } as Env, { benchmark_id: "b1" });
+    const out = await listHistoryEvents({ ...env, SMPLKIT_API_KEY: "sk" } as Env, { benchmark_id: "b1" });
     expect(urls).toHaveLength(1);
     expect(decodeURIComponent(urls[0])).toContain("filter[category]=benchmark:b1");
     expect(decodeURIComponent(urls[0])).toContain("page[size]=200");
@@ -276,7 +278,7 @@ describe("listHistoryEvents", () => {
         links: { next: null },
       });
     }));
-    const out = await listHistoryEvents({ ...env, SMPL_AUDIT_API_KEY: "sk" } as Env, { resource_type: "run", resource_id: "r1" });
+    const out = await listHistoryEvents({ ...env, SMPLKIT_API_KEY: "sk" } as Env, { resource_type: "run", resource_id: "r1" });
     expect(urls).toHaveLength(2);
     expect(decodeURIComponent(urls[0])).toContain("filter[resource_type]=run");
     expect(decodeURIComponent(urls[0])).toContain("filter[resource_id]=r1");
@@ -286,7 +288,7 @@ describe("listHistoryEvents", () => {
   it("turns a non-2xx audit response and a transport failure into a 503 — never a silently-empty history", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
-    const testEnv = { ...env, SMPL_AUDIT_API_KEY: "sk" } as Env;
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk" } as Env;
     await expect(listHistoryEvents(testEnv, { benchmark_id: "b1" })).rejects.toBeInstanceOf(ServiceUnavailableError);
 
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));

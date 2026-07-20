@@ -87,12 +87,12 @@ beforeEach(async () => {
   await resetDb();
   captured = [];
   auditGetResponse = () => Response.json({ data: [], links: { next: null } });
-  env.SMPL_AUDIT_API_KEY = "sk_api_test";
+  env.SMPLKIT_API_KEY = "sk_api_test";
   stubAuditFetch();
 });
 
 afterEach(() => {
-  env.SMPL_AUDIT_API_KEY = undefined;
+  env.SMPLKIT_API_KEY = undefined;
   vi.unstubAllGlobals();
 });
 
@@ -376,8 +376,8 @@ describe("audit events on runs and measurements", () => {
 });
 
 describe("graceful degradation", () => {
-  it("with SMPL_AUDIT_API_KEY unset every mutation works and nothing is sent", async () => {
-    env.SMPL_AUDIT_API_KEY = undefined;
+  it("with SMPLKIT_API_KEY unset every mutation works and nothing is sent", async () => {
+    env.SMPLKIT_API_KEY = undefined;
     const { token, user_id } = await register();
     const bm = await makeBenchmark(token);
     await publish(token, user_id, bm.id);
@@ -483,12 +483,12 @@ describe("history endpoints", () => {
 
   it("returns an empty trail when audit is unconfigured, and 503 when the audit service errors", async () => {
     const { token, bm } = await publishedBenchmark();
-    env.SMPL_AUDIT_API_KEY = undefined;
+    env.SMPLKIT_API_KEY = undefined;
     const empty = await apiGet(`/api/v1/benchmarks/${bm.id}/history`, bearer(token));
     expect(empty.status).toBe(200);
     expect(((await empty.json()) as { data: Resource[] }).data).toEqual([]);
 
-    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    env.SMPLKIT_API_KEY = "sk_api_test";
     auditGetResponse = () => new Response("boom", { status: 500 });
     const down = await apiGet(`/api/v1/benchmarks/${bm.id}/history`, bearer(token));
     expect(down.status).toBe(503);

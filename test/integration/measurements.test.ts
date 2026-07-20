@@ -29,7 +29,7 @@ beforeEach(resetDb);
 
 // Audit capture: emitAuditEvent posts to Smpl Audit via the SDK's global fetch (SELF.fetch, used by
 // the API helpers, is a separate transport and is unaffected). Tests that need to assert an emitted
-// event stub the outbound fetch and set SMPL_AUDIT_API_KEY; the afterEach undoes both.
+// event stub the outbound fetch and set SMPLKIT_API_KEY; the afterEach undoes both.
 const AUDIT_EVENTS_URL = "https://audit.smplkit.com/api/v1/events";
 let auditPosts: { event_type: string; resource_id: string; data: Record<string, unknown>; actor_type: string | null; actor_id: string | null }[] = [];
 
@@ -49,7 +49,7 @@ function captureAudit(): void {
 }
 
 afterEach(() => {
-  env.SMPL_AUDIT_API_KEY = undefined;
+  env.SMPLKIT_API_KEY = undefined;
   vi.unstubAllGlobals();
 });
 
@@ -441,7 +441,7 @@ describe("DELETE /measurements/:id", () => {
     await publish(me.token, me.user_id, b.id);
     const runId = await runUuid(r);
     const subjId = await subjectUuid(t.id); // the correlation carries internal UUIDs, not keys
-    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    env.SMPLKIT_API_KEY = "sk_api_test";
     captureAudit();
 
     const del = await apiDelete(`/api/v1/measurements/${m2.id}`, bearer(me.token));
@@ -469,7 +469,7 @@ describe("DELETE /measurements/:id", () => {
     const { t, r } = await scaffold(me.token);
     const m = await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
 
-    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    env.SMPLKIT_API_KEY = "sk_api_test";
     captureAudit();
     expect((await apiDelete(`/api/v1/measurements/${m.id}`, bearer(me.token))).status).toBe(204);
 

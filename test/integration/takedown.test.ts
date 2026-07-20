@@ -57,7 +57,7 @@ beforeEach(async () => {
 afterEach(() => {
   env.JOBS_TRIGGER_SECRET = undefined;
   env.RESEND_API_KEY = undefined;
-  env.SMPL_AUDIT_API_KEY = undefined;
+  env.SMPLKIT_API_KEY = undefined;
   vi.unstubAllGlobals();
 });
 
@@ -83,7 +83,7 @@ describe("POST /api/v1/takedown_requests (public affordance)", () => {
     await publish(token, user_id, bm.id);
     // Configure email + audit only now, so the signup emails above don't muddy the capture.
     env.RESEND_API_KEY = "re_test";
-    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    env.SMPLKIT_API_KEY = "sk_api_test";
     auditPosts = [];
     resendPosts = [];
 
@@ -166,7 +166,7 @@ describe("POST /api/v1/jobs/benchmark-takedown (operator-only true delete)", () 
 
   it("hard-deletes the published benchmark's whole subtree, resolves open requests, and records the removal", async () => {
     env.JOBS_TRIGGER_SECRET = JOBS_SECRET;
-    env.SMPL_AUDIT_API_KEY = "sk_api_test";
+    env.SMPLKIT_API_KEY = "sk_api_test";
     const { token, user_id } = await register();
     const bm = await makeBenchmark(token);
     const subject = await makeSubject(token, bm.id);

@@ -88,10 +88,9 @@ jobs:
           MICROSOFT_OIDC_CLIENT_ID: ${{ secrets.MICROSOFT_OIDC_CLIENT_ID }}
           MICROSOFT_OIDC_CLIENT_SECRET: ${{ secrets.MICROSOFT_OIDC_CLIENT_SECRET }}
           JOBS_TRIGGER_SECRET: ${{ secrets.JOBS_TRIGGER_SECRET }}
-          SMPL_AUDIT_API_KEY: ${{ secrets.SMPL_AUDIT_API_KEY }}
-          SMPL_AUDIT_ENVIRONMENT: ${{ secrets.SMPL_AUDIT_ENVIRONMENT }}
+          SMPLKIT_API_KEY: ${{ secrets.SMPLKIT_API_KEY }}
         run: |
-          node -e 'const n=["APP_AUTH_SECRET","KEY_ENCRYPTION_SECRET","RESEND_API_KEY","RESEND_FROM","GOOGLE_OIDC_CLIENT_ID","GOOGLE_OIDC_CLIENT_SECRET","MICROSOFT_OIDC_CLIENT_ID","MICROSOFT_OIDC_CLIENT_SECRET","JOBS_TRIGGER_SECRET","SMPL_AUDIT_API_KEY","SMPL_AUDIT_ENVIRONMENT"];const o={};for(const k of n)if(process.env[k])o[k]=process.env[k];process.stdout.write(JSON.stringify(o))' > "$RUNNER_TEMP/secrets.json"
+          node -e 'const n=["APP_AUTH_SECRET","KEY_ENCRYPTION_SECRET","RESEND_API_KEY","RESEND_FROM","GOOGLE_OIDC_CLIENT_ID","GOOGLE_OIDC_CLIENT_SECRET","MICROSOFT_OIDC_CLIENT_ID","MICROSOFT_OIDC_CLIENT_SECRET","JOBS_TRIGGER_SECRET","SMPLKIT_API_KEY"];const o={};for(const k of n)if(process.env[k])o[k]=process.env[k];process.stdout.write(JSON.stringify(o))' > "$RUNNER_TEMP/secrets.json"
           if [ "$(cat "$RUNNER_TEMP/secrets.json")" = "{}" ]; then
             echo "::notice::no app repo secrets set yet — skipping secret sync (Worker keeps its current secrets)"
           else

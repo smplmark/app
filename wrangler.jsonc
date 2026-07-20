@@ -6,6 +6,13 @@
   // Account id is pinned (non-sensitive) so CI can deploy with only a CLOUDFLARE_API_TOKEN secret.
   "account_id": "f625d39b265af6ab514726f5f512d85e",
 
+  // The standard smplkit environment tag, read by every smplkit integration (currently Smpl Audit,
+  // which rejects writes when it's unset). Non-secret, so it lives here rather than in CI secrets —
+  // and applies to `wrangler dev` too, so the local loop is a configured environment as well.
+  "vars": {
+    "SMPLKIT_ENVIRONMENT": "production"
+  },
+
   // The app (console + auth + JSON:API) is served on app.smplmark.org. The marketing site and the
   // published-benchmark viewer are a separate Worker (the website repo) on www + apex. Cloudflare
   // provisions DNS + TLS for the custom domain automatically (smplmark.org must be an active zone).

@@ -12,11 +12,11 @@
 //    ctx.waitUntil, so a slow or down audit service can't add latency to (or fail) a mutation.
 //    publish / withdraw / taken_down are the events most worth upgrading to guaranteed delivery
 //    (a queue) later.
-//  - When SMPL_AUDIT_API_KEY is unset the whole feature degrades gracefully: writes become a
+//  - When SMPLKIT_API_KEY is unset the whole feature degrades gracefully: writes become a
 //    logged no-op and history reads return empty.
 import { AuditClient } from "@smplkit/sdk/audit";
 import type { Context } from "hono";
-import { auditBaseUrl, auditConfigured } from "../config";
+import { auditConfigured } from "../config";
 import { getUserById } from "../data/users";
 import { ServiceUnavailableError } from "../errors";
 import type { AppBindings } from "../http/middleware";
@@ -113,9 +113,11 @@ function isNamedActor(actor: AuthContext | NamedActor): actor is NamedActor {
  */
 function auditClient(env: Env): AuditClient {
   return new AuditClient({
-    apiKey: env.SMPL_AUDIT_API_KEY as string,
-    baseUrl: auditBaseUrl(env),
-    environment: env.SMPL_AUDIT_ENVIRONMENT,
+    // Canonical smplkit config, read off the Worker env binding (a Worker has no process.env / no
+    // ~/.smplkit for the SDK to auto-resolve from). baseUrl is omitted — the SDK derives
+    // https://audit.smplkit.com from its default base domain.
+    apiKey: env.SMPLKIT_API_KEY as string,
+    environment: env.SMPLKIT_ENVIRONMENT,
     buffered: false,
     // Workers' outbound fetch sends no User-Agent, and the smplkit platform's WAF (CloudFront
     // managed rules) rejects UA-less requests with an HTML 403 before they reach the service.
@@ -130,7 +132,7 @@ function auditClient(env: Env): AuditClient {
  */
 export function emitAuditEvent(c: Context<AppBindings>, input: AuditEventInput): void {
   if (!auditConfigured(c.env)) {
-    console.log(`audit (no-op, SMPL_AUDIT_API_KEY unset): ${input.event_type} ${input.resource_type}/${input.resource_id}`);
+    console.log(`audit (no-op, SMPLKIT_API_KEY unset): ${input.event_type} ${input.resource_type}/${input.resource_id}`);
     return;
   }
   const task = sendAuditEvent(c.env, input);
