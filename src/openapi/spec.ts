@@ -1881,13 +1881,22 @@ registry.registerPath({
   tags: ["Subjects"],
   summary: "Unlink a subject from a benchmark",
   description:
-    "Removes a subject from a benchmark and deletes the measurements it had under that benchmark's runs. The subject itself survives (it is account-owned). Only allowed while the benchmark is private: on a published benchmark this would delete published measurements, so invalidate the affected runs instead.",
+    "Removes a subject from a benchmark and deletes the measurements it had under that benchmark's runs. The subject itself survives (it is account-owned, and may be linked to other benchmarks — its measurements there are untouched). When the subject has measurements in this benchmark, deleting them is permanent, so the request must confirm with delete_measurements=true; a subject with no measurements here unlinks without it.",
   security: bearerSecurity,
-  request: { params: benchmarkSubjectIdParam },
+  request: {
+    params: benchmarkSubjectIdParam,
+    query: z.object({
+      delete_measurements: z.literal("true").optional().openapi({
+        param: { name: "delete_measurements", in: "query" },
+        description:
+          "Set to 'true' to confirm permanently deleting the subject's measurements in this benchmark when it has any. Required only when measurements exist.",
+      }),
+    }),
+  },
   responses: {
-    "204": { description: "The link was removed." },
+    "204": { description: "The link (and, when confirmed, the subject's measurements in this benchmark) was removed." },
     ...commonErrors,
-    "409": errorJson("The benchmark is published; unlinking would delete published measurements. Invalidate the affected runs instead."),
+    "409": errorJson("The subject has measurements in this benchmark; retry with delete_measurements=true to remove the subject and permanently delete them."),
   },
 });
 

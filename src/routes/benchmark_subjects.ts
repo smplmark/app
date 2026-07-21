@@ -4,13 +4,14 @@ import { covers, isPublicStatus, requireWrite } from "../authz";
 import { getBenchmarkById } from "../data/benchmarks";
 import {
   countLinksForBenchmark,
+  countSubjectMeasurementsInBenchmark,
   createBenchmarkSubject,
   deleteBenchmarkSubjectCascade,
   getBenchmarkSubjectById,
   isSubjectPublic,
   listBenchmarkSubjects,
 } from "../data/benchmark_subjects";
-import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
+import { getSubjectById, resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
 import { LIMITS } from "../limits";
 import { ConflictError, NotFoundError } from "../errors";
 import { requireString } from "../http/body";
@@ -153,11 +154,32 @@ benchmarkSubjects.delete("/:id", requireAuth, async (c) => {
     throw new NotFoundError();
   }
   assertBenchmarkEditable(benchmark);
-  if (benchmark.status !== "PRIVATE") {
+  if (benchmark.closed_at !== null) {
+    throw new ConflictError("This benchmark is closed; reopen it before removing subjects.");
+  }
+  // Removing a subject deletes the measurements it holds in this benchmark (published or not). Guard
+  // the destructive case behind an explicit ?delete_measurements=true so it can't happen by accident;
+  // a subject with no measurements here unlinks freely.
+  const subject = await getSubjectById(c.env.DB, link.subject_id);
+  const measurementCount = await countSubjectMeasurementsInBenchmark(c.env.DB, link.subject_id, benchmark.id);
+  const confirmed = c.req.query("delete_measurements") === "true";
+  if (measurementCount > 0 && !confirmed) {
     throw new ConflictError(
-      "A published benchmark's subjects can't be unlinked — that would delete their published measurements. Invalidate the affected runs instead.",
+      `This subject has ${measurementCount} measurement${measurementCount === 1 ? "" : "s"} in this benchmark. Pass delete_measurements=true to remove the subject and permanently delete them.`,
     );
   }
   await deleteBenchmarkSubjectCascade(c.env.DB, link);
+  emitAuditEvent(c, {
+    event_type: "benchmark.edited",
+    resource_type: "benchmark",
+    resource_id: benchmark.id,
+    benchmark_id: benchmark.id,
+    visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+    description:
+      `Subject "${subject?.name ?? link.subject_id}" removed from the benchmark` +
+      (measurementCount > 0 ? `, deleting ${measurementCount} measurement${measurementCount === 1 ? "" : "s"}.` : "."),
+    extra: { subject_unlinked: link.subject_id, measurements_deleted: measurementCount },
+    actor: auth,
+  });
   return noContentResponse();
 });

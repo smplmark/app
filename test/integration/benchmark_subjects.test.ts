@@ -105,7 +105,7 @@ describe("benchmark_subjects (the M:N link)", () => {
     expect(((await remaining.json()) as { data: Resource[] }).data.length).toBe(0);
   });
 
-  it("blocks linking while marked ready; post-publish linking stays open but unlinking is blocked", async () => {
+  it("blocks linking while marked ready; post-publish linking stays open; removing a subject with measurements needs confirmation", async () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const t = await makeAccountSubject(me.token, "t");
@@ -122,13 +122,21 @@ describe("benchmark_subjects (the M:N link)", () => {
 
     await publish(me.token, me.user_id, b.id);
     // Post-publish, linking a new subject is an append to the public record → 201.
-    expect((await link(me.token, b.id, t2.id)).status).toBe(201);
-    // Unlinking would cascade away the subject's published measurements → still blocked.
+    const link2 = ((await (await link(me.token, b.id, t2.id)).json()) as { data: Resource }).data;
+    // t2 has no measurements here → it unlinks freely, no confirmation needed, even post-publish.
+    expect((await apiDelete(`/api/v1/benchmark_subjects/${link2.id}`, bearer(me.token))).status).toBe(204);
+
+    // t has a published measurement → removing it needs explicit confirmation; without it, a 409.
     const unlink = await apiDelete(`/api/v1/benchmark_subjects/${linkRes.id}`, bearer(me.token));
     expect(unlink.status).toBe(409);
-    expect(((await unlink.json()) as { errors: { detail: string }[] }).errors[0].detail).toBe(
-      "A published benchmark's subjects can't be unlinked — that would delete their published measurements. Invalidate the affected runs instead.",
-    );
+    expect(((await unlink.json()) as { errors: { detail: string }[] }).errors[0].detail).toContain("measurement");
+    // With delete_measurements=true it cascades: the link and the measurement go, the subject survives.
+    expect(
+      (await apiDelete(`/api/v1/benchmark_subjects/${linkRes.id}?delete_measurements=true`, bearer(me.token))).status,
+    ).toBe(204);
+    expect((await apiGet(`/api/v1/subjects/${t.id}`, bearer(me.token))).status).toBe(200);
+    const remaining = await apiGet(`/api/v1/subjects?filter[benchmark]=${b.id}`, bearer(me.token));
+    expect(((await remaining.json()) as { data: Resource[] }).data.length).toBe(0);
   });
 
   // A shared subject may span a private and a public benchmark; filter[subject] must not leak the

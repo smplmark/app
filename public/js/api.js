@@ -195,7 +195,11 @@ async function apiFetch(path, options) {
   }
 
   if (!res.ok) {
-    throw new Error(errorDetail(doc, "Request failed (HTTP " + res.status + ")"));
+    // Attach the HTTP status so callers can branch (e.g. a 409 confirmation flow) without matching
+    // the human-readable message.
+    const err = new Error(errorDetail(doc, "Request failed (HTTP " + res.status + ")"));
+    err.status = res.status;
+    throw err;
   }
 
   return doc;

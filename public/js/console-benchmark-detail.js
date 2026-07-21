@@ -461,7 +461,11 @@
 
   async function renderSubjects(panel, actions) {
     const a = BM.attributes || {};
-    const priv = statusInfo().status === "PRIVATE"; // unlink is draft-only (it deletes measurements)
+    // Removing a subject deletes its measurements in this benchmark (published ones included), so it's
+    // allowed whenever the benchmark is editable (mirrors assertBenchmarkEditable + the closed block):
+    // not marked-ready, not closed. The confirm in unlinkSubject handles the measurement warning.
+    const editable = statusInfo().status !== "PRIVATE" || a.draft;
+    const canRemove = CAN_WRITE && !a.closed && editable;
     // Linking is additive and allowed even when published (recorded in the history); closed blocks it.
     if (CAN_WRITE && !a.closed && actions) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="add-subject-btn">' + SM.icon("plus", 14) + " Add subject</button>";
@@ -472,11 +476,11 @@
       { key: "key", label: "ID", sortable: true, sortValue: (t) => (t.attributes || {}).key || "", render: (t) => "<code>" + esc((t.attributes || {}).key || "") + "</code>" },
       { key: "name", label: "Name", sortable: true, sortValue: (t) => (t.attributes || {}).name || "", render: (t) => esc((t.attributes || {}).name || "") },
     ];
-    if (CAN_WRITE && priv) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
-      '<button type="button" class="iconBtn unlink-subject" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).name || (t.attributes || {}).key || "") + '" title="Unlink subject" aria-label="Unlink subject">' + SM.icon("trash", 15) + "</button>" });
+    if (canRemove) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
+      '<button type="button" class="iconBtn remove-subject" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).name || (t.attributes || {}).key || "") + '" title="Remove subject" aria-label="Remove subject">' + SM.icon("trash", 15) + "</button>" });
     const table = SM.pagedTable($("subjects-table"), {
       columns: cols, rows: [], sort: { key: "key", dir: "asc" }, emptyText: "No subjects linked yet.",
-      onRender: CAN_WRITE && priv ? (c) => c.querySelectorAll(".unlink-subject").forEach((el) => el.addEventListener("click", () => unlinkSubject(el.dataset.link, el.dataset.name))) : undefined,
+      onRender: canRemove ? (c) => c.querySelectorAll(".remove-subject").forEach((el) => el.addEventListener("click", () => unlinkSubject(el.dataset.link, el.dataset.name))) : undefined,
     });
     try {
       const [linkedDoc, linksDoc] = await Promise.all([
@@ -616,15 +620,34 @@
     });
   }
 
+  // Remove a subject from the benchmark. A subject with no measurements here unlinks on the first
+  // (deliberate) click; one that has measurements gets a 409, and we warn before deleting them — the
+  // server does the exact per-benchmark count, so the warning only appears when data would truly be lost.
   async function unlinkSubject(linkId, name) {
     if (!linkId) { setMsg("Couldn't resolve the link to remove — refresh and try again.", "error"); return; }
-    const ok = await SM.confirm({ title: "Unlink subject?", message: "Remove <strong>" + esc(name) + "</strong> from this benchmark and drop its measurements here? The subject itself is kept in your account.", confirmLabel: "Unlink" });
-    if (!ok) return;
     setMsg("");
+    const url = "/api/v1/benchmark_subjects/" + encodeURIComponent(linkId);
     try {
-      await apiFetch("/api/v1/benchmark_subjects/" + encodeURIComponent(linkId), { method: "DELETE" });
+      await apiFetch(url, { method: "DELETE" });
       await refresh();
-    } catch (err) { setMsg(err.message, "error"); }
+      SM.toast("Subject removed", { kind: "success" });
+    } catch (err) {
+      if (err && err.status === 409) {
+        const ok = await SM.confirm({
+          title: "Delete measurements?",
+          message: "<strong>" + esc(name) + "</strong> has measurements recorded in this benchmark. Removing it permanently deletes them — this can’t be undone. The subject itself is kept in your account.",
+          confirmLabel: "Delete & remove",
+        });
+        if (!ok) return;
+        try {
+          await apiFetch(url + "?delete_measurements=true", { method: "DELETE" });
+          await refresh();
+          SM.toast("Subject and its measurements removed", { kind: "success" });
+        } catch (e2) { setMsg(e2.message, "error"); }
+      } else {
+        setMsg(err.message, "error");
+      }
+    }
   }
 
   // ── Metrics tab (the values this benchmark reports) ──

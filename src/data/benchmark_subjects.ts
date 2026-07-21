@@ -180,9 +180,28 @@ export async function listBenchmarkSubjects(
 }
 
 /**
+ * How many measurements name this subject within this benchmark — the exact set the cascade below
+ * deletes (scoped to the benchmark's runs, so the subject's data in OTHER benchmarks is untouched).
+ */
+export async function countSubjectMeasurementsInBenchmark(
+  db: D1Database,
+  subjectId: string,
+  benchmarkId: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM measurement WHERE subject_id = ? AND run_id IN (SELECT id FROM run WHERE benchmark_id = ?)",
+    )
+    .bind(subjectId, benchmarkId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
  * Unlink a subject from a benchmark and delete the measurements that named that subject under the
- * benchmark's runs. The route guarantees the benchmark is PRIVATE, so no published data is destroyed.
- * The subject row itself survives (it's account-owned and may be linked elsewhere).
+ * benchmark's runs. Callable at any publish stage; when the benchmark is published this destroys
+ * published measurements, so the route gates it behind an explicit confirmation. The subject row
+ * itself survives (it's account-owned and may be linked elsewhere).
  */
 export async function deleteBenchmarkSubjectCascade(
   db: D1Database,
