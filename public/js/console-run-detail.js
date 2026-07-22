@@ -536,7 +536,7 @@
       '<form class="form" id="add-meas-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span><input name="subject" type="text" autocomplete="off" placeholder="Pick a subject to measure" /><p class="fieldErrorMessage" hidden></p></label>' +
       (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : '<p class="detailFieldHelp">This benchmark has no stored metrics yet — add them on its Metrics tab to record values.</p>') +
-      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="text" autocomplete="off" placeholder="Defaults to now" /></label>' +
+      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="datetime-local" autocomplete="off" /><p class="detailFieldHelp">Leave blank to record it as now.</p></label>' +
       '<p class="form-status" id="add-meas-msg"></p>' +
       '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add measurement</button></div></form>';
@@ -560,7 +560,10 @@
       f.querySelectorAll("[data-metric]").forEach((el) => { const v = el.value.trim(); if (v !== "") { const n = Number(v); if (isFinite(n)) metrics[el.getAttribute("data-metric")] = n; } });
       const attrs = { run: ID, subject: match.id };
       if (Object.keys(metrics).length) attrs.metrics = metrics;
-      const c = f.created_at.value.trim(); if (c) attrs.created_at = c;
+      // Blank picker → omit created_at (the server stamps it "now"); a picked local time → UTC ISO.
+      const c = dtLocalToIso(f.created_at.value);
+      if (c === undefined) { msg.textContent = "Enter a valid date and time, or leave it blank."; msg.className = "form-status is-error"; return; }
+      if (c) attrs.created_at = c;
       const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
       try {
         await apiFetch("/api/v1/measurements", { method: "POST", body: jsonapiBody("measurement", attrs) });
