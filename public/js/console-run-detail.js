@@ -198,6 +198,17 @@
     if (!v) return null;
     const d = new Date(v); return isNaN(d.getTime()) ? undefined : d.toISOString();
   }
+  // Millisecond-precision local value for a datetime-local[step="0.001"] picker. Measurements are
+  // recorded to the millisecond, so their picker must round-trip the full instant rather than floor
+  // to the minute like dtLocalValue. Accepts an ISO string or epoch-ms; dtLocalToIso reverses it
+  // (its `new Date(v).toISOString()` keeps the milliseconds).
+  function dtLocalValueMs(v) {
+    if (v === null || v === undefined || v === "") return "";
+    const d = new Date(v); if (isNaN(d.getTime())) return "";
+    const p = (n, w) => String(n).padStart(w || 2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" +
+      p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + "." + p(d.getMilliseconds(), 3);
+  }
 
   // ── Edit-run modal — name + start/end (the run ID is fixed at creation). On a published benchmark
   //    the edit is recorded in the run's history; clearing "Ended at" returns the run to live. ──
@@ -536,7 +547,7 @@
       '<form class="form" id="add-meas-form" novalidate>' +
       '<label class="field"><span class="detailFieldLabel fieldRequired">Subject</span><input name="subject" type="text" autocomplete="off" placeholder="Pick a subject to measure" /><p class="fieldErrorMessage" hidden></p></label>' +
       (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : '<p class="detailFieldHelp">This benchmark has no stored metrics yet — add them on its Metrics tab to record values.</p>') +
-      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="datetime-local" autocomplete="off" /><p class="detailFieldHelp">Leave blank to record it as now.</p></label>' +
+      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="datetime-local" step="0.001" autocomplete="off" /><p class="detailFieldHelp">Leave blank to record it as now.</p></label>' +
       '<p class="form-status" id="add-meas-msg"></p>' +
       '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Add measurement</button></div></form>';
@@ -616,7 +627,7 @@
       '<form class="form" id="correct-meas-form" novalidate>' +
       '<div class="field"><span class="detailFieldLabel">Subject</span><span class="detailFieldValue">' + esc(subjectLabel(a.subject)) + "</span></div>" +
       (metricFields ? '<div class="subjectFormFields">' + metricFields + "</div>" : "") +
-      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="text" autocomplete="off" value="' + esc(a.created_at || "") + '" /></label>' +
+      '<label class="field"><span class="detailFieldLabel">Recorded at</span><input name="created_at" type="datetime-local" step="0.001" autocomplete="off" value="' + esc(dtLocalValueMs(a.created_at)) + '" /></label>' +
       '<p class="form-status" id="correct-meas-msg"></p>' +
       '<div class="modalActions"><button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
       '<button type="submit" class="button buttonPrimary buttonSmall">Save correction</button></div></form>';
@@ -645,7 +656,14 @@
       const attrs = {};
       if (Object.keys(newMetrics).length) attrs.metrics = newMetrics;
       if (a.meta && Object.keys(a.meta).length) attrs.meta = a.meta;
-      const c = f.created_at.value.trim(); if (c) attrs.created_at = c;
+      // The recorded-at picker is millisecond-precision. Convert the picked local time to a UTC
+      // instant and send created_at only when it differs from the stored one — comparing instants
+      // (not the picker's normalized value string) keeps an untouched correction a no-op, so the
+      // server preserves the exact stored millisecond. A cleared field is invalid: a measurement
+      // must keep a recorded-at.
+      const picked = dtLocalToIso(f.created_at.value);
+      if (!picked) { msg.textContent = "Enter a valid recorded-at date and time."; msg.className = "form-status is-error"; return; }
+      if (new Date(picked).getTime() !== new Date(a.created_at).getTime()) attrs.created_at = picked;
       const submit = f.querySelector('button[type="submit"]'); submit.disabled = true;
       try {
         await apiFetch("/api/v1/measurements/" + encodeURIComponent(meas.id), { method: "PUT", body: jsonapiBody("measurement", attrs) });
