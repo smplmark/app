@@ -228,7 +228,14 @@
       const root = m.panel.querySelector("#ak-modal");
 
       const fmtDT = (iso) => SM.fmtDateTime(iso) || "—";
-      const scopeText = (a) => { const t = a.scope_type || "ACCOUNT"; return a.scope_ref ? t + " · " + a.scope_ref : t; };
+      // The panel is mounted on one scope; for a run-scoped panel `scopeRef` is the run's key (its
+      // public id) — show that for a RUN key, never the internal id carried in a.scope_ref.
+      const scopeText = (a) => {
+        const t = a.scope_type || "ACCOUNT";
+        if (!a.scope_ref) return t;
+        if (a.scope_type === "RUN" && scopeType === "RUN" && scopeRef) return t + " · " + scopeRef;
+        return t + " · " + a.scope_ref;
+      };
       const df = (label, value, mono) => '<div class="field"><span class="detailFieldLabel">' + esc(label) + '</span><span class="detailFieldValue' + (mono ? " isMono" : "") + '">' + esc(value == null || value === "" ? "—" : value) + "</span></div>";
       function msg(t, kind) { setStatus(root.querySelector("#ak-msg"), t, kind); }
       // Save / revoke responses omit the plaintext key; keep the value we already revealed.

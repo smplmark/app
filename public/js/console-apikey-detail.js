@@ -15,6 +15,10 @@
   let editing = false;
   let nameDraft = "";
   let BACK_HREF = "/account/settings#apikeys"; // where this key is managed; set by applyContext()
+  // The human-readable scope reference (a run's key, a benchmark's name), resolved by applyContext().
+  // The raw scope_ref is an internal handle — for a run it's the internal id, never surfaced — so the
+  // Scope field waits for this rather than printing scope_ref.
+  let SCOPE_LABEL = null;
 
   function fmtDateTime(iso) { return SM.fmtDateTime(iso) || "—"; }
   function setMsg(text, kind) {
@@ -25,7 +29,10 @@
   }
   function scopeText(a) {
     const t = a.scope_type || "ACCOUNT";
-    return a.scope_ref ? t + " · " + a.scope_ref : t;
+    if (!a.scope_ref) return t;
+    // Show the resolved human reference (a run's key, a benchmark's name); until applyContext resolves
+    // it, show the scope type alone rather than the raw scope_ref (a run's is the internal id).
+    return SCOPE_LABEL ? t + " · " + SCOPE_LABEL : t;
   }
   // PUT / revoke responses omit the plaintext; keep the value we already revealed on load.
   function keepKey(next) {
@@ -71,6 +78,7 @@
       BACK_HREF = "/account/benchmarks/detail?id=" + encodeURIComponent(ref) + "#apikeys";
       SM.setActiveNav("benchmarks");
       SM.setBreadcrumbs([{ label: "Benchmarks", href: "/account/benchmarks" }, { label: name, href: BACK_HREF }, { label: keyName }]);
+      SCOPE_LABEL = name; render(); // refresh the Scope field with the benchmark's name (not its id)
       return;
     }
     // RUN
@@ -79,6 +87,7 @@
     BACK_HREF = "/account/runs/detail?id=" + encodeURIComponent(ref) + "#apikeys";
     SM.setActiveNav("benchmarks");
     SM.setBreadcrumbs([{ label: "Benchmarks", href: "/account/benchmarks" }, { label: runKey, href: BACK_HREF }, { label: keyName }]);
+    SCOPE_LABEL = runKey; render(); // refresh the Scope field with the run's key (not its internal id)
   }
 
   function render() {
