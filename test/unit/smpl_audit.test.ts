@@ -222,11 +222,11 @@ describe("listHistoryEvents", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const out = await listHistoryEvents({ ...env, SMPLKIT_API_KEY: undefined } as Env, { benchmark_id: "b1" });
-    expect(out).toEqual([]);
+    expect(out).toEqual({ events: [], next_cursor: null });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("queries the subtree by category and parses events, defaulting visibility to internal", async () => {
+  it("queries the subtree by category, parses events, defaults visibility to internal, and drops retired measurement.created noise", async () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -239,6 +239,8 @@ describe("listHistoryEvents", () => {
             actor_type: "USER", actor_id: "u1", actor_label: "a@b.com",
             data: { visibility: "public", benchmark_id: "b1", semantic_core: false },
           }),
+          // A legacy live-beacon event from before measurement.created was retired — dropped read-side.
+          event("noise", { event_type: "measurement.created", resource_type: "measurement", resource_id: "m1", occurred_at: "2026-07-16T12:30:00Z", data: { visibility: "public" } }),
           // No visibility tag, changes is an array (malformed), missing description →
           // internal / null / null: the safe defaults for the public surface.
           event("e2", { event_type: "benchmark.edited", resource_type: "benchmark", resource_id: "b1", occurred_at: "2026-07-16T13:00:00Z", data: { changes: [1] } }),
@@ -250,16 +252,20 @@ describe("listHistoryEvents", () => {
     expect(urls).toHaveLength(1);
     expect(decodeURIComponent(urls[0])).toContain("filter[category]=benchmark:b1");
     expect(decodeURIComponent(urls[0])).toContain("page[size]=200");
-    expect(out).toHaveLength(2);
-    expect(out[0]).toEqual({
+    expect(decodeURIComponent(urls[0])).not.toContain("filter[event_type]");
+    expect(decodeURIComponent(urls[0])).not.toContain("filter[occurred_at]");
+    expect(out.next_cursor).toBeNull();
+    expect(out.events).toHaveLength(2);
+    expect(out.events[0]).toEqual({
       id: "e1", event_type: "benchmark.published", resource_type: "benchmark", resource_id: "b1",
       occurred_at: "2026-07-16T12:00:00Z", description: "Published.",
       actor_type: "USER", actor_id: "u1", actor_label: "a@b.com",
       visibility: "public", benchmark_id: "b1", changes: null, semantic_core: false,
     });
-    expect(out[1].visibility).toBe("internal");
-    expect(out[1].description).toBeNull();
-    expect(out[1].changes).toBeNull();
+    expect(out.events[1].id).toBe("e2");
+    expect(out.events[1].visibility).toBe("internal");
+    expect(out.events[1].description).toBeNull();
+    expect(out.events[1].changes).toBeNull();
   });
 
   it("queries a single resource by resource_type + resource_id and follows links.next", async () => {
@@ -282,7 +288,55 @@ describe("listHistoryEvents", () => {
     expect(urls).toHaveLength(2);
     expect(decodeURIComponent(urls[0])).toContain("filter[resource_type]=run");
     expect(decodeURIComponent(urls[0])).toContain("filter[resource_id]=r1");
-    expect(out.map((e) => e.id)).toEqual(["e1", "e2"]);
+    expect(out.events.map((e) => e.id)).toEqual(["e1", "e2"]);
+    expect(out.next_cursor).toBeNull();
+  });
+
+  it("paged mode: fetches exactly one page, passes filters through, returns the cursor, and still drops retired noise", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
+      return Response.json({
+        data: [
+          event("e1", { event_type: "benchmark.edited", resource_type: "benchmark", resource_id: "b1", occurred_at: "2026-07-02T10:00:00Z", data: { visibility: "public" } }),
+          event("noise", { event_type: "measurement.created", resource_type: "measurement", resource_id: "m1", occurred_at: "2026-07-02T09:00:00Z", data: { visibility: "public" } }),
+        ],
+        links: { next: "https://audit.smplkit.com/api/v1/events?page[after]=cur2&page[size]=25" },
+      });
+    }));
+    const out = await listHistoryEvents(
+      { ...env, SMPLKIT_API_KEY: "sk" } as Env,
+      { benchmark_id: "b1" },
+      { page_size: 25, page_after: "cur1", event_type: "benchmark.edited", from: "2026-07-01T00:00:00.000Z", to: "2026-07-08T00:00:00.000Z" },
+    );
+    expect(urls).toHaveLength(1); // one page only — no accumulate walk, even with a next link
+    const url = decodeURIComponent(urls[0]);
+    expect(url).toContain("filter[category]=benchmark:b1");
+    expect(url).toContain("filter[event_type]=benchmark.edited");
+    expect(url).toContain("filter[occurred_at]=[2026-07-01T00:00:00.000Z,2026-07-08T00:00:00.000Z]");
+    expect(url).toContain("page[size]=25");
+    expect(url).toContain("page[after]=cur1");
+    expect(out.events.map((e) => e.id)).toEqual(["e1"]);
+    expect(out.next_cursor).toBe("cur2");
+  });
+
+  it("paged mode: a lone page_after uses the default audit page size, and open-ended bounds use the * wildcard", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      urls.push(url);
+      return Response.json({ data: [], links: { next: null } });
+    }));
+    const testEnv = { ...env, SMPLKIT_API_KEY: "sk" } as Env;
+    const out = await listHistoryEvents(testEnv, { benchmark_id: "b1" }, { page_after: "cur9", from: "2026-07-01T00:00:00.000Z" });
+    expect(out).toEqual({ events: [], next_cursor: null });
+    expect(decodeURIComponent(urls[0])).toContain("page[after]=cur9");
+    expect(decodeURIComponent(urls[0])).toContain("page[size]=200");
+    expect(decodeURIComponent(urls[0])).toContain("filter[occurred_at]=[2026-07-01T00:00:00.000Z,*]");
+
+    await listHistoryEvents(testEnv, { benchmark_id: "b1" }, { page_size: 5, to: "2026-07-08T00:00:00.000Z" });
+    expect(decodeURIComponent(urls[1])).toContain("filter[occurred_at]=[*,2026-07-08T00:00:00.000Z]");
   });
 
   it("turns a non-2xx audit response and a transport failure into a 503 — never a silently-empty history", async () => {

@@ -257,19 +257,17 @@ describe("audit events on runs and measurements", () => {
     return { token, user_id, bm, subject, run };
   }
 
-  it("post-publish measurement ingest emits a public measurement.created", async () => {
-    const { token, bm, subject, run } = await publishedFixture();
-    const m = await makeMeasurement(token, run.id, subject.id);
-    await vi.waitFor(() => expect(byType("measurement.created")).toHaveLength(1));
-    const ev = byType("measurement.created")[0];
-    expect(ev.resource_id).toBe(m.id);
-    expect(ev.category).toBe(`benchmark:${bm.id}`);
-    expect(ev.data.visibility).toBe("public");
-    expect(byType("run.appended")).toHaveLength(0); // the run was live — no append flag
+  it("post-publish measurement ingest to a live run emits nothing — plain ingest is data flow, not history", async () => {
+    const { token, subject, run } = await publishedFixture();
+    await makeMeasurement(token, run.id, subject.id);
+    // Give any stray waitUntil a beat, then assert silence: a live benchmark's beacon must not
+    // flood the history with measurement.created noise.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(captured).toHaveLength(0);
   });
 
-  it("appending to an ended run succeeds and additionally emits run.appended", async () => {
-    const { token, bm, subject, run } = await publishedFixture();
+  it("appending to an ended run succeeds and emits run.appended (the one noteworthy ingest shape)", async () => {
+    const { token, subject, run } = await publishedFixture();
     const end = await apiPost(`/api/v1/runs/${run.id}/actions/end`, undefined, bearer(token));
     expect(end.status).toBe(200);
     const m = await makeMeasurement(token, run.id, subject.id);
@@ -281,7 +279,7 @@ describe("audit events on runs and measurements", () => {
     expect(ev.data.measurement_id).toBe(m.id);
     expect(ev.data.visibility).toBe("public");
     expect(byType("run.ended")).toHaveLength(1);
-    expect(byType("measurement.created")).toHaveLength(1);
+    expect(byType("measurement.created")).toHaveLength(0); // never emitted anymore
   });
 
   it("correcting a measurement in place records before/after and recomputes the response", async () => {
@@ -473,6 +471,67 @@ describe("history endpoints", () => {
       expect(JSON.stringify(e)).not.toContain('"u1"');
     }
     expect(doc.data[1].attributes.semantic_core).toBe(true);
+  });
+
+  it("passes paging and filter params through to the audit store and returns the next cursor", async () => {
+    const { token, bm } = await publishedBenchmark();
+    const urls: string[] = [];
+    auditGetResponse = () =>
+      Response.json({
+        data: [
+          auditWireEvent("e1", { event_type: "benchmark.edited", resource_id: bm.id, data: { visibility: "public", benchmark_id: bm.id } }),
+        ],
+        links: { next: "https://audit.smplkit.com/api/v1/events?page[after]=cur-next" },
+      });
+    const prev = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return prev(input as RequestInfo, init);
+    }));
+
+    const qs =
+      "page[size]=10&page[after]=cur-prev&filter[event_type]=benchmark.edited" +
+      "&filter[from]=2026-07-01T00:00:00Z&filter[to]=2026-07-08T00:00:00Z";
+    const res = await apiGet(`/api/v1/benchmarks/${bm.id}/history?${encodeURI(qs)}`, bearer(token));
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as { data: Resource[]; meta: { count: number; next_cursor: string | null } };
+    expect(doc.data.map((e) => e.id)).toEqual(["e1"]);
+    expect(doc.meta.count).toBe(1);
+    expect(doc.meta.next_cursor).toBe("cur-next");
+
+    const auditUrl = decodeURIComponent(urls.find((u) => u.startsWith(AUDIT_EVENTS_URL)) ?? "");
+    expect(auditUrl).toContain("page[size]=10");
+    expect(auditUrl).toContain("page[after]=cur-prev");
+    expect(auditUrl).toContain("filter[event_type]=benchmark.edited");
+    // Bounds are normalized to full ISO and sent as one inclusive occurred_at interval.
+    expect(auditUrl).toContain("filter[occurred_at]=[2026-07-01T00:00:00.000Z,2026-07-08T00:00:00.000Z]");
+  });
+
+  it("defaults to a 50-event page and a null cursor on the last page", async () => {
+    const { token, bm } = await publishedBenchmark();
+    const urls: string[] = [];
+    const prev = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return prev(input as RequestInfo, init);
+    }));
+    const res = await apiGet(`/api/v1/benchmarks/${bm.id}/history`, bearer(token));
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as { meta: { next_cursor: string | null } };
+    expect(doc.meta.next_cursor).toBeNull();
+    expect(decodeURIComponent(urls.find((u) => u.startsWith(AUDIT_EVENTS_URL)) ?? "")).toContain("page[size]=50");
+  });
+
+  it("400s malformed paging and date params", async () => {
+    const { token, bm } = await publishedBenchmark();
+    const bad = async (qs: string) =>
+      (await apiGet(`/api/v1/benchmarks/${bm.id}/history?${encodeURI(qs)}`, bearer(token))).status;
+    expect(await bad("page[size]=nope")).toBe(400);
+    expect(await bad("page[size]=0")).toBe(400);
+    expect(await bad("page[size]=201")).toBe(400);
+    expect(await bad("filter[from]=not-a-date")).toBe(400);
+    expect(await bad("filter[to]=not-a-date")).toBe(400);
+    expect(await bad("filter[from]=2026-07-08T00:00:00Z&filter[to]=2026-07-01T00:00:00Z")).toBe(400);
   });
 
   it("404s anonymous callers on a private benchmark and serves the covered owner", async () => {

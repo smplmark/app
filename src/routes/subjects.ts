@@ -244,7 +244,7 @@ subjects.get("/:id/history", optionalAuth, async (c) => {
   if (!covered && !(await isSubjectPublic(c.env.DB, subject.id))) {
     throw new NotFoundError();
   }
-  const events = await listHistoryEvents(c.env, { resource_type: "subject", resource_id: subject.id });
+  const { events } = await listHistoryEvents(c.env, { resource_type: "subject", resource_id: subject.id });
   const visible = covered ? events : events.filter((e) => e.visibility === "public");
   const redact = covered ? null : { publisher_label: "the publisher" };
   return collectionResponse(

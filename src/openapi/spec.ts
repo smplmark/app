@@ -2099,7 +2099,7 @@ registry.registerPath({
   tags: ["Measurements"],
   summary: "Record a measurement",
   description:
-    "Records one measurement of a subject under a run. Allowed while the benchmark is a draft or already published; on a published benchmark the addition is recorded in the public change history.",
+    "Records one measurement of a subject under a run. Allowed while the benchmark is a draft or already published. Ordinary additions are not history events; on a published benchmark an addition to a run that has already ended is recorded in the public change history as an append to that run.",
   security: bearerSecurity,
   request: { body: domainBody(measurement.Request, "The measurement to record.") },
   responses: {
@@ -2422,7 +2422,27 @@ const HistoryEventListResponse = registry.register(
         })
         .openapi({ description: "Collection details." }),
     })
-    .openapi({ description: "A benchmark, run, or subject's change history, newest first." }),
+    .openapi({ description: "A run or subject's change history, newest first." }),
+);
+
+const BenchmarkHistoryListResponse = registry.register(
+  "BenchmarkHistoryListResponse",
+  z
+    .object({
+      data: z
+        .array(HistoryEventResource)
+        .openapi({ description: "The events on this page, newest first." }),
+      meta: z
+        .object({
+          count: z.number().int().openapi({ description: "The number of events on this page. May be fewer than page[size] even when more pages remain — some stored events are not visible on every view — so rely on next_cursor, not count, to detect the end." }),
+          next_cursor: z
+            .string()
+            .nullable()
+            .openapi({ description: "Opaque cursor for the next page; pass it as page[after]. Null when there are no further events." }),
+        })
+        .openapi({ description: "Collection details and the paging cursor." }),
+    })
+    .openapi({ description: "One page of a benchmark's change history, newest first." }),
 );
 
 const historyDescription = (scope: string) =>
@@ -2433,10 +2453,32 @@ registry.registerPath({
   path: "/api/v1/benchmarks/{id}/history",
   tags: ["Benchmarks"],
   summary: "Get a benchmark's change history",
-  description: historyDescription("benchmark") + " Includes events for the benchmark's runs and measurements.",
+  description:
+    historyDescription("benchmark") +
+    " Includes events for the benchmark's runs and measurements. The list is cursor-paged: each page carries meta.next_cursor, and passing it back as page[after] fetches the next page (null means the end).",
   request: { params: benchmarkIdParam },
+  parameters: [
+    filterParam("event_type", "Restrict to one event type, e.g. \"benchmark.edited\" or \"measurement.corrected\"."),
+    filterParam("from", "Restrict to events that occurred at or after this ISO-8601 datetime."),
+    filterParam("to", "Restrict to events that occurred at or before this ISO-8601 datetime."),
+    {
+      name: "page[size]",
+      in: "query" as const,
+      required: false,
+      description: "Events per page, 1 to 200. Defaults to 50. A page may hold fewer events than requested even when more pages remain; follow meta.next_cursor.",
+      schema: { type: "integer" as const, minimum: 1, maximum: 200, default: 50 },
+    },
+    {
+      name: "page[after]",
+      in: "query" as const,
+      required: false,
+      description: "Opaque cursor from the previous page's meta.next_cursor. Omit for the first page.",
+      schema: { type: "string" as const },
+    },
+  ],
   responses: {
-    "200": domainResponse(HistoryEventListResponse, "The benchmark's history."),
+    "200": domainResponse(BenchmarkHistoryListResponse, "One page of the benchmark's history."),
+    "400": errorJson("The query parameters were malformed."),
     "404": errorJson("The requested resource was not found."),
     "503": errorJson("History is temporarily unavailable."),
   },

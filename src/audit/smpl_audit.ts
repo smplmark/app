@@ -188,36 +188,94 @@ export type HistoryQuery =
   | { resource_type: "benchmark" | "run" | "measurement" | "subject"; resource_id: string }
   | { benchmark_id: string };
 
-/**
- * Read a resource's audit trail (newest first, bounded to MAX_HISTORY_EVENTS). A subtree query
- * ({benchmark_id}) uses the indexed category correlation; a resource query uses the
- * resource_type + resource_id pair. Unconfigured → empty (the feature is off); a configured but
- * unreachable audit service → 503 (an empty history would misstate the record).
- */
-export async function listHistoryEvents(env: Env, query: HistoryQuery): Promise<HistoryEventRecord[]> {
-  if (!auditConfigured(env)) return [];
-  const client = auditClient(env);
-  const filters =
-    "benchmark_id" in query
-      ? { category: benchmarkCategory(query.benchmark_id) }
-      : { resourceType: query.resource_type, resourceId: query.resource_id };
+/** Optional narrowing and paging for a history read, passed through to Smpl Audit. */
+export interface HistoryListOptions {
+  /** Exact event-type slug, e.g. "benchmark.edited". */
+  event_type?: string;
+  /** Inclusive ISO-8601 lower bound on occurred_at. */
+  from?: string;
+  /** Inclusive ISO-8601 upper bound on occurred_at. */
+  to?: string;
+  /** Single-page mode: return at most this many audit rows plus a cursor. */
+  page_size?: number;
+  /** Opaque cursor from a prior page's next_cursor. */
+  page_after?: string;
+}
 
-  const events: HistoryEventRecord[] = [];
+export interface HistoryPage {
+  events: HistoryEventRecord[];
+  /** Cursor for the next page; null when exhausted (always null in accumulate mode). */
+  next_cursor: string | null;
+}
+
+/**
+ * measurement.created is no longer emitted (plain ingest is data flow, not a record change), but
+ * live-benchmark beacons wrote hundreds before the cut — dropping them at read time retires the
+ * noise without a data migration.
+ */
+const RETIRED_EVENT_TYPES = new Set(["measurement.created"]);
+
+/** Smpl Audit's interval notation (ADR-014): inclusive bounds, `*` for an open edge. */
+function occurredAtRange(from: string | undefined, to: string | undefined): string | undefined {
+  if (from === undefined && to === undefined) return undefined;
+  return `[${from ?? "*"},${to ?? "*"}]`;
+}
+
+/**
+ * Read a resource's audit trail, newest first. A subtree query ({benchmark_id}) uses the indexed
+ * category correlation; a resource query uses the resource_type + resource_id pair. With
+ * page_size/page_after set, one audit page is fetched and its cursor returned (the page may come
+ * back short: retired event types are dropped read-side, and callers filter visibility after);
+ * otherwise pages are accumulated up to MAX_HISTORY_EVENTS. Unconfigured → empty (the feature is
+ * off); a configured but unreachable audit service → 503 (an empty history would misstate the
+ * record).
+ */
+export async function listHistoryEvents(
+  env: Env,
+  query: HistoryQuery,
+  options: HistoryListOptions = {},
+): Promise<HistoryPage> {
+  if (!auditConfigured(env)) return { events: [], next_cursor: null };
+  const client = auditClient(env);
+  const range = occurredAtRange(options.from, options.to);
+  const filters = {
+    ...("benchmark_id" in query
+      ? { category: benchmarkCategory(query.benchmark_id) }
+      : { resourceType: query.resource_type, resourceId: query.resource_id }),
+    ...(options.event_type !== undefined ? { eventType: options.event_type } : {}),
+    ...(range !== undefined ? { occurredAtRange: range } : {}),
+  };
+  const paged = options.page_size !== undefined || options.page_after !== undefined;
+
   try {
+    if (paged) {
+      const page = await client.events.list({
+        ...filters,
+        pageSize: options.page_size ?? PAGE_SIZE,
+        pageAfter: options.page_after,
+      });
+      return {
+        events: page.events.map(toRecord).filter((e) => !RETIRED_EVENT_TYPES.has(e.event_type)),
+        next_cursor: page.nextCursor ?? null,
+      };
+    }
+    const events: HistoryEventRecord[] = [];
     let cursor: string | undefined;
     do {
       const page = await client.events.list({ ...filters, pageSize: PAGE_SIZE, pageAfter: cursor });
       for (const ev of page.events) {
-        events.push(toRecord(ev));
-        if (events.length >= MAX_HISTORY_EVENTS) return events;
+        const record = toRecord(ev);
+        if (RETIRED_EVENT_TYPES.has(record.event_type)) continue;
+        events.push(record);
+        if (events.length >= MAX_HISTORY_EVENTS) return { events, next_cursor: null };
       }
       cursor = page.nextCursor ?? undefined;
     } while (cursor !== undefined);
+    return { events, next_cursor: null };
   } catch (e) {
     console.error("audit read failed:", e);
     throw new ServiceUnavailableError("History is temporarily unavailable.");
   }
-  return events;
 }
 
 /** Map one SDK audit event into the record shape the History endpoints serialize. */

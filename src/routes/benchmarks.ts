@@ -57,7 +57,7 @@ import { collectionResponse, noContentResponse, resourceResponse } from "../http
 import { getAuth, getOptionalAuth, optionalAuth, requireAuth, type AppBindings } from "../http/middleware";
 import { paginationMeta } from "../query/pagination";
 import { parseSearchQuery } from "../query/search";
-import { emitAuditEvent, listHistoryEvents } from "../audit/smpl_audit";
+import { emitAuditEvent, listHistoryEvents, type HistoryListOptions } from "../audit/smpl_audit";
 import {
   canonical,
   diffMeasurementSchema,
@@ -388,14 +388,59 @@ benchmarks.get("/:id/history", optionalAuth, async (c) => {
   const covered = auth !== undefined && covers(auth, { account_id: row.account_id, benchmark_id: row.id });
   if (!covered && !isPublicStatus(row.status)) throw new NotFoundError();
   const fullActors = covered && auth !== undefined && auth.scope_type === "ACCOUNT";
-  const events = await listHistoryEvents(c.env, { benchmark_id: row.id });
-  const visible = covered ? events : events.filter((e) => e.visibility === "public");
+  const options = parseHistoryQuery(c);
+  const page = await listHistoryEvents(c.env, { benchmark_id: row.id }, options);
+  const visible = covered ? page.events : page.events.filter((e) => e.visibility === "public");
   const redact = fullActors ? null : { publisher_label: publisherLabel(row) };
   return collectionResponse(
     visible.map((e) => serializeHistoryEvent(e, redact)),
-    { meta: { count: visible.length } },
+    { meta: { count: visible.length, next_cursor: page.next_cursor } },
   );
 });
+
+/** The benchmark history endpoint is cursor-paged (the audit store has no stable offsets). */
+const HISTORY_DEFAULT_PAGE_SIZE = 50;
+const HISTORY_MAX_PAGE_SIZE = 200;
+
+/**
+ * Parse the history list's query params: page[size] (1..200, default 50), page[after] (opaque
+ * cursor), filter[event_type] (exact slug), filter[from]/filter[to] (inclusive occurred_at
+ * bounds, any ISO-8601 datetime — normalized so the audit store's range grammar always accepts
+ * them). Visibility is filtered after the audit read, so a page may hold fewer than page[size]
+ * events; walk next_cursor until null for the full record.
+ */
+function parseHistoryQuery(c: Context<AppBindings>): HistoryListOptions {
+  const rawSize = c.req.query("page[size]");
+  let page_size = HISTORY_DEFAULT_PAGE_SIZE;
+  if (rawSize !== undefined) {
+    if (!/^\d+$/.test(rawSize)) throw new BadRequestError("page[size] must be a positive integer.");
+    page_size = Number(rawSize);
+    if (page_size < 1 || page_size > HISTORY_MAX_PAGE_SIZE) {
+      throw new BadRequestError(`page[size] must be between 1 and ${HISTORY_MAX_PAGE_SIZE}.`);
+    }
+  }
+  const isoBound = (name: string): string | undefined => {
+    const raw = c.req.query(name);
+    if (raw === undefined) return undefined;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestError(`${name} must be an ISO-8601 datetime.`);
+    }
+    return parsed.toISOString();
+  };
+  const from = isoBound("filter[from]");
+  const to = isoBound("filter[to]");
+  if (from !== undefined && to !== undefined && from > to) {
+    throw new BadRequestError("filter[from] must not be after filter[to].");
+  }
+  return {
+    page_size,
+    page_after: c.req.query("page[after]"),
+    event_type: c.req.query("filter[event_type]"),
+    from,
+    to,
+  };
+}
 
 // ── Popularity ───────────────────────────────────────────────────────────────
 

@@ -330,7 +330,7 @@ runs.get("/:id/history", optionalAuth, async (c) => {
     covers(auth, { account_id: benchmark.account_id, benchmark_id: benchmark.id, run_id: run.id });
   if (!covered && !isPublicStatus(benchmark.status)) throw new NotFoundError();
   const fullActors = covered && auth !== undefined && auth.scope_type === "ACCOUNT";
-  const events = await listHistoryEvents(c.env, { resource_type: "run", resource_id: run.id });
+  const { events } = await listHistoryEvents(c.env, { resource_type: "run", resource_id: run.id });
   const visible = covered ? events : events.filter((e) => e.visibility === "public");
   const redact = fullActors ? null : { publisher_label: publisherLabel(benchmark) };
   return collectionResponse(

@@ -121,8 +121,8 @@ measurements.post("/", requireAuth, async (c) => {
   }
   assertBenchmarkEditable(benchmark);
   // Measurements may land at any lifecycle stage — post-publish ingest and appends to an ended run
-  // are allowed and audited (the record is auditable, not frozen). Only the publisher's explicit
-  // "closed" signal refuses new data (it's reversible via reopen).
+  // are allowed (the record is auditable, not frozen). Only the publisher's explicit "closed"
+  // signal refuses new data (it's reversible via reopen).
   if (benchmark.closed_at !== null) {
     throw new ConflictError("This benchmark is closed; no new measurements can be added.");
   }
@@ -148,20 +148,11 @@ measurements.post("/", requireAuth, async (c) => {
     client_ip: clientIp,
   });
 
-  const visibility = benchmark.status === "PRIVATE" ? "internal" : "public";
-  emitAuditEvent(c, {
-    event_type: "measurement.created",
-    resource_type: "measurement",
-    resource_id: String(id),
-    benchmark_id: benchmark.id,
-    visibility,
-    description: "Measurement recorded.",
-    extra: { run_id: run.id, subject_id: subject.id },
-    actor: auth,
-  });
-  // Appending to a run that had already ended is legitimate but noteworthy — it gets its own
-  // run-level event so the run's history shows the late addition.
+  // Plain ingest is data flow, not a change to the record, so it carries no audit event — a live
+  // benchmark's beacon would otherwise drown the history in measurement.created noise. Corrections
+  // and deletes stay audited; the one noteworthy ingest shape is an append to an ended run.
   if (run.ended_at !== null) {
+    const visibility = benchmark.status === "PRIVATE" ? "internal" : "public";
     emitAuditEvent(c, {
       event_type: "run.appended",
       resource_type: "run",

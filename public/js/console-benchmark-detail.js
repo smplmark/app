@@ -907,7 +907,6 @@
       "run.reopened": "Run reopened",
       "run.appended": "Run appended",
       "run.invalidated": "Run invalidated",
-      "measurement.created": "Measurement recorded",
       "measurement.corrected": "Measurement corrected",
       "measurement.deleted": "Measurement deleted",
       "subject.created": "Subject created",
@@ -952,8 +951,18 @@
       onRowClick: openHistoryEventModal,
     });
     try {
-      const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID) + "/history");
-      table.setRows((doc && doc.data) || []);
+      // The endpoint is cursor-paged; walk next_cursor so the console table holds the full trail
+      // (its own paging/sorting is client-side). Bounded — a runaway trail can't wedge the tab.
+      const rows = [];
+      let cursor = null;
+      for (let i = 0; i < 20; i++) {
+        const qs = "?page[size]=200" + (cursor ? "&page[after]=" + encodeURIComponent(cursor) : "");
+        const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID) + "/history" + qs);
+        rows.push.apply(rows, (doc && doc.data) || []);
+        cursor = (doc && doc.meta && doc.meta.next_cursor) || null;
+        if (!cursor) break;
+      }
+      table.setRows(rows);
     } catch (err) {
       $("history-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
     }
