@@ -115,9 +115,10 @@ describe("api key scope resolution", () => {
 
     const bench = await mintKey(me.token, { scope_type: "BENCHMARK", scope_ref: b.id });
     expect(bench.resource.attributes.scope_type).toBe("BENCHMARK");
-    // A RUN key's scope_ref is an internal reference — still keyed by the run's UUID.
+    // A RUN key is scoped by the run's customer-facing key; the stored/returned scope_ref remains the
+    // internal id (the stable handle covers()/the cascade key on).
     const rId = await runUuid(r);
-    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: rId });
+    const run = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     expect(run.resource.attributes.scope_ref).toBe(rId);
 
     // scope_ref required for non-ACCOUNT scopes.

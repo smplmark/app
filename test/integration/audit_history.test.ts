@@ -606,7 +606,7 @@ describe("review fixes: scoped keys, close/reopen, canonical diffs", () => {
     const run = await makeRun(token, bm.id);
     await makeSubject(token, bm.id);
     await publish(token, user_id, bm.id);
-    const { key } = await mintKey(token, { scope_type: "RUN", scope_ref: await runUuid(run) });
+    const { key } = await mintKey(token, { scope_type: "RUN", scope_ref: run.id });
     auditGetResponse = () =>
       Response.json({
         data: [

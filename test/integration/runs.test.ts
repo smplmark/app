@@ -366,7 +366,7 @@ describe("post-publish run rules (editable, never deletable)", () => {
     const me = await register();
     const { b, t, r } = await scaffold(me.token);
     await makeMeasurement(me.token, r.id, t.id, { metrics: { skew_ms: 1 } });
-    const { resource: key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
+    const { resource: key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     expect(b.attributes.status).toBe("PRIVATE");
     expect((await apiDelete(`/api/v1/runs/${r.id}`, bearer(me.token))).status).toBe(204);
     // The run-scoped key authorizes nothing once its run is gone — it must not linger.

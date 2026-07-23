@@ -371,7 +371,7 @@ const apiKey = registerEntity(
     scope_type: z
       .enum(["ACCOUNT", "BENCHMARK", "RUN"])
       .openapi({ description: "The breadth of access to grant." }),
-    scope_ref: z.string().optional().openapi({ description: "The id of the benchmark or run to scope the key to. Required unless scope_type is ACCOUNT." }),
+    scope_ref: z.string().optional().openapi({ description: "The resource to scope the key to: a benchmark's id for a benchmark-scoped key, or a run's key (its public id) for a run-scoped key. Required unless scope_type is ACCOUNT." }),
     expires_at: dateTime("When the key should expire. Omit for a non-expiring key.").optional(),
   }),
 );
@@ -1276,7 +1276,7 @@ registry.registerPath({
   security: bearerSecurity,
   parameters: [
     filterParam("scope_type", "Limit results to keys of this scope: ACCOUNT, BENCHMARK, or RUN."),
-    filterParam("scope_ref", "Limit results to keys scoped to this specific benchmark or run id (use with filter[scope_type])."),
+    filterParam("scope_ref", "Limit results to keys scoped to this resource: a benchmark's id, or a run's key (use with filter[scope_type])."),
     ...paginationParams,
   ],
   responses: {

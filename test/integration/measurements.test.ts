@@ -381,7 +381,7 @@ describe("run reference by key (key-as-id migration)", () => {
     const { b, t, r } = await scaffold(me.token);
 
     // A RUN-scoped key references its own run by key; the scope resolves the key to its run.
-    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
+    const { key: runKey } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     expect((await apiPost("/api/v1/measurements", measurement({ run: r.id, subject: t.id }), bearer(runKey))).status).toBe(201);
 
     // A BENCHMARK-scoped key resolves the run key within its scoped benchmark.

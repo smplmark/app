@@ -43,7 +43,7 @@ describe("benchmark create defaults + scoped-key visibility", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
-    const { key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: await runUuid(r) });
+    const { key } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     expect((await apiGet(`/api/v1/benchmarks/${b.id}`, bearer(key))).status).toBe(404);
     // But it can read measurements of its own run (referenced by the run's public key).
     expect((await apiGet(`/api/v1/measurements?filter[run]=${r.id}`, bearer(key))).status).toBe(200);
@@ -95,8 +95,8 @@ describe("api key expiry + rotate scope", () => {
     const me = await register();
     const b = await makeBenchmark(me.token);
     const r = await makeRun(me.token, b.id);
-    const rId = await runUuid(r);
-    const { resource } = await mintKey(me.token, { scope_type: "RUN", scope_ref: rId });
+    const rId = await runUuid(r); // the internal id we store/return as scope_ref
+    const { resource } = await mintKey(me.token, { scope_type: "RUN", scope_ref: r.id });
     const rot = await apiPost(`/api/v1/api_keys/${resource.id}/actions/rotate`, undefined, bearer(me.token));
     const rotated = ((await rot.json()) as { data: Resource }).data;
     expect(rotated.attributes.scope_type).toBe("RUN");

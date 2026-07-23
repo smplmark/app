@@ -10,7 +10,7 @@ import {
   revokeApiKey,
   updateApiKeyName,
 } from "../data/api_keys";
-import { getRunById } from "../data/runs";
+import { resolveOwnedRun } from "../data/runs";
 import { ForbiddenError, NotFoundError } from "../errors";
 import {
   optionalStringOrNull,
@@ -57,8 +57,12 @@ async function requestedScopeChain(
       scope_ref: b.id,
     };
   }
-  // RUN
-  const run = await getRunById(db, scopeRef);
+  // RUN — the run is named by its customer-facing key (the run resource's public id), never the
+  // internal id, resolved within the caller's scope (a bare key is unique only per benchmark, so
+  // resolveOwnedRun disambiguates against the credential's scope and 409s an ambiguous account-wide
+  // key). The tenant floor is applied here and re-asserted below; the stored scope_ref stays the
+  // internal run id — the stable handle covers() and the delete-cascade key on.
+  const run = await resolveOwnedRun(db, auth, scopeRef, true);
   if (!run) throw new NotFoundError();
   const b = await getBenchmarkById(db, run.benchmark_id);
   if (!b || b.account_id !== auth.account_id) throw new NotFoundError();
@@ -103,17 +107,29 @@ apiKeys.get("/", requireAuth, async (c) => {
   const sort = readSort(c, "-created_at", SORT_ALLOWED);
   const scopeTypeFilter = c.req.query("filter[scope_type]");
   const scopeRefFilter = c.req.query("filter[scope_ref]");
+  const scopeType =
+    scopeTypeFilter !== undefined
+      ? requireEnum({ scope_type: scopeTypeFilter }, "scope_type", SCOPE_TYPES)
+      : undefined;
+  // A run-scoped filter names the run by its customer-facing key (never the internal id); resolve it
+  // to the internal run id we store as scope_ref (tenant-scoped, so a run in another account matches
+  // nothing — an empty list, not a leak). Other scopes filter the stored value directly.
+  let scopeRef = scopeRefFilter;
+  if (scopeType === "RUN" && scopeRefFilter !== undefined) {
+    const run = await resolveOwnedRun(c.env.DB, auth, scopeRefFilter, true);
+    if (!run) {
+      return collectionResponse([], { meta: { pagination: paginationMeta(pagination, 0) } });
+    }
+    scopeRef = run.id;
+  }
   const { rows, total } = await listApiKeys(c.env.DB, {
     account_id: auth.account_id,
     sort,
     limit: pagination.limit,
     offset: pagination.offset,
     includeTotal: pagination.includeTotal,
-    scope_type:
-      scopeTypeFilter !== undefined
-        ? requireEnum({ scope_type: scopeTypeFilter }, "scope_type", SCOPE_TYPES)
-        : undefined,
-    scope_ref: scopeRefFilter !== undefined ? scopeRefFilter : undefined,
+    scope_type: scopeType,
+    scope_ref: scopeRef !== undefined ? scopeRef : undefined,
   });
   return collectionResponse(
     rows.map((r) => serializeApiKey(r)),
