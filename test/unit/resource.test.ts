@@ -171,6 +171,31 @@ describe("serializeBenchmark", () => {
     expect(out.attributes).not.toHaveProperty("account_id");
   });
 
+  it("surfaces the frozen publisher since-date in published_as for ORGANIZATION and PERSONAL", () => {
+    const org = serializeBenchmark(
+      { ...priv, published_as_kind: "ORGANIZATION", attribution_snapshot: JSON.stringify({ domain: "acme.com", icon: "monogram", since: T0 }) },
+      [],
+    );
+    expect(org.attributes.published_as).toMatchObject({
+      kind: "ORGANIZATION", domain: "acme.com", icon: "monogram", since: new Date(T0).toISOString(),
+    });
+
+    const personal = serializeBenchmark(
+      { ...priv, published_as_kind: "PERSONAL", attribution_snapshot: JSON.stringify({ display_name: "Ada", email_sha256: "a".repeat(64), since: T0 }) },
+      [],
+    );
+    expect(personal.attributes.published_as).toMatchObject({
+      kind: "PERSONAL", display_name: "Ada", since: new Date(T0).toISOString(),
+    });
+
+    // A pre-`since` snapshot simply omits it — no crash, no null field.
+    const legacy = serializeBenchmark(
+      { ...priv, published_as_kind: "ORGANIZATION", attribution_snapshot: JSON.stringify({ domain: "acme.com", icon: "monogram" }) },
+      [],
+    );
+    expect(legacy.attributes.published_as).not.toHaveProperty("since");
+  });
+
   it("null created_by for an API-key-created benchmark", () => {
     expect(serializeBenchmark({ ...priv, created_by_user_id: null }, []).attributes.created_by).toBeNull();
   });

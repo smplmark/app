@@ -389,6 +389,7 @@ const PublishedAs = z
     source_url: z.string().optional().openapi({ description: "A link back to the source's original data (INGESTED only)." }),
     license: z.string().optional().openapi({ description: "The source's license for the ingested results (INGESTED only), e.g. \"CC0\"." }),
     retrieved_at: dateTime("When the ingested data was retrieved from the source (INGESTED only).").optional(),
+    since: dateTime("When this publisher joined smplmark (their account's creation date), captured at publish for a \"publishing since\" byline. Present for PERSONAL and ORGANIZATION publishes.").optional(),
   })
   .openapi("PublishedAs", {
     description:
@@ -1061,10 +1062,14 @@ registry.registerPath({
   method: "get",
   path: "/api/v1/accounts/{id}",
   tags: ["Accounts"],
-  summary: "Get an account by id",
-  request: { params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The id of the account." }) }) },
+  summary: "Get your own account by id",
+  description:
+    "Returns the caller's own account. Any other id is a 404 — this is not a public account directory. A publisher's public identity (name/domain, verification tier, and \"publishing since\") travels on each benchmark's `published_as`, so no account lookup is needed to render a publisher.",
+  security: bearerSecurity,
+  request: { params: z.object({ id: z.string().openapi({ param: { name: "id", in: "path" }, description: "The account id — must be the caller's own account." }) }) },
   responses: {
     "200": domainResponse(account.Response, "The requested account."),
+    "401": errorJson("Authentication credentials are missing, invalid, expired, or revoked."),
     "404": errorJson("The requested resource was not found."),
   },
 });

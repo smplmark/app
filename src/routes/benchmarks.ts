@@ -527,6 +527,12 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
   const attrs = await readAttributes(c).catch(() => ({}) as Record<string, unknown>);
   const publisherRef = optionalStringOrNull(attrs, "publisher") ?? null;
   const now = Date.now();
+  // Freeze the publisher account's creation date into the attribution snapshot so the public byline
+  // can show "publishing since <date>" without a live account lookup (which the public viewer would
+  // otherwise need, and which is fragile once an account is deleted). It's immutable, so a frozen
+  // copy never drifts. This is the only account fact the public surface needs.
+  const account = await getAccountById(c.env.DB, existing.account_id);
+  const publisherSince = account?.created_at ?? now;
 
   // ORGANIZATION publish — a verified publisher (domain) is named (and isn't the "self" sentinel).
   if (publisherRef !== null && publisherRef !== "self") {
@@ -539,6 +545,7 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
     const snapshot: OrgAttributionSnapshot = {
       domain: publisher.domain,
       icon: publisher.icon,
+      since: publisherSince,
     };
     const row = await publishBenchmark(c.env.DB, existing.id, now, {
       published_by_user_id: auth.user_id,
@@ -562,7 +569,6 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
   }
 
   // PERSONAL publish — attributed to the author, gated by the account's opt-in.
-  const account = await getAccountById(c.env.DB, existing.account_id);
   if (!canPublishPersonal(auth, existing, account)) {
     throw new ForbiddenError(RBAC_REASONS.publishPersonal);
   }
@@ -570,6 +576,7 @@ benchmarks.post("/:id/actions/publish", requireAuth, async (c) => {
   const snapshot: PersonalAttributionSnapshot = {
     display_name: author?.display_name ?? null,
     email_sha256: await sha256Hex((author?.email ?? "").trim().toLowerCase()),
+    since: publisherSince,
   };
   const row = await publishBenchmark(c.env.DB, existing.id, now, {
     published_by_user_id: auth.user_id,

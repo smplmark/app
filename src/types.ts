@@ -246,6 +246,9 @@ export interface BenchmarkTagRow {
 export interface OrgAttributionSnapshot {
   domain: string;
   icon: PublisherIconKind;
+  /** The publisher account's creation date (epoch-ms), frozen so the public byline can show a
+   *  "publishing since" line without a live account lookup. Optional: absent on pre-v-since snapshots. */
+  since?: number;
 }
 
 /** The frozen-at-publish attribution for a PERSONAL publish. */
@@ -253,6 +256,9 @@ export interface PersonalAttributionSnapshot {
   display_name: string | null;
   /** SHA-256 of the author's normalized email at publish (for a stable gravatar). */
   email_sha256: string;
+  /** The publisher account's creation date (epoch-ms), frozen for a "publishing since" byline.
+   *  Optional: absent on pre-v-since snapshots. */
+  since?: number;
 }
 
 /**

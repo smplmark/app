@@ -54,16 +54,21 @@ describe("accounts", () => {
     expect(((await put.json()) as { data: Resource }).data.attributes.name).toBe("Acme");
   });
 
-  it("exposes a publisher publicly only once it has a world-visible benchmark", async () => {
+  it("GET /accounts/{id} is authenticated and scoped to the caller's own account", async () => {
     const me = await register();
-    // No public benchmark yet → anonymous lookup 404.
-    expect((await apiGet(`/api/v1/accounts/${me.account_id}`)).status).toBe(404);
-    // Owner can still read their own account by id.
+    const other = await register("other-acct@example.com");
+    // Anonymous → 401. There is no public account directory; a publisher's public identity rides on
+    // each benchmark's published_as instead.
+    expect((await apiGet(`/api/v1/accounts/${me.account_id}`)).status).toBe(401);
+    // Authenticated, own account → 200.
     expect((await apiGet(`/api/v1/accounts/${me.account_id}`, bearer(me.token))).status).toBe(200);
-
+    // Authenticated, someone else's account → indistinguishable 404 (no cross-account probing, no
+    // leak of another account's name / personal-publish setting).
+    expect((await apiGet(`/api/v1/accounts/${other.account_id}`, bearer(me.token))).status).toBe(404);
+    // Publishing a world-visible benchmark no longer makes the account itself publicly readable.
     const b = await makeBenchmark(me.token);
     await publish(me.token, me.user_id, b.id);
-    expect((await apiGet(`/api/v1/accounts/${me.account_id}`)).status).toBe(200);
+    expect((await apiGet(`/api/v1/accounts/${me.account_id}`)).status).toBe(401);
   });
 });
 

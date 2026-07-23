@@ -264,10 +264,12 @@ describe("personal publish", () => {
     const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(), bearer(me.token));
     expect(ok.status).toBe(200);
     const pub = ((await ok.json()) as { data: Resource }).data;
-    const badge = pub.attributes.published_as as { kind: string; gravatar_hash: string; display_name: string | null };
+    const badge = pub.attributes.published_as as { kind: string; gravatar_hash: string; display_name: string | null; since: string };
     expect(badge.kind).toBe("PERSONAL");
     expect(badge.display_name).toBe("Test User");
     expect(badge.gravatar_hash).toMatch(/^[0-9a-f]{64}$/);
+    // The publisher account's creation date is frozen in for a "publishing since" byline.
+    expect(badge.since).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(pub.attributes.published_by).toBe(me.user_id);
   });
 
@@ -349,10 +351,13 @@ describe("organization publish", () => {
     const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
     expect(ok.status).toBe(200);
     const pub = ((await ok.json()) as { data: Resource }).data;
-    const badge = pub.attributes.published_as as { kind: string; domain: string; icon: string };
+    const badge = pub.attributes.published_as as { kind: string; domain: string; icon: string; since: string };
     expect(badge.kind).toBe("ORGANIZATION");
     expect(badge.domain).toBe(publisher.attributes.domain);
     expect(badge.icon).toBe("monogram");
+    // The publisher account's creation date is frozen in so the public byline can show "publishing
+    // since <date>" without a live account lookup.
+    expect(badge.since).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("addresses an organization publish by its verified domain, resolvable via filter[publisher]", async () => {

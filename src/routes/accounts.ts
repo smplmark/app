@@ -1,14 +1,12 @@
 import { Hono } from "hono";
 import { requireAdmin } from "../authz";
-import { getAccountById, getPublicAccountById, softDeleteAccount, updateAccount } from "../data/accounts";
+import { getAccountById, softDeleteAccount, updateAccount } from "../data/accounts";
 import { listMembershipsForUserWithAccount } from "../data/account_users";
 import { ForbiddenError, NotFoundError } from "../errors";
 import { optionalBoolean, optionalStringOrNull, requireString } from "../http/body";
 import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
 import {
   getAuth,
-  getOptionalAuth,
-  optionalAuth,
   requireAuth,
   type AppBindings,
 } from "../http/middleware";
@@ -71,14 +69,14 @@ accounts.delete("/current", requireAuth, async (c) => {
 });
 
 /** Public publisher lookup (only accounts with a world-visible benchmark), or the caller's own. */
-accounts.get("/:id", optionalAuth, async (c) => {
-  const auth = getOptionalAuth(c);
-  const id = c.req.param("id");
-  if (auth && auth.account_id === id) {
-    const own = await getAccountById(c.env.DB, id);
-    if (own) return resourceResponse(serializeAccount(own));
-  }
-  const row = await getPublicAccountById(c.env.DB, id);
-  if (!row) throw new NotFoundError();
-  return resourceResponse(serializeAccount(row));
+// Fetch an account by id. Authenticated and scoped to the caller's own account — a publisher's public
+// identity (name/domain, verified tier, "publishing since") is carried on the benchmark's frozen
+// `published_as`, so the public viewer needs no account lookup. Any other id is an indistinguishable
+// 404 (no cross-account probing, no leak of the account's name / personal-publish setting).
+accounts.get("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  if (auth.account_id !== c.req.param("id")) throw new NotFoundError();
+  const own = await getAccountById(c.env.DB, auth.account_id);
+  if (!own) throw new NotFoundError();
+  return resourceResponse(serializeAccount(own));
 });

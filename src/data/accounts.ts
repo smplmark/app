@@ -73,20 +73,6 @@ export async function getAccountByKey(
 }
 
 /** Public publisher lookup: only accounts publishing at least one world-visible benchmark. */
-export async function getPublicAccountById(
-  db: D1Database,
-  id: string,
-): Promise<AccountRow | null> {
-  return (
-    (await db
-      .prepare(
-        "SELECT * FROM account WHERE id = ? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM benchmark WHERE benchmark.account_id = account.id AND benchmark.status IN ('PUBLISHED', 'WITHDRAWN'))",
-      )
-      .bind(id)
-      .first<AccountRow>()) ?? null
-  );
-}
-
 /** Soft-delete an account: stamp deleted_at so it's blocked at auth and freed from the key index. */
 export async function softDeleteAccount(db: D1Database, id: string): Promise<void> {
   await db

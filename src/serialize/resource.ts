@@ -167,6 +167,7 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
       kind: "ORGANIZATION",
       domain: snap.domain,
       icon: snap.icon,
+      ...(snap.since != null ? { since: iso(snap.since) } : {}),
     };
   }
   if (row.published_as_kind === "INGESTED") {
@@ -184,6 +185,7 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
     kind: "PERSONAL",
     display_name: snap.display_name,
     gravatar_hash: snap.email_sha256,
+    ...(snap.since != null ? { since: iso(snap.since) } : {}),
   };
 }
 
