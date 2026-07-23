@@ -120,6 +120,10 @@
       const doc = await apiFetch("/api/v1/subjects/" + encodeURIComponent(ID));
       TG = (doc && doc.data) || null;
       if (!TG) { fail("Subject not found."); return; }
+      // A subject linked to a published benchmark is world-readable through the same API the public site
+      // uses, so this can resolve another account's subject — the console never renders another tenant's
+      // data, so redirect away silently.
+      if (!SM.guardOwnAccount((TG.attributes || {}).account)) return;
       ID = TG.id; // canonical id (the key); everything downstream keys off it
       const typeId = (TG.attributes || {}).subject_type;
       if (typeId) {

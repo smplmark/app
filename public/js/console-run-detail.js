@@ -84,6 +84,10 @@
           try { BENCH = (await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(benchId))).data || null; } catch (_e) { /* generic crumb */ }
         }
       }
+      // A run inherits its benchmark's account. The legacy ?id= path resolves a run by its stable id
+      // and published runs are world-readable, so a hand-edited link can surface another account's run —
+      // the console never renders another tenant's data, so redirect away silently.
+      if (BENCH && !SM.guardOwnAccount((BENCH.attributes || {}).account)) return;
       renderShell();
     } catch (err) { fail(err.message || "Failed to load the run."); }
   }

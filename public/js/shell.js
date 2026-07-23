@@ -1088,6 +1088,19 @@
     statusPill: function (label, variant) {
       return '<span class="statusPill is-' + esc(String(variant).toLowerCase()) + '">' + esc(label) + "</span>";
     },
+    // ── Tenant guard ── the console shows only the signed-in account's own resources. Published data is
+    // world-readable through the same API the public site uses, so a hand-edited URL can load another
+    // account's benchmark/run/subject. Pass the loaded resource's owning account id (a benchmark/subject
+    // carries `account`; a run inherits its benchmark's). When it isn't the current account, redirect to
+    // the dashboard (replace, so the foreign URL leaves no history entry) and return false so the caller
+    // stops rendering. An unknown owner (null/undefined) returns true — the API's own 404s are the
+    // backstop, and a resource the console can't attribute must not be falsely redirected.
+    guardOwnAccount: function (ownerAccountId) {
+      const mine = IDENTITY && IDENTITY.accountId;
+      if (!ownerAccountId || !mine || ownerAccountId === mine) return true;
+      location.replace("/");
+      return false;
+    },
     // ── Theme ── the profile page previews with applyThemeDom (DOM only) and, on Save, persists with
     // cacheTheme + a PUT to /users/current/settings. THEMES is the option list; normalizeTheme coerces
     // any stored/loaded value to one of them.

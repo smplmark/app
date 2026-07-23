@@ -105,6 +105,10 @@
       SUBJECT_TYPES = (typesDoc && typesDoc.data) || [];
       BM = row || null;
       if (!BM) { fail("Benchmark not found."); return; }
+      // Published benchmarks are world-readable through the same API the public site uses, so the ?id=
+      // fallback can resolve another account's benchmark — the console never renders another tenant's
+      // data, so redirect away silently.
+      if (!SM.guardOwnAccount((BM.attributes || {}).account)) return;
       ID = BM.id; // everything downstream (subresource queries, links) keys off the uuid
       render();
       loadCounts();
