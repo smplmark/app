@@ -387,7 +387,7 @@ const PublishedAs = z
     gravatar_hash: z.string().optional().openapi({ description: "A SHA-256 hash of the author's email captured at publish (PERSONAL only), for rendering an avatar." }),
     source_name: z.string().optional().openapi({ description: "The name of the source the results were ingested from (INGESTED only), e.g. \"Blender Open Data\"." }),
     source_url: z.string().optional().openapi({ description: "A link back to the source's original data (INGESTED only)." }),
-    license: z.string().optional().openapi({ description: "The source's license for the ingested results (INGESTED only), e.g. \"CC0\"." }),
+    license: z.string().optional().openapi({ description: "The license the benchmark's data is available under, e.g. \"CC-BY-4.0\". For an INGESTED benchmark this is the source's own license for the original results; for PERSONAL and ORGANIZATION publishes it is the license the publisher declared on the benchmark, and it is absent when none is declared." }),
     retrieved_at: dateTime("When the ingested data was retrieved from the source (INGESTED only).").optional(),
     since: dateTime("When this publisher joined smplmark (their account's creation date), captured at publish for a \"publishing since\" byline. Present for PERSONAL and ORGANIZATION publishes.").optional(),
   })
@@ -423,6 +423,7 @@ const benchmark = registerEntity(
     description: z.string().nullable().openapi({ description: "A one-line summary of the benchmark, or null." }),
     about: z.string().nullable().openapi({ description: "A longer description of the benchmark, or null." }),
     methodology: z.string().nullable().openapi({ description: "How the benchmark is run and measured, or null." }),
+    license: z.string().nullable().openapi({ description: "The license the publisher declares the benchmark's published data under — an SPDX identifier such as \"CC-BY-4.0\" — or null when none is declared. Shown to visitors on the public benchmark page and included in the page's structured data, so dataset search engines can surface the reuse terms. For an ingested benchmark the original source's own license (see published_as) takes precedence over this value." }),
     subject_type: z.string().nullable().openapi({ description: "The key of the subject type every linked subject conforms to — a benchmark compares like against like. Null only on legacy benchmarks that predate the field and have no subjects yet." }),
     status: z
       .enum(["PRIVATE", "PUBLISHED", "WITHDRAWN"])
@@ -456,6 +457,7 @@ const benchmark = registerEntity(
     description: z.string().max(500).optional().openapi({ description: "A one-line summary of the benchmark. At most 500 characters." }),
     about: z.string().max(20000).optional().openapi({ description: "A longer description of the benchmark. At most 20,000 characters." }),
     methodology: z.string().max(20000).optional().openapi({ description: "How the benchmark is run and measured. At most 20,000 characters." }),
+    license: z.string().max(100).optional().openapi({ description: "The license to declare the benchmark's published data under — an SPDX identifier such as \"CC-BY-4.0\" or \"CC0-1.0\". At most 100 characters. Omit or pass null to declare none." }),
     subject_type: z.string().openapi({ description: "The key of the subject type every linked subject must conform to (a benchmark compares like against like). Must name a subject type in the same account. Fixed while any subjects are linked." }),
     measurement_schema: MeasurementSchema.optional(),
     category: z

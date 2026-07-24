@@ -12,5 +12,6 @@ export const LIMITS = {
   keyLength: 100,
   nameLength: 200,
   descriptionLength: 500,
+  licenseLength: 100,
   longTextLength: 20_000,
 };

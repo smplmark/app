@@ -195,6 +195,27 @@ describe("editing a published benchmark (the old freeze, now audited)", () => {
     expect(changes.description).toEqual({ before: null, after: "clearer wording" });
   });
 
+  it("a license change is an ordinary audited edit with a before/after diff", async () => {
+    const { token, user_id } = await register();
+    const bm = await makeBenchmark(token);
+    await publish(token, user_id, bm.id);
+    captured = [];
+
+    const fresh = ((await (await apiGet(`/api/v1/benchmarks/${bm.id}`, bearer(token))).json()) as { data: Resource }).data;
+    const res = await apiPut(
+      `/api/v1/benchmarks/${bm.id}`,
+      { data: { type: "benchmark", attributes: { ...(fresh.attributes as Record<string, unknown>), license: "CC-BY-4.0" } } },
+      bearer(token),
+    );
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(byType("benchmark.edited")).toHaveLength(1));
+    const ev = byType("benchmark.edited")[0];
+    expect(ev.data.semantic_core).toBe(false);
+    const changes = ev.data.changes as Record<string, { before: unknown; after: unknown }>;
+    expect(Object.keys(changes)).toEqual(["license"]);
+    expect(changes.license).toEqual({ before: null, after: "CC-BY-4.0" });
+  });
+
   it("an unchanged round-trip PUT emits nothing", async () => {
     const { token, user_id } = await register();
     const bm = await makeBenchmark(token);

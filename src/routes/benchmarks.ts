@@ -92,6 +92,21 @@ async function requireSubjectType(db: D1Database, accountId: string, attrs: Reco
   }
   return type.id;
 }
+/** The optional publisher-declared license: a trimmed non-empty string (an SPDX identifier, e.g.
+ *  "CC-BY-4.0" — any identifier is accepted, not a fixed list); null or omitted → none declared. */
+function readLicense(attrs: Record<string, unknown>): string | null {
+  const raw = optionalStringOrNull(attrs, "license", LIMITS.licenseLength);
+  if (raw === undefined || raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new BadRequestError(
+      "license must be a non-empty string (an SPDX identifier, e.g. \"CC-BY-4.0\") or null.",
+      { pointer: "/data/attributes/license" },
+    );
+  }
+  return trimmed;
+}
+
 const PUBLIC_STATUSES: Status[] = ["PUBLISHED", "WITHDRAWN"];
 const SORT_ALLOWED = [
   "name",
@@ -172,6 +187,7 @@ benchmarks.post("/", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
+  const license = readLicense(attrs);
   const subject_type = await requireSubjectType(c.env.DB, auth.account_id, attrs);
   const measurement_schema =
     "measurement_schema" in attrs ? validateMeasurementSchema(attrs.measurement_schema) : EMPTY_SCHEMA;
@@ -191,6 +207,7 @@ benchmarks.post("/", requireAuth, async (c) => {
     description,
     about,
     methodology,
+    license,
     subject_type,
     measurement_schema,
     category,
@@ -285,6 +302,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
   const description = optionalStringOrNull(attrs, "description", LIMITS.descriptionLength) ?? null;
   const about = optionalStringOrNull(attrs, "about", LIMITS.longTextLength) ?? null;
   const methodology = optionalStringOrNull(attrs, "methodology", LIMITS.longTextLength) ?? null;
+  const license = readLicense(attrs);
   const subject_type = await requireSubjectType(c.env.DB, existing.account_id, attrs);
   // The subject type is fixed while subjects are linked — they conform to it. (Setting it on a
   // pre-0023 row that never had one is fine; that's the null → value transition.)
@@ -311,6 +329,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     ["description", existing.description, description],
     ["about", existing.about, about],
     ["methodology", existing.methodology, methodology],
+    ["license", existing.license, license],
     ["subject_type", existing.subject_type, subject_type],
     ["category", existing.category, category],
   ];
@@ -329,6 +348,7 @@ benchmarks.put("/:id", requireAuth, async (c) => {
     description,
     about,
     methodology,
+    license,
     subject_type,
     measurement_schema,
     category,

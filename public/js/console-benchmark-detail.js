@@ -25,7 +25,7 @@
 
   // Edit-mode state for the Details tab.
   let editing = false;
-  let form = { name: "", description: "", about: "", methodology: "", subject_type: "", tags: "" };
+  let form = { name: "", description: "", about: "", methodology: "", license: "", subject_type: "", tags: "" };
 
   // Tags are typed as a space/comma-separated string in the form; the API takes an array of lowercase
   // slugs (validated server-side). Parse to a deduped, lowercased list; compare as a set (the API
@@ -276,6 +276,7 @@
       form.description !== (a.description || "") ||
       form.about !== (a.about || "") ||
       form.methodology !== (a.methodology || "") ||
+      form.license !== (a.license || "") ||
       form.subject_type !== (a.subject_type || "") ||
       !sameTags(parseTags(form.tags), a.tags || [])
     );
@@ -283,7 +284,7 @@
   function enterEdit() {
     const a = BM.attributes || {};
     editing = true;
-    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "", subject_type: a.subject_type || "", tags: (a.tags || []).join(" ") };
+    form = { name: a.name || "", description: a.description || "", about: a.about || "", methodology: a.methodology || "", license: a.license || "", subject_type: a.subject_type || "", tags: (a.tags || []).join(" ") };
     renderTab();
   }
   function exitEdit() { editing = false; window.removeEventListener("beforeunload", onBeforeUnload); }
@@ -331,7 +332,7 @@
         const el = p.querySelector('[data-edit="' + name + '"]');
         if (el) el.addEventListener("input", () => { form[name] = el.value; SM.clearFieldError(el); });
       };
-      ["name", "description", "about", "methodology", "tags"].forEach(bind);
+      ["name", "description", "about", "methodology", "license", "tags"].forEach(bind);
       const stSel = p.querySelector('[data-edit="subject_type"]');
       if (stSel) stSel.addEventListener("change", () => { form.subject_type = stSel.value; SM.clearFieldError(stSel); });
       $("d-cancel").addEventListener("click", cancelEdit);
@@ -351,6 +352,7 @@
       SM.detailField("Description", { value: a.description }) +
       SM.detailField("Overview", { value: a.about, multiline: true }) +
       SM.detailField("Methodology", { value: a.methodology, multiline: true }) +
+      SM.detailField("License", { value: a.license, emptyText: "—" }) +
       SM.detailField("Tags", { value: (a.tags && a.tags.length) ? a.tags.join(", ") : "", emptyText: "—" })
     );
   }
@@ -384,6 +386,7 @@
       f("Description", "description") +
       f("Overview", "about", { textarea: true, rows: 10, help: "Supports Markdown." }) +
       f("Methodology", "methodology", { textarea: true, rows: 12, help: "Supports Markdown." }) +
+      f("License", "license", { placeholder: "SPDX identifier, e.g. CC-BY-4.0", help: "The license your published data is available under. Shown to visitors and to dataset search engines." }) +
       f("Tags", "tags", { placeholder: "e.g. llm evaluation latency", help: "Separate with spaces or commas. Lowercase letters, digits, and . _ - — up to 20 tags." })
     );
   }
@@ -423,6 +426,7 @@
         description: form.description.trim() || null,
         about: form.about.trim() || null,
         methodology: form.methodology.trim() || null,
+        license: form.license.trim() || null,
         subject_type: form.subject_type,
         measurement_schema: a.measurement_schema,
         tags: parseTags(form.tags),

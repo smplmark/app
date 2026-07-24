@@ -161,12 +161,17 @@ export function serializeApiKey(
  */
 function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
   if (row.published_as_kind === null || row.attribution_snapshot === null) return null;
+  // The declared license rides along for PERSONAL/ORGANIZATION publishes (it's a live, editable
+  // benchmark field, not part of the frozen snapshot). INGESTED benchmarks instead surface the
+  // SOURCE's license from the snapshot — it describes the original data's terms, so it wins.
+  const declared = row.license !== null ? { license: row.license } : {};
   if (row.published_as_kind === "ORGANIZATION") {
     const snap = JSON.parse(row.attribution_snapshot) as OrgAttributionSnapshot;
     return {
       kind: "ORGANIZATION",
       domain: snap.domain,
       icon: snap.icon,
+      ...declared,
       ...(snap.since != null ? { since: iso(snap.since) } : {}),
     };
   }
@@ -185,6 +190,7 @@ function buildPublishedAs(row: BenchmarkRow): Record<string, unknown> | null {
     kind: "PERSONAL",
     display_name: snap.display_name,
     gravatar_hash: snap.email_sha256,
+    ...declared,
     ...(snap.since != null ? { since: iso(snap.since) } : {}),
   };
 }
@@ -225,6 +231,7 @@ export function serializeBenchmark(
     description: row.description,
     about: row.about,
     methodology: row.methodology,
+    license: row.license,
     // The subject type is referenced by its key (its public id), consistent with the subject_type
     // resource; the internal subject_type UUID is never surfaced. Null when the benchmark is untyped.
     subject_type: row.subject_type_key,

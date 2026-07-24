@@ -196,6 +196,9 @@ export interface BenchmarkRow {
   description: string | null;
   about: string | null;
   methodology: string | null;
+  /** Publisher-declared license for the benchmark's published data (an SPDX identifier), or null.
+   *  INGESTED benchmarks carry their source's license in the attribution snapshot instead. */
+  license: string | null;
   /** The subject_type every linked subject must conform to (a benchmark compares like against like).
    *  Nullable at the DB level for pre-0023 rows with no subjects; the API requires it on write. */
   subject_type: string | null;

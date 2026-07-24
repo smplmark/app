@@ -273,6 +273,31 @@ describe("personal publish", () => {
     expect(pub.attributes.published_by).toBe(me.user_id);
   });
 
+  it("carries the declared license into published_as for a PERSONAL publish; absent when undeclared, editable after publish", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token, { license: "CC-BY-4.0" });
+    const pub = await publish(me.token, me.user_id, b.id);
+    expect((pub.attributes.published_as as { license?: string }).license).toBe("CC-BY-4.0");
+
+    // No declared license → the badge omits the field rather than carrying null.
+    const bare = await makeBenchmark(me.token, { key: "no-license" });
+    const barePub = await publish(me.token, me.user_id, bare.id);
+    expect(barePub.attributes.published_as).not.toHaveProperty("license");
+
+    // The license is a live, editable field (not part of the frozen snapshot): a post-publish
+    // get-mutate-put change shows up in the badge immediately.
+    const fresh = ((await (await apiGet(`/api/v1/benchmarks/${b.id}`, bearer(me.token))).json()) as { data: Resource }).data;
+    const res = await apiPut(
+      `/api/v1/benchmarks/${b.id}`,
+      { data: { type: "benchmark", attributes: { ...(fresh.attributes as Record<string, unknown>), license: "CC0-1.0" } } },
+      bearer(me.token),
+    );
+    expect(res.status).toBe(200);
+    const edited = ((await res.json()) as { data: Resource }).data;
+    expect(edited.attributes.license).toBe("CC0-1.0");
+    expect((edited.attributes.published_as as { license?: string }).license).toBe("CC0-1.0");
+  });
+
   it('accepts the "self" sentinel as an explicit personal publish', async () => {
     const me = await register();
     await markVerified(me.user_id);
@@ -358,6 +383,19 @@ describe("organization publish", () => {
     // The publisher account's creation date is frozen in so the public byline can show "publishing
     // since <date>" without a live account lookup.
     expect(badge.since).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("carries the declared license into published_as for an ORGANIZATION publish", async () => {
+    const me = await register();
+    await markVerified(me.user_id);
+    const publisher = await verifiedPublisher(me.token);
+    const b = await makeBenchmark(me.token, { license: "ODbL-1.0" });
+    await seedPublishable(me.token, b.id);
+    await markReady(me.token, b.id);
+    const ok = await apiPost(`/api/v1/benchmarks/${b.id}/actions/publish`, publishBody(publisher.id), bearer(me.token));
+    expect(ok.status).toBe(200);
+    const badge = ((await ok.json()) as { data: Resource }).data.attributes.published_as as { license?: string };
+    expect(badge.license).toBe("ODbL-1.0");
   });
 
   it("addresses an organization publish by its verified domain, resolvable via filter[publisher]", async () => {

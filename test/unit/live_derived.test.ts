@@ -32,7 +32,7 @@ beforeEach(async () => {
 /** A fresh account + a subject type + a benchmark (satisfies the benchmark_metric FK). */
 async function makeBenchmarkRow(accountId: string, subjectTypeId: string, key: string): Promise<string> {
   const b = await createBenchmark(env.DB, {
-    account_id: accountId, key, name: key, description: null, about: null, methodology: null,
+    account_id: accountId, key, name: key, description: null, about: null, methodology: null, license: null,
     subject_type: subjectTypeId, measurement_schema: EMPTY_SCHEMA, category: "OTHER", created_by_user_id: null,
   });
   return b.id;

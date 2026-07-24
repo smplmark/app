@@ -26,7 +26,7 @@ async function bench(key: string): Promise<string> {
     (await createSubjectType(env.DB, { account_id: account.id, key: "st", name: "ST", fields: [] }));
   const row = await createBenchmark(env.DB, {
     account_id: account.id, key, name: key, description: null, about: null,
-    methodology: null, subject_type: subjectType.id, measurement_schema: { metrics: [], derived: [] },
+    methodology: null, license: null, subject_type: subjectType.id, measurement_schema: { metrics: [], derived: [] },
     category: "OTHER", created_by_user_id: null,
   });
   return row.id;

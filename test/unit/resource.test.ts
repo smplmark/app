@@ -142,7 +142,7 @@ describe("serializeApiKey", () => {
 describe("serializeBenchmark", () => {
   const priv: BenchmarkRowWithPublisher = {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
-    description: null, about: null, methodology: null,
+    description: null, about: null, methodology: null, license: null,
     // subject_type is the internal UUID (never surfaced); subject_type_key is the wire reference.
     subject_type: "st-uuid-1", subject_type_key: "cpu", status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
@@ -298,6 +298,38 @@ describe("serializeBenchmark", () => {
       retrieved_at: ISO0,
     });
   });
+
+  it("surfaces the declared license: top-level always, in the badge for PERSONAL/ORGANIZATION; the INGESTED snapshot wins", () => {
+    expect(serializeBenchmark(priv, []).attributes.license).toBeNull();
+    const lic = { ...priv, license: "CC-BY-4.0" };
+    expect(serializeBenchmark(lic, []).attributes.license).toBe("CC-BY-4.0");
+
+    const personalSnap = JSON.stringify({ display_name: "Ada", email_sha256: "h" });
+    const personal = serializeBenchmark({ ...lic, published_as_kind: "PERSONAL", attribution_snapshot: personalSnap }, []);
+    expect((personal.attributes.published_as as Record<string, unknown>).license).toBe("CC-BY-4.0");
+
+    const org = serializeBenchmark(
+      { ...lic, published_as_kind: "ORGANIZATION", attribution_snapshot: JSON.stringify({ domain: "acme.com", icon: "monogram" }) },
+      [],
+    );
+    expect((org.attributes.published_as as Record<string, unknown>).license).toBe("CC-BY-4.0");
+
+    // Undeclared → the badge omits the field rather than carrying null.
+    const bare = serializeBenchmark({ ...priv, published_as_kind: "PERSONAL", attribution_snapshot: personalSnap }, []);
+    expect(bare.attributes.published_as).not.toHaveProperty("license");
+
+    // INGESTED: the snapshot's source license describes the original data's terms — it wins over a
+    // declared row license.
+    const ingested = serializeBenchmark(
+      {
+        ...lic,
+        published_as_kind: "INGESTED",
+        attribution_snapshot: JSON.stringify({ source_name: "S", source_url: "https://s", license: "CC0", retrieved_at: T0 }),
+      },
+      [],
+    );
+    expect((ingested.attributes.published_as as Record<string, unknown>).license).toBe("CC0");
+  });
 });
 
 describe("serializePublisher", () => {
@@ -442,7 +474,7 @@ describe("serializeMeasurement", () => {
 describe("publisherLabel", () => {
   const priv: BenchmarkRowWithPublisher = {
     id: "b1", account_id: "a1", publisher_slug: "acme", key: "sched", name: "Sched",
-    description: null, about: null, methodology: null,
+    description: null, about: null, methodology: null, license: null,
     subject_type: null, subject_type_key: null, status: "PRIVATE",
     published_at: null, withdrawn_at: null, withdrawal_reason: null,
     measurement_schema: "{}",

@@ -121,6 +121,63 @@ describe("benchmark create + read", () => {
   });
 });
 
+describe("benchmark license (publisher-declared)", () => {
+  it("stores a trimmed declared license on create; null when omitted", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token, { license: "  CC-BY-4.0  " });
+    expect(b.attributes.license).toBe("CC-BY-4.0");
+    const none = await makeBenchmark(me.token, { key: "no-license" });
+    expect(none.attributes.license).toBeNull();
+  });
+
+  it("sets and clears the license via the full-replace PUT", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const base = {
+      name: "Scheduler Latency",
+      subject_type: b.attributes.subject_type,
+      measurement_schema: SKEW_SCHEMA,
+    };
+    const put = (attrs: Record<string, unknown>) =>
+      apiPut(`/api/v1/benchmarks/${b.id}`, putBody(attrs), bearer(me.token));
+
+    const set = await put({ ...base, license: "CC0-1.0" });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as { data: Resource }).data.attributes.license).toBe("CC0-1.0");
+
+    // Explicit null clears it.
+    const cleared = await put({ ...base, license: null });
+    expect(((await cleared.json()) as { data: Resource }).data.attributes.license).toBeNull();
+
+    // Full-replace semantics: omission clears too, like description.
+    const setAgain = await put({ ...base, license: "CC-BY-4.0" });
+    expect(setAgain.status).toBe(200);
+    const omitted = await put(base);
+    expect(((await omitted.json()) as { data: Resource }).data.attributes.license).toBeNull();
+  });
+
+  it("rejects a whitespace-only, non-string, or over-long license (400)", async () => {
+    const me = await register();
+    const b = await makeBenchmark(me.token);
+    const st = b.attributes.subject_type;
+    const create = (license: unknown) =>
+      apiPost(
+        "/api/v1/benchmarks",
+        { data: { type: "benchmark", attributes: { name: "L", subject_type: st, license } } },
+        bearer(me.token),
+      );
+    expect((await create("   ")).status).toBe(400);
+    expect((await create(42)).status).toBe(400);
+    expect((await create("x".repeat(101))).status).toBe(400);
+    const put = await apiPut(
+      `/api/v1/benchmarks/${b.id}`,
+      putBody({ name: "Scheduler Latency", subject_type: st, measurement_schema: SKEW_SCHEMA, license: "\t " }),
+      bearer(me.token),
+    );
+    expect(put.status).toBe(400);
+  });
+});
+
 describe("publish gate + lifecycle", () => {
   it("blocks publishing until the owner's email is verified", async () => {
     const me = await register();

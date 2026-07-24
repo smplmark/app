@@ -31,6 +31,8 @@ export const LIMITS = {
   nameLength: 200,
   /** description (the one-line tagline). */
   descriptionLength: 500,
+  /** license (an SPDX identifier or expression, e.g. "CC-BY-4.0"). */
+  licenseLength: 100,
   /** about + methodology (long-form prose). */
   longTextLength: 20_000,
 } as const;
