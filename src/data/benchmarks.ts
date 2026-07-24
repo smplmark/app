@@ -191,6 +191,39 @@ export async function refreshBenchmarkSearchText(
     .run();
 }
 
+/**
+ * A prepared bump of one benchmark's `updated_at` — the public "last updated" date must move when a
+ * benchmark's CHILD data changes (a run, a measurement, a subject link), not only when its own columns
+ * do. Returned as a statement (not run here) so callers fold it into the SAME db.batch() as the child
+ * mutation, keeping the parent bump atomic with the change that triggered it — mirroring how a
+ * benchmark_metric link/unlink already updates benchmark.updated_at in its own batch.
+ */
+export function touchBenchmarkStmt(
+  db: D1Database,
+  benchmarkId: string,
+  now: number,
+): D1PreparedStatement {
+  return db.prepare("UPDATE benchmark SET updated_at = ? WHERE id = ?").bind(now, benchmarkId);
+}
+
+/**
+ * A prepared bump of EVERY benchmark a subject is currently linked to. Used when the subject ENTITY
+ * itself changes (rename / delete): a subject is account-owned and M:N with benchmarks, so it has no
+ * single owning benchmark — the change surfaces on all of them. Must run BEFORE any statement that
+ * removes the subject's links in the same batch, or the subquery would see none.
+ */
+export function touchBenchmarksForSubjectStmt(
+  db: D1Database,
+  subjectId: string,
+  now: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      "UPDATE benchmark SET updated_at = ? WHERE id IN (SELECT benchmark_id FROM benchmark_subject WHERE subject_id = ?)",
+    )
+    .bind(now, subjectId);
+}
+
 /** Serves the benchmarks-per-account ceiling check on create. */
 export async function countBenchmarksForAccount(
   db: D1Database,

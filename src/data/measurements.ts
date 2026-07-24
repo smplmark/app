@@ -2,8 +2,11 @@ import type { DateRange } from "../query/daterange";
 import { dateRangePredicate } from "../query/predicates";
 import { orderByClause, type Sort } from "../query/sort";
 import type { MeasurementRow } from "../types";
+import { touchBenchmarkStmt } from "./benchmarks";
 
 export interface InsertMeasurementInput {
+  /** The benchmark that owns the measurement's run — bumped so its "last updated" reflects the ingest. */
+  benchmark_id: string;
   run_id: string;
   subject_id: string;
   created_at: number;
@@ -53,42 +56,58 @@ export async function getMeasurementById(
   );
 }
 
-/** Delete one measurement by its rowid. The route guards that the benchmark is still a draft. */
-export async function deleteMeasurement(db: D1Database, id: number): Promise<void> {
-  await db.prepare("DELETE FROM measurement WHERE id = ?").bind(id).run();
+/**
+ * Delete one measurement by its rowid, bumping its owning benchmark's `updated_at` in the same batch so
+ * the public "last updated" reflects the removal. The route guards that the benchmark is still a draft.
+ */
+export async function deleteMeasurement(
+  db: D1Database,
+  id: number,
+  benchmarkId: string,
+): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM measurement WHERE id = ?").bind(id),
+    touchBenchmarkStmt(db, benchmarkId, Date.now()),
+  ]);
 }
 
-/** Correct a measurement in place (edit-with-audit; the route records before/after). */
+/** Correct a measurement in place (edit-with-audit; the route records before/after), bumping its
+ *  owning benchmark's `updated_at` in the same batch. */
 export async function updateMeasurement(
   db: D1Database,
   id: number,
-  input: { created_at: number; metrics: string | null; meta: string | null },
+  input: { benchmark_id: string; created_at: number; metrics: string | null; meta: string | null },
 ): Promise<void> {
-  await db
-    .prepare("UPDATE measurement SET created_at=?, metrics=?, meta=? WHERE id=?")
-    .bind(input.created_at, input.metrics, input.meta, id)
-    .run();
+  await db.batch([
+    db
+      .prepare("UPDATE measurement SET created_at=?, metrics=?, meta=? WHERE id=?")
+      .bind(input.created_at, input.metrics, input.meta, id),
+    touchBenchmarkStmt(db, input.benchmark_id, Date.now()),
+  ]);
 }
 
-/** Insert a measurement; returns the database-assigned rowid. */
+/** Insert a measurement, bumping its owning benchmark's `updated_at` in the same batch; returns the
+ *  database-assigned rowid. */
 export async function insertMeasurement(
   db: D1Database,
   input: InsertMeasurementInput,
 ): Promise<number> {
-  const res = await db
-    .prepare(
-      "INSERT INTO measurement (run_id, subject_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
-    )
-    .bind(
-      input.run_id,
-      input.subject_id,
-      input.created_at,
-      input.metrics,
-      input.meta,
-      input.client_ip,
-    )
-    .run();
-  return res.meta.last_row_id;
+  const res = await db.batch([
+    db
+      .prepare(
+        "INSERT INTO measurement (run_id, subject_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
+      )
+      .bind(
+        input.run_id,
+        input.subject_id,
+        input.created_at,
+        input.metrics,
+        input.meta,
+        input.client_ip,
+      ),
+    touchBenchmarkStmt(db, input.benchmark_id, Date.now()),
+  ]);
+  return res[0].meta.last_row_id;
 }
 
 /**

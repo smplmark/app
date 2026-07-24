@@ -1,6 +1,7 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
 import type { BenchmarkSubjectRow } from "../types";
+import { touchBenchmarkStmt } from "./benchmarks";
 import { isUniqueViolation } from "./d1";
 
 export interface CreateBenchmarkSubjectInput {
@@ -20,12 +21,16 @@ export async function createBenchmarkSubject(
     created_at: now,
   };
   try {
-    await db
-      .prepare(
-        "INSERT INTO benchmark_subject (id, benchmark_id, subject_id, created_at) VALUES (?,?,?,?)",
-      )
-      .bind(row.id, row.benchmark_id, row.subject_id, row.created_at)
-      .run();
+    // Bump the parent benchmark's updated_at in the same batch — linking a subject changes the
+    // benchmark's composition, so its public "last updated" should move.
+    await db.batch([
+      db
+        .prepare(
+          "INSERT INTO benchmark_subject (id, benchmark_id, subject_id, created_at) VALUES (?,?,?,?)",
+        )
+        .bind(row.id, row.benchmark_id, row.subject_id, row.created_at),
+      touchBenchmarkStmt(db, row.benchmark_id, now),
+    ]);
   } catch (e) {
     if (isUniqueViolation(e)) {
       throw new ConflictError("This subject is already linked to this benchmark.");
@@ -214,5 +219,7 @@ export async function deleteBenchmarkSubjectCascade(
       )
       .bind(link.subject_id, link.benchmark_id),
     db.prepare("DELETE FROM benchmark_subject WHERE id = ?").bind(link.id),
+    // Unlinking changes the benchmark's composition — bump its "last updated" for the removal.
+    touchBenchmarkStmt(db, link.benchmark_id, Date.now()),
   ]);
 }

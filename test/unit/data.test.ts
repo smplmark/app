@@ -81,8 +81,8 @@ describe("non-unique DB errors are rethrown (not swallowed as 409)", () => {
 describe("listMeasurements with a date range", () => {
   it("applies the created_at predicate", async () => {
     const { run, subject } = await chain();
-    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
-    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { benchmark_id: run.benchmark_id, run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { benchmark_id: run.benchmark_id, run_id: run.id, subject_id: subject.id, created_at: 5000, metrics: null, meta: null, client_ip: null });
     const res = await listMeasurements(env.DB, {
       scope: { run: run.id },
       range: { start: 2000, startInclusive: true, end: null, endInclusive: false },
@@ -112,9 +112,9 @@ describe("update / lookup not-found paths return null", () => {
 describe("run actions round-trip through getRunById", () => {
   it("endRun and invalidateRun return the updated row", async () => {
     const { run } = await chain();
-    const ended = await endRun(env.DB, run.id, 123);
+    const ended = await endRun(env.DB, run.id, 123, run.benchmark_id);
     expect(ended?.ended_at).toBe(123);
-    const inv = await invalidateRun(env.DB, run.id, 456, "why", null);
+    const inv = await invalidateRun(env.DB, run.id, 456, "why", null, run.benchmark_id);
     expect(inv?.invalidated_at).toBe(456);
     expect(inv?.invalidation_reason).toBe("why");
   });
@@ -218,7 +218,7 @@ describe("slugifyKey", () => {
 describe("listMeasurements scopes + total", () => {
   it("lists by subject and by benchmark with a total count", async () => {
     const { benchmark, subject, run } = await chain();
-    await insertMeasurement(env.DB, { run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
+    await insertMeasurement(env.DB, { benchmark_id: benchmark.id, run_id: run.id, subject_id: subject.id, created_at: 1000, metrics: null, meta: null, client_ip: null });
 
     const bySubject = await listMeasurements(env.DB, {
       scope: { subject: subject.id }, sort, limit: 100, offset: 0, includeTotal: true,

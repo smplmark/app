@@ -1,6 +1,7 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
 import type { AuthContext, RunRow } from "../types";
+import { touchBenchmarkStmt } from "./benchmarks";
 import { isUniqueViolation, jsonOrNull } from "./d1";
 
 export interface CreateRunInput {
@@ -32,22 +33,25 @@ export async function createRun(
     updated_at: now,
   };
   try {
-    await db
-      .prepare(
-        "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)",
-      )
-      .bind(
-        row.id,
-        row.benchmark_id,
-        row.key,
-        row.name,
-        row.details,
-        row.started_at,
-        row.ended_at,
-        row.created_at,
-        row.updated_at,
-      )
-      .run();
+    // Bump the parent benchmark's updated_at in the same batch so its public "last updated" moves.
+    await db.batch([
+      db
+        .prepare(
+          "INSERT INTO run (id, benchmark_id, key, name, details, started_at, ended_at, invalidated_at, invalidation_reason, invalidated_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,?,?)",
+        )
+        .bind(
+          row.id,
+          row.benchmark_id,
+          row.key,
+          row.name,
+          row.details,
+          row.started_at,
+          row.ended_at,
+          row.created_at,
+          row.updated_at,
+        ),
+      touchBenchmarkStmt(db, row.benchmark_id, now),
+    ]);
   } catch (e) {
     if (isUniqueViolation(e)) {
       throw new ConflictError(
@@ -276,31 +280,39 @@ export async function updateRun(
 ): Promise<RunRow | null> {
   const existing = await getRunById(db, id);
   if (!existing) return null;
+  const now = Date.now();
   const updated: RunRow = {
     ...existing,
     name: input.name,
     details: jsonOrNull(input.details),
     started_at: input.started_at,
     ended_at: input.ended_at,
-    updated_at: Date.now(),
+    updated_at: now,
   };
-  await db
-    .prepare("UPDATE run SET name=?, details=?, started_at=?, ended_at=?, updated_at=? WHERE id=?")
-    .bind(updated.name, updated.details, updated.started_at, updated.ended_at, updated.updated_at, id)
-    .run();
+  await db.batch([
+    db
+      .prepare("UPDATE run SET name=?, details=?, started_at=?, ended_at=?, updated_at=? WHERE id=?")
+      .bind(updated.name, updated.details, updated.started_at, updated.ended_at, updated.updated_at, id),
+    touchBenchmarkStmt(db, existing.benchmark_id, now),
+  ]);
   return updated;
 }
 
-/** Stamp ended_at (idempotent-ish; only when currently live). */
+/** Stamp ended_at (idempotent-ish; only when currently live) and bump the parent benchmark's
+ *  updated_at in the same batch. The route calls this only for a still-live run, so the run UPDATE
+ *  always applies here. */
 export async function endRun(
   db: D1Database,
   id: string,
   now: number,
+  benchmarkId: string,
 ): Promise<RunRow | null> {
-  await db
-    .prepare("UPDATE run SET ended_at=?, updated_at=? WHERE id=? AND ended_at IS NULL")
-    .bind(now, now, id)
-    .run();
+  await db.batch([
+    db
+      .prepare("UPDATE run SET ended_at=?, updated_at=? WHERE id=? AND ended_at IS NULL")
+      .bind(now, now, id),
+    touchBenchmarkStmt(db, benchmarkId, now),
+  ]);
   return getRunById(db, id);
 }
 
@@ -310,21 +322,30 @@ export async function invalidateRun(
   now: number,
   reason: string | null,
   userId: string | null,
+  benchmarkId: string,
 ): Promise<RunRow | null> {
-  await db
-    .prepare(
-      "UPDATE run SET invalidated_at=?, invalidation_reason=?, invalidated_by_user_id=?, updated_at=? WHERE id=?",
-    )
-    .bind(now, reason, userId, now, id)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE run SET invalidated_at=?, invalidation_reason=?, invalidated_by_user_id=?, updated_at=? WHERE id=?",
+      )
+      .bind(now, reason, userId, now, id),
+    touchBenchmarkStmt(db, benchmarkId, now),
+  ]);
   return getRunById(db, id);
 }
 
-export async function deleteRunCascade(db: D1Database, id: string): Promise<void> {
+export async function deleteRunCascade(
+  db: D1Database,
+  id: string,
+  benchmarkId: string,
+): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM measurement WHERE run_id = ?").bind(id),
     // A run-scoped key authorizes nothing once its run is gone, and no list surfaces it — delete it too.
     db.prepare("DELETE FROM api_key WHERE scope_type = 'RUN' AND scope_ref = ?").bind(id),
     db.prepare("DELETE FROM run WHERE id = ?").bind(id),
+    // The run is gone but its benchmark survives — bump its "last updated" for the removal.
+    touchBenchmarkStmt(db, benchmarkId, Date.now()),
   ]);
 }

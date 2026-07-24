@@ -267,7 +267,7 @@ runs.delete("/:id", requireAuth, async (c) => {
       "A published benchmark's runs can't be deleted — the public record must not vanish. Invalidate the run instead.",
     );
   }
-  await deleteRunCascade(c.env.DB, run.id);
+  await deleteRunCascade(c.env.DB, run.id, benchmark.id);
   return noContentResponse();
 });
 
@@ -280,7 +280,7 @@ runs.post("/:id/actions/end", requireAuth, async (c) => {
   }
   // A run whose started_at is in the future can't be ended "now" — that would invert the interval.
   assertChronological(run.started_at, Date.now());
-  const row = await endRun(c.env.DB, run.id, Date.now());
+  const row = await endRun(c.env.DB, run.id, Date.now(), benchmark.id);
   emitAuditEvent(c, {
     event_type: "run.ended",
     resource_type: "run",
@@ -299,7 +299,7 @@ runs.post("/:id/actions/invalidate", requireAuth, async (c) => {
   assertBenchmarkEditable(benchmark);
   const attrs = await readAttributes(c).catch(() => ({}) as Record<string, unknown>);
   const reason = optionalStringOrNull(attrs, "invalidation_reason") ?? null;
-  const row = await invalidateRun(c.env.DB, run.id, Date.now(), reason, auth.user_id);
+  const row = await invalidateRun(c.env.DB, run.id, Date.now(), reason, auth.user_id, benchmark.id);
   emitAuditEvent(c, {
     event_type: "run.invalidated",
     resource_type: "run",

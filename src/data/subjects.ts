@@ -1,6 +1,7 @@
 import { ConflictError } from "../errors";
 import { orderByClause, type Sort } from "../query/sort";
 import type { SubjectRow } from "../types";
+import { touchBenchmarksForSubjectStmt } from "./benchmarks";
 import { isUniqueViolation, jsonOrNull } from "./d1";
 
 /**
@@ -275,16 +276,22 @@ export async function updateSubject(
 ): Promise<SubjectRowWithType | null> {
   const existing = await getSubjectById(db, id);
   if (!existing) return null;
+  const now = Date.now();
   const updated: SubjectRowWithType = {
     ...existing,
     name: input.name,
     details: jsonOrNull(input.details),
-    updated_at: Date.now(),
+    updated_at: now,
   };
-  await db
-    .prepare("UPDATE subject SET name=?, details=?, updated_at=? WHERE id=?")
-    .bind(updated.name, updated.details, updated.updated_at, id)
-    .run();
+  // A subject is M:N with benchmarks, so its rename/details edit has no single owning benchmark — bump
+  // the "last updated" of EVERY benchmark it's linked to, in the same batch. See the completion note:
+  // this is a product judgment (does editing a subject "update" every benchmark referencing it?).
+  await db.batch([
+    db
+      .prepare("UPDATE subject SET name=?, details=?, updated_at=? WHERE id=?")
+      .bind(updated.name, updated.details, updated.updated_at, id),
+    touchBenchmarksForSubjectStmt(db, id, now),
+  ]);
   return updated;
 }
 
@@ -295,6 +302,10 @@ export async function updateSubject(
  */
 export async function deleteSubjectCascade(db: D1Database, id: string): Promise<void> {
   await db.batch([
+    // Bump every linked benchmark's updated_at FIRST — after the benchmark_subject rows are deleted the
+    // subquery would find none. (The route only permits deleting a subject with no non-PRIVATE
+    // benchmark, so in practice this touches draft benchmarks; kept for consistency with the rename.)
+    touchBenchmarksForSubjectStmt(db, id, Date.now()),
     db.prepare("DELETE FROM measurement WHERE subject_id = ?").bind(id),
     db.prepare("DELETE FROM benchmark_subject WHERE subject_id = ?").bind(id),
     db.prepare("DELETE FROM subject WHERE id = ?").bind(id),

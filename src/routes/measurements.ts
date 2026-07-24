@@ -140,6 +140,7 @@ measurements.post("/", requireAuth, async (c) => {
   const clientIp = c.req.header("CF-Connecting-IP") ?? null;
 
   const id = await insertMeasurement(c.env.DB, {
+    benchmark_id: benchmark.id,
     run_id: run.id,
     subject_id: subject.id,
     created_at: createdAt,
@@ -354,7 +355,12 @@ measurements.put("/:id", requireAuth, async (c) => {
       ? JSON.stringify(requireObject(attrs.meta, "meta"))
       : null;
 
-  await updateMeasurement(c.env.DB, id, { created_at: createdAt, metrics: metricsJson, meta: metaJson });
+  await updateMeasurement(c.env.DB, id, {
+    benchmark_id: benchmark.id,
+    created_at: createdAt,
+    metrics: metricsJson,
+    meta: metaJson,
+  });
 
   // canonical(): key-order-only differences are not corrections (no spurious public events).
   const changes: Record<string, { before: unknown; after: unknown }> = {};
@@ -417,6 +423,6 @@ measurements.delete("/:id", requireAuth, async (c) => {
     extra: { run_id: run.id, subject_id: measurement.subject_id },
     actor: auth,
   });
-  await deleteMeasurement(c.env.DB, id);
+  await deleteMeasurement(c.env.DB, id, benchmark.id);
   return noContentResponse();
 });
