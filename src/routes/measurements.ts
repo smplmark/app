@@ -1,0 +1,469 @@
+import { Hono } from "hono";
+import { emitAuditEvent } from "../audit/smpl_audit";
+import { covers, isPublicStatus, requireWrite } from "../authz";
+import { getBenchmarkById, type BenchmarkRowWithPublisher } from "../data/benchmarks";
+import {
+  aggregateMeasurements,
+  countMeasurementsBySubject,
+  deleteMeasurement,
+  getMeasurementById,
+  insertMeasurement,
+  listMeasurements,
+  updateMeasurement,
+  type MeasurementScope,
+} from "../data/measurements";
+import { summarizeMeasurements } from "../logic/stats";
+import { loadLiveDerivedByBenchmark } from "../logic/live_derived";
+import { isSubjectLinked, isSubjectPublic } from "../data/benchmark_subjects";
+import { getRunByBenchmarkKey, getRunById, resolveOwnedRun, resolveRunForRead } from "../data/runs";
+import { resolveOwnedSubject, resolveSubjectForRead } from "../data/subjects";
+import {
+  BadRequestError,
+  ConflictError,
+  NotFoundError,
+} from "../errors";
+import { parseEpochMs, requireObject, requireString } from "../http/body";
+import { wantsCsv } from "../http/content_negotiation";
+import { collectionResponse, noContentResponse, resourceResponse } from "../http/jsonapi";
+import {
+  getAuth,
+  getOptionalAuth,
+  optionalAuth,
+  requireAuth,
+  type AppBindings,
+} from "../http/middleware";
+import { parseDateRange } from "../query/daterange";
+import { paginationMeta } from "../query/pagination";
+import { canonical, parseMeasurementSchema } from "../schema/measurement_schema";
+import { measurementsToCsv } from "../serialize/csv";
+import { serializeMeasurement } from "../serialize/resource";
+import type { AuthContext, MeasurementRow, MeasurementSchema, RunRow } from "../types";
+import { assertBenchmarkEditable, readAttributes, readPagination, readSort } from "./shared";
+import { rateLimitByCredential } from "../http/ratelimit";
+import { LIMITS } from "../limits";
+
+const SORT_ALLOWED = ["created_at"] as const;
+
+// Row-scan ceiling for the statistics summary, aligned with the per-run ingest quota: a run-scoped
+// summary therefore ALWAYS covers the full set (exact, never truncated). Benchmark- and subject-scoped
+// sets span runs and can exceed it; beyond the cap the summary keeps the newest rows, is flagged
+// `truncated`, and the viewer narrows the timeframe.
+const STATS_ROW_CAP = LIMITS.measurementsPerRun;
+
+export const measurements = new Hono<AppBindings>();
+
+/**
+ * Parse a benchmark's stored measurement_schema but substitute its LIVE derived metrics (resolved from
+ * its linked FORMULA metrics) for the stored `.derived` snapshot. Compute-on-read thus reflects the
+ * current library metric definition; the snapshot is the fallback only when no live FORMULA metric is
+ * linked. Used by the single-benchmark serialize sites (measurement create / correct).
+ */
+async function liveSchema(
+  db: D1Database,
+  benchmarkId: string,
+  measurementSchemaJson: string,
+): Promise<MeasurementSchema> {
+  const parsed = parseMeasurementSchema(measurementSchemaJson);
+  const live = (await loadLiveDerivedByBenchmark(db, [benchmarkId])).get(benchmarkId);
+  if (live !== undefined) parsed.derived = live;
+  return parsed;
+}
+
+/** Parse a `'true' | 'false'` query flag (mirrors meta[total]); absent → false. */
+function parseBoolFlag(value: string | undefined, field: string): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new BadRequestError(`${field} must be 'true' or 'false'.`);
+}
+
+/** Validate a stored-metrics bag: an object whose every value is a finite number. */
+function validateMetrics(value: unknown): Record<string, number> {
+  const obj = requireObject(value, "metrics");
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new BadRequestError(
+        `metrics.${k} must be a finite number.`,
+        { pointer: "/data/attributes/metrics" },
+      );
+    }
+  }
+  return obj as Record<string, number>;
+}
+
+measurements.post("/", requireAuth, rateLimitByCredential((e) => e.RL_INGEST), async (c) => {
+  // Stamp the receive time FIRST, before auth re-checks and the resolution queries below — a
+  // server-defaulted created_at must reflect when the measurement arrived, not how long our own
+  // housekeeping took (timing-sensitive metrics are computed from it; internal latency must not pollute it).
+  const now = Date.now();
+  const auth = getAuth(c);
+  requireWrite(auth); // Write-scoped API keys pass; a viewer session cannot ingest.
+  const attrs = await readAttributes(c);
+  // A measurement names both the run (the occasion) and the subject (the thing measured).
+  const runId = requireString(attrs, "run");
+  const subjectId = requireString(attrs, "subject");
+
+  // Authorize the RUN first, before the subject is ever looked up — so an uncovered/foreign run is an
+  // indistinguishable 404 and the subject probe below can't leak cross-account existence (the no-leak
+  // invariant every loader in this repo upholds). Ingest names the run by its KEY (resolved within the
+  // caller's scope, since a key is unique only per benchmark); raw UUIDs are not accepted here.
+  const run = await resolveOwnedRun(c.env.DB, auth, runId, true);
+  if (!run) throw new NotFoundError();
+  const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
+  if (
+    !benchmark ||
+    !covers(auth, {
+      account_id: benchmark.account_id,
+      benchmark_id: benchmark.id,
+      run_id: run.id,
+    })
+  ) {
+    throw new NotFoundError();
+  }
+  // The caller covers the run's benchmark. Only now resolve the named subject and validate it is
+  // linked to that same benchmark (D1 can't enforce the cross-pair rule; benchmark_subject does). The
+  // subject is named by its KEY (resolved within the benchmark's account); raw UUIDs are not accepted.
+  // A missing subject and a subject not linked to the run's benchmark are rejected identically (same
+  // 409) so neither leaks whether a foreign id exists.
+  const subject = await resolveOwnedSubject(c.env.DB, benchmark.account_id, subjectId, true);
+  if (!subject || !(await isSubjectLinked(c.env.DB, benchmark.id, subject.id))) {
+    throw new ConflictError("The subject is not linked to the run's benchmark.");
+  }
+  assertBenchmarkEditable(benchmark);
+  // Measurements may land at any lifecycle stage — post-publish ingest and appends to an ended run
+  // are allowed (the record is auditable, not frozen). Only the publisher's explicit "closed"
+  // signal refuses new data (it's reversible via reopen).
+  if (benchmark.closed_at !== null) {
+    throw new ConflictError("This benchmark is closed; no new measurements can be added.");
+  }
+  // Per-run ingest ceiling (LIMITS.measurementsPerRun): read off the already-loaded run row via the
+  // denormalized counter — the quota check costs no extra query on the hot ingest path.
+  if (run.measurement_count >= LIMITS.measurementsPerRun) {
+    throw new ConflictError(
+      `This run has reached the maximum of ${LIMITS.measurementsPerRun.toLocaleString("en-US")} measurements; start a new run to record more.`,
+    );
+  }
+
+  const createdAt = "created_at" in attrs ? parseEpochMs(attrs.created_at, "created_at") : now;
+  const metricsJson =
+    "metrics" in attrs && attrs.metrics !== null
+      ? JSON.stringify(validateMetrics(attrs.metrics))
+      : null;
+  const metaJson =
+    "meta" in attrs && attrs.meta !== null
+      ? JSON.stringify(requireObject(attrs.meta, "meta"))
+      : null;
+  const clientIp = c.req.header("CF-Connecting-IP") ?? null;
+
+  const id = await insertMeasurement(c.env.DB, {
+    benchmark_id: benchmark.id,
+    run_id: run.id,
+    subject_id: subject.id,
+    created_at: createdAt,
+    metrics: metricsJson,
+    meta: metaJson,
+    client_ip: clientIp,
+  });
+
+  // Plain ingest is data flow, not a change to the record, so it carries no audit event — a
+  // high-frequency reporter would otherwise drown the history in measurement.created noise. Corrections
+  // and deletes stay audited; the one noteworthy ingest shape is an append to an ended run.
+  if (run.ended_at !== null) {
+    const visibility = benchmark.status === "PRIVATE" ? "internal" : "public";
+    emitAuditEvent(c, {
+      event_type: "run.appended",
+      resource_type: "run",
+      resource_id: run.id,
+      benchmark_id: benchmark.id,
+      visibility,
+      description: `Measurement added to run "${run.key}" after it ended.`,
+      extra: { measurement_id: String(id) },
+      actor: auth,
+    });
+  }
+
+  // Derived metrics are computed from the LIVE library definition (loadLiveDerivedByBenchmark), not the
+  // stored measurement_schema.derived snapshot — so an edit to a linked FORMULA metric shows up here at
+  // once. The snapshot is the fallback only when the benchmark has no live FORMULA metric linked.
+  const schema = await liveSchema(c.env.DB, benchmark.id, benchmark.measurement_schema);
+  const resource = serializeMeasurement(
+    { id, run_id: run.id, subject_id: subject.id, subject_key: subject.key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+    schema,
+    { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
+  );
+  return resourceResponse(resource, { status: 201 });
+});
+
+/** Resolve the required scope filter(s) to a bounded subtree, enforcing visibility. */
+async function resolveScope(
+  c: Parameters<typeof getOptionalAuth>[0],
+  auth: AuthContext | undefined,
+): Promise<MeasurementScope> {
+  const run = c.req.query("filter[run]");
+  const subject = c.req.query("filter[subject]");
+  const benchmark = c.req.query("filter[benchmark]");
+  const provided = [run, subject, benchmark].filter((x) => x !== undefined);
+  // Exactly one scope — except filter[run] MAY be combined with filter[benchmark]: run keys are
+  // unique only within a benchmark, so an anonymous caller (whose bare key would otherwise resolve
+  // across all public benchmarks arbitrarily) names the benchmark to pin the run down.
+  if (provided.length === 0 || (subject !== undefined && provided.length > 1)) {
+    throw new BadRequestError(
+      "Provide exactly one of filter[run], filter[subject], filter[benchmark]; filter[run] may be combined with filter[benchmark] to disambiguate a run key.",
+    );
+  }
+
+  // A subject spans benchmarks (M:N), so it has no single owning benchmark — resolve its visibility
+  // directly: the caller covers its account, or it's linked to at least one public benchmark. The
+  // filter value may be the subject's key or a raw UUID; the scope filters on the resolved UUID.
+  if (subject !== undefined) {
+    const t = await resolveSubjectForRead(c.env.DB, auth?.account_id ?? null, subject);
+    if (!t) throw new NotFoundError();
+    const covered = auth !== undefined && covers(auth, { account_id: t.account_id });
+    if (!covered && !(await isSubjectPublic(c.env.DB, t.id))) throw new NotFoundError();
+    // A covered account caller sees all their measurements; anyone else sees only those recorded
+    // under the subject's public benchmarks (a private sibling benchmark must not leak).
+    return { subject: t.id, subjectPublicOnly: !covered };
+  }
+
+  // run / benchmark: resolve to the owning benchmark (for visibility) and the scope chain (coverage).
+  let bench = null;
+  let chain: { account_id: string; benchmark_id: string; run_id?: string } | null = null;
+  // The filter[run] value may be the run's key or a raw UUID; the scope filters measurement.run_id
+  // on the resolved UUID (mirrors the subject fix, which filters on the resolved subject UUID).
+  let runId: string | undefined;
+  if (run !== undefined && benchmark !== undefined) {
+    // Combined form: the run key is resolved WITHIN the named benchmark (falling back to a raw run
+    // UUID, which must belong to it). A missing benchmark, an unknown key, and a run under a
+    // different benchmark are all the same 404 (no-leak).
+    bench = await getBenchmarkById(c.env.DB, benchmark);
+    if (bench) {
+      let r = await getRunByBenchmarkKey(c.env.DB, bench.id, run);
+      if (!r) {
+        const byId = await getRunById(c.env.DB, run);
+        if (byId && byId.benchmark_id === bench.id) r = byId;
+      }
+      if (r) {
+        runId = r.id;
+        chain = { account_id: bench.account_id, benchmark_id: bench.id, run_id: r.id };
+      }
+    }
+  } else if (run !== undefined) {
+    const r = await resolveRunForRead(c.env.DB, auth ?? null, run);
+    if (r) {
+      runId = r.id;
+      bench = await getBenchmarkById(c.env.DB, r.benchmark_id);
+      if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id, run_id: r.id };
+    }
+  } else if (benchmark !== undefined) {
+    bench = await getBenchmarkById(c.env.DB, benchmark);
+    if (bench) chain = { account_id: bench.account_id, benchmark_id: bench.id };
+  }
+
+  if (!bench || !chain) throw new NotFoundError();
+  if (!isPublicStatus(bench.status)) {
+    if (!auth || !covers(auth, chain)) throw new NotFoundError();
+  }
+  return { run: runId, benchmark };
+}
+
+measurements.get("/", optionalAuth, async (c) => {
+  const auth = getOptionalAuth(c);
+  const scope = await resolveScope(c, auth);
+
+  const createdAt = c.req.query("filter[created_at]");
+  const range = createdAt !== undefined ? parseDateRange(createdAt) : undefined;
+  const wantStats = parseBoolFlag(c.req.query("meta[stats]"), "meta[stats]");
+  const wantCounts = parseBoolFlag(c.req.query("meta[counts]"), "meta[counts]");
+
+  const pagination = readPagination(c);
+  const sort = readSort(c, "created_at", SORT_ALLOWED);
+  const { rows, total } = await listMeasurements(c.env.DB, {
+    scope,
+    range,
+    sort,
+    limit: pagination.limit,
+    offset: pagination.offset,
+    includeTotal: pagination.includeTotal,
+  });
+
+  // Derived metrics are computed from the LIVE library definition, not the stored
+  // measurement_schema.derived snapshot: resolve every benchmark's live derived once, then substitute
+  // it per row (fall back to the snapshot for a benchmark with no live FORMULA metric linked).
+  const liveMap = await loadLiveDerivedByBenchmark(
+    c.env.DB,
+    [...new Set(rows.map((r) => r.benchmark_id))],
+  );
+  // Parse each benchmark's schema once per request (compute-on-read is O(rows × derived)).
+  const schemaCache = new Map<string, MeasurementSchema>();
+  const resources = rows.map((r) => {
+    let parsed = schemaCache.get(r.measurement_schema);
+    if (parsed === undefined) {
+      parsed = parseMeasurementSchema(r.measurement_schema);
+      schemaCache.set(r.measurement_schema, parsed);
+    }
+    const live = liveMap.get(r.benchmark_id);
+    const schema: MeasurementSchema = {
+      metrics: parsed.metrics,
+      derived: live ?? parsed.derived,
+      chart: parsed.chart,
+    };
+    return serializeMeasurement(
+      { id: r.id, run_id: r.run_id, subject_id: r.subject_id, subject_key: r.subject_key, run_key: r.run_key, created_at: r.created_at, metrics: r.metrics, meta: r.meta },
+      schema,
+      { created_at: r.created_at, run: { started_at: r.run_started_at, ended_at: r.run_ended_at } },
+    );
+  });
+
+  if (wantsCsv(c.req.header("Accept"))) {
+    // CSV carries no meta, so meta[stats] is silently ignored for a CSV export.
+    return new Response(measurementsToCsv(resources), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="measurements.csv"',
+        Vary: "Accept",
+      },
+    });
+  }
+
+  const meta: Record<string, unknown> = { pagination: paginationMeta(pagination, total) };
+  if (wantCounts) {
+    // Per-subject counts over the FULL filtered set (same scope + timeframe, page params don't
+    // apply) — a plain SQL GROUP BY, exact at any size with no rows fetched.
+    meta.counts = await countMeasurementsBySubject(c.env.DB, { scope, range });
+  }
+  if (wantStats) {
+    // Statistics cover the FULL filtered set (same scope + timeframe), not the returned page — so the
+    // page params don't apply. count/sum/min/max/avg would be native SQL aggregates, but median /
+    // percentiles are not in D1 and derived metrics aren't stored, so we pull the set and reduce in
+    // JS — in bounded chunks (see aggregateMeasurements), never one unbounded query.
+    const { rows: statRows, truncated } = await aggregateMeasurements(c.env.DB, {
+      scope,
+      range,
+      cap: STATS_ROW_CAP,
+    });
+    // Same live-derived substitution as the row serialization: the summary must match the table, so it
+    // computes derived metrics from the current library definition, not the stored schema snapshot.
+    const statLiveMap = await loadLiveDerivedByBenchmark(
+      c.env.DB,
+      [...new Set(statRows.map((r) => r.benchmark_id))],
+    );
+    meta.stats = summarizeMeasurements(statRows, truncated, statLiveMap);
+  }
+
+  return collectionResponse(resources, { meta, headers: { Vary: "Accept" } });
+});
+
+/** Load a measurement + its run/benchmark chain for a covered mutating caller, or 404 (no-leak). */
+async function loadOwnedMeasurement(
+  c: Parameters<typeof getAuth>[0],
+  rawId: string,
+): Promise<{ id: number; measurement: MeasurementRow & { subject_key: string }; run: RunRow; benchmark: BenchmarkRowWithPublisher }> {
+  const auth = getAuth(c);
+  requireWrite(auth);
+  const id = Number(rawId);
+  if (!Number.isInteger(id)) throw new NotFoundError();
+  const measurement = await getMeasurementById(c.env.DB, id);
+  if (!measurement) throw new NotFoundError();
+  // Authorize through the run's benchmark (no-leak: an uncovered/foreign measurement is a 404).
+  const run = await getRunById(c.env.DB, measurement.run_id);
+  if (!run) throw new NotFoundError();
+  const benchmark = await getBenchmarkById(c.env.DB, run.benchmark_id);
+  if (
+    !benchmark ||
+    !covers(auth, { account_id: benchmark.account_id, benchmark_id: benchmark.id, run_id: run.id })
+  ) {
+    throw new NotFoundError();
+  }
+  return { id, measurement, run, benchmark };
+}
+
+// Correct a measurement in place: full-replace of its created_at / metrics / meta (its run and
+// subject are fixed — a measurement is an observation of that pair). Allowed at any lifecycle
+// stage; on a published benchmark the correction is part of the public record, and the audit event
+// carries before/after so the History can render exactly what changed.
+measurements.put("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  const { id, measurement, run, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
+  assertBenchmarkEditable(benchmark);
+  const attrs = await readAttributes(c);
+  const createdAt = "created_at" in attrs ? parseEpochMs(attrs.created_at, "created_at") : measurement.created_at;
+  const metricsJson =
+    "metrics" in attrs && attrs.metrics !== null
+      ? JSON.stringify(validateMetrics(attrs.metrics))
+      : null;
+  const metaJson =
+    "meta" in attrs && attrs.meta !== null
+      ? JSON.stringify(requireObject(attrs.meta, "meta"))
+      : null;
+
+  await updateMeasurement(c.env.DB, id, {
+    benchmark_id: benchmark.id,
+    created_at: createdAt,
+    metrics: metricsJson,
+    meta: metaJson,
+  });
+
+  // canonical(): key-order-only differences are not corrections (no spurious public events).
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  if (measurement.created_at !== createdAt) {
+    changes.created_at = { before: measurement.created_at, after: createdAt };
+  }
+  const oldMetrics = measurement.metrics === null ? null : JSON.parse(measurement.metrics);
+  const newMetrics = metricsJson === null ? null : JSON.parse(metricsJson);
+  if (canonical(oldMetrics) !== canonical(newMetrics)) {
+    changes.metrics = { before: oldMetrics, after: newMetrics };
+  }
+  const oldMeta = measurement.meta === null ? null : JSON.parse(measurement.meta);
+  const newMeta = metaJson === null ? null : JSON.parse(metaJson);
+  if (canonical(oldMeta) !== canonical(newMeta)) {
+    changes.meta = { before: oldMeta, after: newMeta };
+  }
+  if (Object.keys(changes).length > 0) {
+    emitAuditEvent(c, {
+      event_type: "measurement.corrected",
+      resource_type: "measurement",
+      resource_id: String(id),
+      benchmark_id: benchmark.id,
+      visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+      description: "Measurement corrected.",
+      changes,
+      extra: { run_id: run.id, subject_id: measurement.subject_id },
+      actor: auth,
+    });
+  }
+
+  // Derived metrics recomputed from the LIVE library definition (see the create path above).
+  const schema = await liveSchema(c.env.DB, benchmark.id, benchmark.measurement_schema);
+  return resourceResponse(
+    serializeMeasurement(
+      { id, run_id: run.id, subject_id: measurement.subject_id, subject_key: measurement.subject_key, run_key: run.key, created_at: createdAt, metrics: metricsJson, meta: metaJson },
+      schema,
+      { created_at: createdAt, run: { started_at: run.started_at, ended_at: run.ended_at } },
+    ),
+  );
+});
+
+// Delete a single measurement. Allowed at any publish stage (owner-approved policy): deletion is
+// no longer refused on a published benchmark — instead the removal is part of the public record, so
+// it emits an audited `measurement.deleted` event (public when the benchmark is world-visible, else
+// internal) carrying the run/subject correlation, leaving a trail rather than a silent vanish. The
+// marked-ready pre-publish freeze (assertBenchmarkEditable) and the owning-caller auth
+// (loadOwnedMeasurement: write + covers) still apply. The id is the measurement's rowid.
+measurements.delete("/:id", requireAuth, async (c) => {
+  const auth = getAuth(c);
+  const { id, measurement, run, benchmark } = await loadOwnedMeasurement(c, c.req.param("id"));
+  assertBenchmarkEditable(benchmark);
+  // Emit before deleteMeasurement so the correlation is captured from the still-live row.
+  emitAuditEvent(c, {
+    event_type: "measurement.deleted",
+    resource_type: "measurement",
+    resource_id: String(id),
+    benchmark_id: benchmark.id,
+    visibility: benchmark.status === "PRIVATE" ? "internal" : "public",
+    description: "Measurement deleted.",
+    extra: { run_id: run.id, subject_id: measurement.subject_id },
+    actor: auth,
+  });
+  await deleteMeasurement(c.env.DB, id, benchmark.id, run.id);
+  return noContentResponse();
+});

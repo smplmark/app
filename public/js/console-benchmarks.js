@@ -1,0 +1,394 @@
+"use strict";
+
+// Benchmarks list (/account/benchmarks) — a conforming list page: a search + refresh toolbar above
+// the table, a contextual empty state, and row-click to the detail page (where lifecycle, subjects,
+// and runs live). Create is a strict modal with per-field validation. Depends on api.js + shell.js.
+
+(function () {
+  const esc = SM.esc;
+  const $ = (id) => document.getElementById(id);
+  let ACCOUNT_ID = null, CAN_WRITE = false, USER_ID = null;
+  let ALL = [];
+  let SEARCH = "";
+  let TABLE = null;
+  // The left rail scopes the list; the status pills narrow it further; search applies on top of both.
+  const RAILS = [["all", "All benchmarks"], ["mine", "My benchmarks"], ["recent", "Recently created"]];
+  let RAIL = "all";
+  let STATUS = ""; // "" = all | PRIVATE (draft) | PUBLISHED
+
+  SM.ready.then((id) => {
+    ACCOUNT_ID = id.accountId;
+    CAN_WRITE = id.canWrite;
+    USER_ID = (id.user && id.user.id) || null;
+    load();
+  }).catch(() => { $("load-error").innerHTML = '<div class="errorBanner"><p>Failed to load your account.</p></div>'; });
+
+  function wireTopBar() {
+    if (!CAN_WRITE) return;
+    SM.setTopBarAction('<button type="button" class="button buttonPrimary buttonTopBar" id="new-benchmark">' + SM.icon("plus", 16) + " New benchmark</button>");
+    $("new-benchmark").addEventListener("click", openCreateModal);
+  }
+
+  let ROSTER = {};       // user_id → { name, email } from the account roster (Created-by column)
+  let SUBJECT_TYPES = {}; // subject_type id → display name
+
+  async function load() {
+    try {
+      const [doc, rosterDoc, typesDoc] = await Promise.all([
+        apiFetchAll("/api/v1/benchmarks?filter[account]=" + encodeURIComponent(ACCOUNT_ID)),
+        apiFetchAll("/api/v1/account_users", null).catch(() => null),
+        apiFetchAll("/api/v1/subject_types").catch(() => null),
+      ]);
+      ALL = (doc && doc.data) || [];
+      ALL.sort((a, z) => String((z.attributes || {}).created_at || "").localeCompare(String((a.attributes || {}).created_at || "")));
+      ROSTER = {};
+      (((rosterDoc && rosterDoc.data) || [])).forEach((r) => {
+        const ra = r.attributes || {};
+        if (ra.user) ROSTER[ra.user] = { name: ra.display_name || (ra.email ? ra.email.split("@")[0] : ""), email: ra.email || "" };
+      });
+      SUBJECT_TYPES = {};
+      (((typesDoc && typesDoc.data) || [])).forEach((t) => {
+        const ta = t.attributes || {};
+        SUBJECT_TYPES[t.id] = ta.name || ta.key || "";
+      });
+      render();
+    } catch (err) {
+      $("bm-content").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
+    }
+  }
+
+  function filtered() {
+    const q = SEARCH.trim().toLowerCase();
+    return ALL.filter((b) => {
+      const a = b.attributes || {};
+      if (RAIL === "mine" && (!USER_ID || a.created_by !== USER_ID)) return false;
+      if (STATUS && String(a.status || "").toUpperCase() !== STATUS) return false;
+      if (q && !((a.name || "").toLowerCase().includes(q) || (a.key || "").toLowerCase().includes(q) || (a.description || "").toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+
+  function creatorName(uid) {
+    if (!uid) return "API key";
+    const u = ROSTER[uid];
+    return (u && u.name) || "—";
+  }
+  function creatorCell(uid) {
+    if (!uid) return '<span class="muted">API key</span>';
+    const u = ROSTER[uid];
+    if (!u) return '<span class="muted">—</span>';
+    return '<span class="cellUser"><span data-avatar data-email="' + esc(u.email) + '" data-name="' + esc(u.name) + '"></span><span class="cellUserName">' + esc(u.name) + "</span></span>";
+  }
+  function hydrateAvatars(container) {
+    container.querySelectorAll("[data-avatar]").forEach((el) => {
+      el.replaceWith(SM.avatar(26, el.dataset.email, el.dataset.name));
+    });
+  }
+
+  function render() {
+    const host = $("bm-content");
+    // Truly-empty first visit: the create-your-first hero stands alone (no toolbar, no top-bar dup).
+    if (!ALL.length && !SEARCH.trim()) {
+      SM.setTopBarAction("");
+      host.innerHTML =
+        '<div class="emptyState"><div class="emptyIcon">' + SM.icon("benchmarks", 44) + "</div>" +
+        "<h2>No benchmarks yet</h2><p>Create your first benchmark — it stays private until you publish it.</p>" +
+        (CAN_WRITE ? '<button type="button" class="button buttonPrimary" id="empty-create">New benchmark</button>' : "") + "</div>";
+      const b = $("empty-create"); if (b) b.addEventListener("click", openCreateModal);
+      return;
+    }
+    wireTopBar();
+    host.innerHTML =
+      '<div class="listLayout">' +
+      '<nav class="listRail" id="bm-rail" aria-label="Benchmark filters"></nav>' +
+      '<div class="listMain"><div id="bm-toolbar-mount"></div><div id="bm-table"></div></div>' +
+      "</div>";
+    renderRail();
+
+    // Status filter: modern segmented radios, right-aligned next to the refresh icon.
+    const statusPill = (value, label) =>
+      '<label class="radioPill"><input type="radio" name="bm-status" value="' + value + '"' + (STATUS === value ? " checked" : "") + ' /><span class="radioDot"></span><span class="radioPillLabel">' + label + "</span></label>";
+    const statusFilterHtml =
+      '<div class="radioGroup toolbarRadios" role="radiogroup" aria-label="Filter by status">' +
+      statusPill("", "All") + statusPill("PRIVATE", "Draft") + statusPill("PUBLISHED", "Published") +
+      "</div>";
+    const bar = SM.toolbar({
+      placeholder: "Search benchmarks…",
+      onSearch: (v) => { SEARCH = v; if (TABLE) TABLE.setRows(filtered()); },
+      onRefresh: () => load(),
+      extraRight: statusFilterHtml,
+    });
+    const input = bar.querySelector(".toolbarSearch input"); if (input) input.value = SEARCH;
+    bar.querySelectorAll('input[name="bm-status"]').forEach((r) =>
+      r.addEventListener("change", () => { STATUS = r.value; if (TABLE) TABLE.setRows(filtered()); }));
+    $("bm-toolbar-mount").replaceWith(bar);
+    renderTable();
+  }
+
+  function renderRail() {
+    const rail = $("bm-rail");
+    rail.innerHTML = RAILS.map(([key, label]) =>
+      '<button type="button" class="listRailItem' + (RAIL === key ? " isActive" : "") + '" data-rail="' + key + '">' + esc(label) + "</button>").join("");
+    rail.querySelectorAll("[data-rail]").forEach((el) =>
+      el.addEventListener("click", () => {
+        if (el.dataset.rail === RAIL) return;
+        RAIL = el.dataset.rail;
+        renderRail();
+        renderTable(); // rebuilt so the rail's default sort applies (recent → newest first)
+      }));
+  }
+
+  function renderTable() {
+    TABLE = SM.pagedTable($("bm-table"), {
+      columns: [
+        { key: "name", label: "Name", sortable: true, sortValue: (b) => (b.attributes || {}).name || "", render: (b) => {
+          const a = b.attributes || {};
+          return '<div class="cellTitle">' + esc(a.name || "") + "</div>" +
+            (a.description ? '<div class="cellSub">' + esc(a.description) + "</div>" : "");
+        } },
+        { key: "subject_type", label: "Subject type", sortable: true, sortValue: (b) => SUBJECT_TYPES[(b.attributes || {}).subject_type] || "", render: (b) => esc(SUBJECT_TYPES[(b.attributes || {}).subject_type] || "—") },
+        { key: "status", label: "Status", sortable: true, sortValue: (b) => String((b.attributes || {}).status || ""), render: statusCell },
+        { key: "created", label: "Created", sortable: true, sortValue: (b) => (b.attributes || {}).created_at || "", render: (b) => esc(SM.fmtDate((b.attributes || {}).created_at)) },
+        { key: "created_by", label: "Created by", sortable: true, sortValue: (b) => creatorName((b.attributes || {}).created_by), render: (b) => creatorCell((b.attributes || {}).created_by) },
+      ],
+      rows: filtered(),
+      sort: RAIL === "recent" ? { key: "created", dir: "desc" } : { key: "name", dir: "asc" },
+      emptyText: RAIL === "mine" ? "You haven’t created any matching benchmarks." : "No matching benchmarks.",
+      onRowClick: (b) => { location.href = "/benchmarks/" + encodeURIComponent((b.attributes || {}).key || b.id); },
+      onRender: hydrateAvatars,
+    });
+  }
+
+  function statusCell(b) {
+    const a = b.attributes || {};
+    const status = String(a.status || "").toUpperCase();
+    let s = status === "PRIVATE" ? SM.statusPill("draft", "draft") : SM.statusPill(status, status);
+    if (a.closed) s += " " + SM.statusPill("complete", "complete");
+    if (status !== "PRIVATE" && a.published_as) {
+      const pa = a.published_as;
+      const who = pa.kind === "ORGANIZATION" ? (pa.name || "") : pa.kind === "INGESTED" ? (pa.source_name || "ingested") : (pa.display_name || "you");
+      s += ' <span class="muted attributionLabel">as ' + esc(who) + "</span>";
+    }
+    return s;
+  }
+
+  // A benchmark compares subjects of a defined type, so at least one subject type must exist before
+  // one can be created. Gate the wizard on it up front — a clear "define a subject type first" modal
+  // rather than letting the user fill in a name and hit a dead end at the type picker.
+  function openNoSubjectTypeGate() {
+    SM.modal({
+      title: "Define a subject type first",
+      description: "A benchmark compares subjects of a single type (for example a “Scheduler” or a “GPU”). Create at least one subject type, then come back to create your benchmark.",
+      bodyHtml:
+        '<div class="modalActions">' +
+        '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>' +
+        '<a class="button buttonPrimary buttonSmall" href="/account/subject-types">Go to Subject types</a>' +
+        "</div>",
+      width: 480,
+    });
+  }
+
+  // ── Create wizard ── A 3-step modal: (1) name + description, (2) link subjects, (3) link metrics. The
+  //    key is auto-generated from the name server-side. Subjects/metrics are optional (one or more, and
+  //    always addable later from the benchmark's tabs). Finish creates the benchmark, links the chosen
+  //    subjects + metrics, and opens it in view mode.
+  function openCreateModal() {
+    // No subject types yet → the benchmark can't name what it compares. Gate before the wizard.
+    if (Object.keys(SUBJECT_TYPES).length === 0) { openNoSubjectTypeGate(); return; }
+    const data = { name: "", description: "", subject_type: "" };
+    const subjects = []; // chosen subject resources
+    const metrics = [];  // chosen metric resources
+    let acctSubjects = null; // account library, loaded lazily on first visit to each step
+    let acctMetrics = null;
+    let acctTypes = null; // the account's subject types (required pick on step 2)
+
+    const m = SM.modal({ title: "", bodyHtml: '<div id="bw-root"></div>', width: 520 });
+    const header = m.panel.querySelector(".modalHeader");
+    if (header) header.style.display = "none"; // each step renders its own heading
+    const root = m.panel.querySelector("#bw-root");
+
+    function dots(active) {
+      let out = '<div class="wzSteps" aria-hidden="true">';
+      for (let i = 0; i < 3; i++) out += '<span class="wzDot' + (i === active ? " isActive" : "") + '"></span>';
+      return out + "</div>";
+    }
+    function nav(backFn, nextLabel, nextFn) {
+      return '<div class="modalActions">' +
+        (backFn ? '<button type="button" class="button buttonSecondary buttonSmall" id="bw-back">Back</button>' : '<button type="button" class="button buttonSecondary buttonSmall" data-close>Cancel</button>') +
+        '<button type="button" class="button buttonPrimary buttonSmall" id="bw-next">' + nextLabel + "</button></div>";
+    }
+
+    // A combobox picker (SM.combobox — themed popup) that accumulates chosen items into `chosen` (dedup
+    // by id). matchKeys(t) lists the strings a typed value can match (the first is the pick value);
+    // optLabel(t)/chipLabel(t) render the option + chip. Already-chosen items drop out of the popup.
+    function setupPicker(inputSel, chipsSel, source, chosen, matchKeys, optLabel, chipLabel) {
+      const input = root.querySelector(inputSel);
+      const combo = SM.combobox(input, {
+        options: () => {
+          const ids = new Set(chosen.map((c) => c.id));
+          return (source() || []).filter((t) => !ids.has(t.id))
+            .map((t) => ({ value: matchKeys(t)[0] || "", label: optLabel(t) }));
+        },
+        emptyText: "No matches.",
+      });
+      function renderChips() {
+        const host = root.querySelector(chipsSel);
+        host.innerHTML = chosen.map((t, i) => '<span class="wzChip">' + esc(chipLabel(t)) + '<button type="button" data-i="' + i + '" title="Remove" aria-label="Remove">×</button></span>').join("");
+        host.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => { chosen.splice(Number(b.dataset.i), 1); renderChips(); combo.refresh(); }));
+      }
+      function add() {
+        const val = input.value.trim().toLowerCase();
+        input.value = "";
+        if (!val) return;
+        const t = (source() || []).find((x) => matchKeys(x).some((k) => String(k || "").toLowerCase() === val));
+        if (t && !chosen.some((c) => c.id === t.id)) { chosen.push(t); renderChips(); }
+      }
+      input.addEventListener("change", add);
+      input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); add(); } });
+      renderChips();
+      return combo.refresh;
+    }
+
+    async function loadList(url, set) {
+      try { const doc = await apiFetchAll(url); set((doc && doc.data) || []); } catch (_e) { set([]); }
+    }
+
+    renderName();
+
+    // ── Step 1: name + description ──
+    function renderName() {
+      root.innerHTML =
+        '<div class="wzScreen">' +
+        '<div class="wzHead"><h2 class="wzTitle">Create benchmark</h2><p class="wzText">Give it a name and an optional description. You can publish it when it’s ready.</p></div>' +
+        '<label class="field"><span class="detailFieldLabel fieldRequired">Name</span><input id="bw-name" type="text" placeholder="My Benchmark" autocomplete="off" value="' + esc(data.name) + '" /><p class="fieldErrorMessage" hidden></p></label>' +
+        '<label class="field"><span class="detailFieldLabel">Description</span><textarea id="bw-desc" rows="4" placeholder="Description of the benchmark" style="font-family:inherit;">' + esc(data.description) + "</textarea></label>" +
+        '<p class="form-status" id="bw-msg"></p>' +
+        dots(0) +
+        nav(null, "Next", null);
+      const nameEl = root.querySelector("#bw-name");
+      nameEl.addEventListener("input", () => SM.clearFieldError(nameEl));
+      root.querySelector("#bw-next").addEventListener("click", goSubjects);
+      nameEl.focus();
+    }
+    function goSubjects() {
+      const nameEl = root.querySelector("#bw-name");
+      SM.clearFieldError(nameEl);
+      const name = nameEl.value.trim();
+      if (!name) { SM.setFieldError(nameEl, "A name is required."); nameEl.focus(); return; }
+      data.name = name;
+      data.description = root.querySelector("#bw-desc").value.trim();
+      renderSubjects();
+    }
+
+    // ── Step 2: subject type (required — a benchmark compares like against like) + subjects ──
+    function renderSubjects() {
+      const typeOpts = (acctTypes || []).map((t) => {
+        const a = t.attributes || {};
+        return '<option value="' + esc(t.id) + '"' + (t.id === data.subject_type ? " selected" : "") + ">" + esc(a.name || a.key || t.id) + "</option>";
+      }).join("");
+      const noTypes = acctTypes !== null && acctTypes.length === 0;
+      root.innerHTML =
+        '<div class="wzScreen">' +
+        '<div class="wzHead"><h2 class="wzTitle">Add subjects</h2><p class="wzText">A benchmark compares subjects of one type — pick it, then link the subjects you’re measuring. Subjects are optional now and always addable later from the benchmark’s Subjects tab.</p></div>' +
+        '<label class="field"><span class="detailFieldLabel fieldRequired">Subject type</span>' +
+        '<select id="bw-st"><option value="">Pick a subject type…</option>' + typeOpts + "</select>" +
+        (noTypes ? '<p class="detailFieldHelp">No subject types yet — create one on the Subject types page first.</p>' : "") +
+        '<p class="fieldErrorMessage" hidden></p></label>' +
+        '<label class="field"><span class="detailFieldLabel">Subject</span><input id="bw-subj" type="text" autocomplete="off" placeholder="Pick a subject to add" /></label>' +
+        '<div class="wzChips" id="bw-subj-chips"></div>' +
+        '<p class="detailFieldHelp wzOptionalHint" id="bw-subj-hint" hidden></p>' +
+        '<p class="form-status" id="bw-msg"></p>' +
+        dots(1) +
+        nav(renderName, "Next", null);
+      const fillList = setupPicker("#bw-subj", "#bw-subj-chips",
+        () => (acctSubjects || []).filter((t) => (t.attributes || {}).subject_type === data.subject_type),
+        subjects,
+        (t) => [(t.attributes || {}).key, (t.attributes || {}).name],
+        (t) => { const a = t.attributes || {}; return (a.name || "") + (a.key ? " — " + a.key : ""); },
+        (t) => (t.attributes || {}).name || (t.attributes || {}).key || "");
+      // When the chosen type has no subjects yet, say plainly that this step is optional and skippable
+      // (the picker's own "No matches" only shows inside the popup, which the user may never open).
+      function refreshSubjHint() {
+        const hint = root.querySelector("#bw-subj-hint");
+        if (!hint) return;
+        const avail = (acctSubjects || []).filter((t) => (t.attributes || {}).subject_type === data.subject_type);
+        const show = !!data.subject_type && acctSubjects !== null && avail.length === 0;
+        hint.hidden = !show;
+        if (show) hint.textContent = "No subjects of this type yet — this step is optional. Click Next to continue; you can add subjects anytime from the benchmark’s Subjects tab.";
+      }
+      const stEl = root.querySelector("#bw-st");
+      stEl.addEventListener("change", () => {
+        SM.clearFieldError(stEl);
+        data.subject_type = stEl.value;
+        subjects.length = 0; // chosen subjects must conform to the newly-picked type
+        renderSubjects();
+      });
+      root.querySelector("#bw-back").addEventListener("click", renderName);
+      root.querySelector("#bw-next").addEventListener("click", () => {
+        if (!data.subject_type) { SM.setFieldError(stEl, "Pick the type of subject this benchmark compares."); stEl.focus(); return; }
+        renderMetrics();
+      });
+      (data.subject_type ? root.querySelector("#bw-subj") : stEl).focus();
+      refreshSubjHint();
+      if (acctTypes === null) loadList("/api/v1/subject_types", (rows) => { acctTypes = rows; renderSubjects(); });
+      if (acctSubjects === null) loadList("/api/v1/subjects", (rows) => { acctSubjects = rows; fillList(); refreshSubjHint(); });
+    }
+
+    // ── Step 3: metrics ──
+    function renderMetrics() {
+      root.innerHTML =
+        '<div class="wzScreen">' +
+        '<div class="wzHead"><h2 class="wzTitle">Add metrics</h2><p class="wzText">Link the metrics this benchmark reports. This is optional: add one or more now, or add them anytime later from the benchmark’s Metrics tab.</p></div>' +
+        '<label class="field"><span class="detailFieldLabel">Metric</span><input id="bw-metric" type="text" autocomplete="off" placeholder="Pick a metric to add" /></label>' +
+        '<div class="wzChips" id="bw-metric-chips"></div>' +
+        '<p class="detailFieldHelp wzOptionalHint" id="bw-metric-hint" hidden></p>' +
+        '<p class="form-status" id="bw-msg"></p>' +
+        dots(2) +
+        nav(renderSubjects, metrics.length ? "Finish" : "Skip &amp; create", null);
+      // The Finish button reads "Skip & create" until a metric is picked, so skipping is an obvious
+      // choice — then flips to "Finish" once the user has chosen at least one.
+      const fillList = setupPicker("#bw-metric", "#bw-metric-chips", () => acctMetrics, metrics,
+        (t) => [(t.attributes || {}).name, (t.attributes || {}).label],
+        (t) => { const a = t.attributes || {}; return (a.label || "") + (a.name ? " — " + a.name : ""); },
+        (t) => (t.attributes || {}).label || (t.attributes || {}).name || "");
+      const nextBtn = root.querySelector("#bw-next"); nextBtn.id = "bw-finish";
+      function refreshMetricUi() {
+        nextBtn.innerHTML = metrics.length ? "Finish" : "Skip &amp; create";
+        const hint = root.querySelector("#bw-metric-hint");
+        if (hint) {
+          const show = acctMetrics !== null && (acctMetrics || []).length === 0;
+          hint.hidden = !show;
+          if (show) hint.textContent = "No metrics defined yet — this step is optional. Click Skip & create; you can add metrics anytime from the benchmark’s Metrics tab.";
+        }
+      }
+      root.querySelector("#bw-back").addEventListener("click", renderSubjects);
+      nextBtn.addEventListener("click", finish);
+      // Keep the button label in sync as chips are added/removed.
+      root.querySelector("#bw-metric-chips").addEventListener("click", () => setTimeout(refreshMetricUi, 0));
+      root.querySelector("#bw-metric").addEventListener("change", () => setTimeout(refreshMetricUi, 0));
+      root.querySelector("#bw-metric").focus();
+      refreshMetricUi();
+      if (acctMetrics === null) loadList("/api/v1/metrics", (rows) => { acctMetrics = rows; fillList(); refreshMetricUi(); });
+    }
+
+    // ── Finish: create the benchmark, link the chosen subjects + metrics, open it in view mode ──
+    async function finish() {
+      const msg = root.querySelector("#bw-msg"); msg.textContent = ""; msg.className = "form-status";
+      const btn = root.querySelector("#bw-finish"); btn.disabled = true;
+      try {
+        const attrs = { name: data.name, subject_type: data.subject_type };
+        if (data.description) attrs.description = data.description;
+        const doc = await apiFetch("/api/v1/benchmarks", { method: "POST", body: jsonapiBody("benchmark", attrs) });
+        const created = doc && doc.data;
+        const id = created && created.id;
+        if (!id) throw new Error("The benchmark could not be created.");
+        // Link the chosen subjects + metrics (best-effort; the benchmark exists and the rest is addable later).
+        const links = subjects.map((s) => apiFetch("/api/v1/benchmark_subjects", { method: "POST", body: jsonapiBody("benchmark_subject", { benchmark: id, subject: s.id }) }))
+          .concat(metrics.map((mt) => apiFetch("/api/v1/benchmark_metrics", { method: "POST", body: jsonapiBody("benchmark_metric", { benchmark: id, metric: mt.id }) })));
+        await Promise.allSettled(links);
+        m.close();
+        location.href = "/benchmarks/" + encodeURIComponent((created.attributes || {}).key || id);
+      } catch (err) { btn.disabled = false; msg.textContent = err.message; msg.className = "form-status is-error"; }
+    }
+  }
+})();

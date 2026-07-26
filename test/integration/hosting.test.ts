@@ -1,0 +1,146 @@
+import { SELF } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+
+// Routing for the app Worker (src/app.ts). This deployment serves the console + auth + API on
+// app.smplmark.org; the marketing site and published-benchmark viewer live in the separate website
+// repo (www + apex). The console is the root; marketing/benchmark paths redirect to the website. The
+// website reads published data cross-origin, so the public API answers CORS for allowed origins.
+function fetchNoFollow(url: string, init?: RequestInit) {
+  return SELF.fetch(url, { redirect: "manual", ...init });
+}
+
+const WWW = "https://www.smplmark.org";
+
+describe("app routing", () => {
+  it("serves the login page in place at the root when signed out (no redirect)", async () => {
+    const res = await fetchNoFollow("http://smplmark.test/");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="login-form"'); // login rendered at "/", not a redirect
+    expect(res.headers.get("cache-control")).toContain("no-store"); // same URL, two bodies — don't cache
+  });
+
+  it("serves the console in place at the root when the signed-in cookie is present", async () => {
+    const res = await fetchNoFollow("http://smplmark.test/", { headers: { Cookie: "sm_authed=1" } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="sm-sidebar"'); // the console shell rendered at "/"
+  });
+
+  it("redirects marketing pages to the website (301)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/about");
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe(`${WWW}/about`);
+  });
+
+  it("serves the console benchmark list at /benchmarks (app host)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="bm-content"'); // the console list shell, not a redirect
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("serves the console benchmark-detail shell at /benchmarks/{key}", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/example-bench");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="detail-root"');
+    expect(body).toContain("console-benchmark-detail.js");
+  });
+
+  it("serves the console run-detail shell at /benchmarks/{key}/runs/{runKey}", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/example-bench/runs/run-1");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("console-run-detail.js");
+  });
+
+  it("serves the console subject list at /subjects (app host)", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/subjects");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="subjects-root"'); // the console list shell, not a redirect
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("serves the console subject-detail shell at /subjects/{key}", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/subjects/subject-a");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="detail-root"');
+    expect(body).toContain("console-subject-detail.js");
+  });
+
+  it("redirects a PUBLIC benchmark page (/benchmarks/{publisher}/{key}) to the website — 302, uncached", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks/stanford-helm/example-bench");
+    // 302 (not 301): /benchmarks/* is a shared namespace, so its redirects must never be cached —
+    // a permanent redirect would strand the console pages if routing shifts again.
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${WWW}/benchmarks/stanford-helm/example-bench`);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("serves the API directly (no host partition)", async () => {
+    const res = await fetchNoFollow("http://smplmark.test/api/v1/benchmarks");
+    expect(res.status).toBe(200);
+  });
+
+  // One-time heal: a browser that cached the old /benchmarks 301 gets its HTTP cache cleared on its
+  // first console response, gated by a cookie so it fires exactly once.
+  it("sends a one-time Clear-Site-Data + sm_cr cookie on the first console response", async () => {
+    for (const url of ["http://smplmark.test/", "https://app.smplmark.org/benchmarks", "https://app.smplmark.org/benchmarks/example-bench"]) {
+      const res = await fetchNoFollow(url);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("clear-site-data")).toBe('"cache"');
+      expect(res.headers.get("set-cookie")).toContain("sm_cr=1");
+    }
+  });
+
+  it("does NOT repeat the cache heal once the sm_cr cookie is present", async () => {
+    const res = await fetchNoFollow("https://app.smplmark.org/benchmarks", { headers: { Cookie: "sm_cr=1" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("clear-site-data")).toBeNull();
+  });
+});
+
+describe("public API CORS", () => {
+  it("answers a preflight from the website origin", async () => {
+    const res = await fetchNoFollow("http://smplmark.test/api/v1/benchmarks", {
+      method: "OPTIONS",
+      headers: {
+        Origin: WWW,
+        "Access-Control-Request-Method": "GET",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe(WWW);
+    expect(res.headers.get("access-control-allow-methods")).toContain("GET");
+  });
+
+  it("allows a cross-origin GET from the website origin", async () => {
+    const res = await SELF.fetch("http://smplmark.test/api/v1/benchmarks", {
+      headers: { Origin: WWW },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe(WWW);
+  });
+
+  it("does not allow an unknown origin", async () => {
+    const res = await SELF.fetch("http://smplmark.test/api/v1/benchmarks", {
+      headers: { Origin: "https://evil.example" },
+    });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("offers cross-origin GET and POST (the view beacon) but never credentials", async () => {
+    const res = await fetchNoFollow("http://smplmark.test/api/v1/benchmarks", {
+      method: "OPTIONS",
+      headers: {
+        Origin: WWW,
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    // POST is allowed cross-origin for the unauthenticated view beacon; auth-bearing writes are
+    // still gated by auth itself, and credentials are never granted cross-origin.
+    const methods = res.headers.get("access-control-allow-methods") ?? "";
+    expect(methods).toContain("GET");
+    expect(methods).toContain("POST");
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+  });
+});

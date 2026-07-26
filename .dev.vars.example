@@ -1,0 +1,33 @@
+# Copy to `.dev.vars` (gitignored) for local `wrangler dev`. Tests supply their own via
+# vitest.config.ts; production uses `wrangler secret put <NAME>`. Unset secrets disable their
+# feature gracefully (OIDC begin → 503, email → best-effort no-op).
+
+# Session-JWT signing secret (any long random string).
+APP_AUTH_SECRET=dev-app-auth-secret-change-me
+# base64 of a 32-byte key. Generate: openssl rand -base64 32
+KEY_ENCRYPTION_SECRET=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+# Public origin for OIDC redirect + email links (defaults to the request origin if unset).
+APP_URL=http://localhost:8788
+
+# Optional — sign-in providers (unset → that provider returns 503).
+# GOOGLE_OIDC_CLIENT_ID=
+# GOOGLE_OIDC_CLIENT_SECRET=
+# MICROSOFT_OIDC_CLIENT_ID=
+# MICROSOFT_OIDC_CLIENT_SECRET=
+
+# Optional — verification email (unset → send is a no-op; signup still succeeds).
+# RESEND_API_KEY=
+# RESEND_FROM=smplmark <noreply@smplmark.org>
+
+# Optional — the standard smplkit API key (powers the audit trail behind the History tabs). Unset →
+# audit writes are a logged no-op and history reads return empty; every mutation still works. The
+# environment is SMPLKIT_ENVIRONMENT, a wrangler.jsonc var (not a secret) — see there. The audit host
+# defaults to https://audit.smplkit.com (override with SMPLKIT_BASE_DOMAIN for a non-standard target).
+# SMPLKIT_API_KEY=
+
+# Local loop: marketing-path redirects target the local website Worker.
+DEV_WWW_ORIGIN=http://localhost:8787
+
+# Local-dev auto-login: hitting the app on localhost lazily creates a dev account and signs you in
+# with no Google/Microsoft SSO. NEVER set this in production. Uncomment to enable for local dev.
+# DEV_LOGIN=1

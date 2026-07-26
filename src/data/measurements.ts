@@ -1,0 +1,338 @@
+import type { DateRange } from "../query/daterange";
+import { dateRangePredicate } from "../query/predicates";
+import { orderByClause, type Sort } from "../query/sort";
+import type { MeasurementRow } from "../types";
+import { touchBenchmarkStmt } from "./benchmarks";
+
+export interface InsertMeasurementInput {
+  /** The benchmark that owns the measurement's run — bumped so its "last updated" reflects the ingest. */
+  benchmark_id: string;
+  run_id: string;
+  subject_id: string;
+  created_at: number;
+  metrics: string | null;
+  meta: string | null;
+  client_ip: string | null;
+}
+
+/** Does this run carry any measurements? Gates deleting a run of a published benchmark. */
+export async function runHasMeasurements(db: D1Database, runId: string): Promise<boolean> {
+  const r = await db
+    .prepare("SELECT 1 AS x FROM measurement WHERE run_id = ? LIMIT 1")
+    .bind(runId)
+    .first<{ x: number }>();
+  return r !== null;
+}
+
+/** Does any run of this benchmark carry a measurement? Gates publishing. */
+export async function benchmarkHasMeasurements(
+  db: D1Database,
+  benchmarkId: string,
+): Promise<boolean> {
+  const r = await db
+    .prepare(
+      "SELECT 1 AS x FROM measurement JOIN run ON run.id = measurement.run_id WHERE run.benchmark_id = ? LIMIT 1",
+    )
+    .bind(benchmarkId)
+    .first<{ x: number }>();
+  return r !== null;
+}
+
+/** Load one measurement by its rowid (for authz + delete + the correction response). Carries the run's
+ *  and subject's keys so the serialized `run`/`subject` references are their public ids, not UUIDs. */
+export async function getMeasurementById(
+  db: D1Database,
+  id: number,
+): Promise<(MeasurementRow & { subject_key: string; run_key: string }) | null> {
+  return (
+    (await db
+      .prepare(
+        "SELECT measurement.*, subject.key AS subject_key, run.key AS run_key FROM measurement" +
+          " JOIN subject ON subject.id = measurement.subject_id" +
+          " JOIN run ON run.id = measurement.run_id WHERE measurement.id = ?",
+      )
+      .bind(id)
+      .first<MeasurementRow & { subject_key: string; run_key: string }>()) ?? null
+  );
+}
+
+/**
+ * Delete one measurement by its rowid, bumping its owning benchmark's `updated_at` in the same batch so
+ * the public "last updated" reflects the removal. The route guards that the benchmark is still a draft.
+ * The run's denormalized measurement_count is decremented in the same batch (floored at 0 so counter
+ * drift can never wedge it negative).
+ */
+export async function deleteMeasurement(
+  db: D1Database,
+  id: number,
+  benchmarkId: string,
+  runId: string,
+): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM measurement WHERE id = ?").bind(id),
+    db
+      .prepare("UPDATE run SET measurement_count = MAX(measurement_count - 1, 0) WHERE id = ?")
+      .bind(runId),
+    touchBenchmarkStmt(db, benchmarkId, Date.now()),
+  ]);
+}
+
+/** Correct a measurement in place (edit-with-audit; the route records before/after), bumping its
+ *  owning benchmark's `updated_at` in the same batch. */
+export async function updateMeasurement(
+  db: D1Database,
+  id: number,
+  input: { benchmark_id: string; created_at: number; metrics: string | null; meta: string | null },
+): Promise<void> {
+  await db.batch([
+    db
+      .prepare("UPDATE measurement SET created_at=?, metrics=?, meta=? WHERE id=?")
+      .bind(input.created_at, input.metrics, input.meta, id),
+    touchBenchmarkStmt(db, input.benchmark_id, Date.now()),
+  ]);
+}
+
+/** Insert a measurement, bumping its owning benchmark's `updated_at` and its run's denormalized
+ *  measurement_count in the same batch; returns the database-assigned rowid. */
+export async function insertMeasurement(
+  db: D1Database,
+  input: InsertMeasurementInput,
+): Promise<number> {
+  const res = await db.batch([
+    db
+      .prepare(
+        "INSERT INTO measurement (run_id, subject_id, created_at, metrics, meta, client_ip) VALUES (?,?,?,?,?,?)",
+      )
+      .bind(
+        input.run_id,
+        input.subject_id,
+        input.created_at,
+        input.metrics,
+        input.meta,
+        input.client_ip,
+      ),
+    db
+      .prepare("UPDATE run SET measurement_count = measurement_count + 1 WHERE id = ?")
+      .bind(input.run_id),
+    touchBenchmarkStmt(db, input.benchmark_id, Date.now()),
+  ]);
+  return res[0].meta.last_row_id;
+}
+
+/**
+ * A measurement row for reads, carrying its benchmark's measurement_schema and its run's timing
+ * context (for compute-on-read of relative-time derived metrics like elapsed_ms).
+ */
+export interface MeasurementListRow {
+  id: number;
+  run_id: string;
+  subject_id: string;
+  /** The subject's human key — the subject's public id on the wire (serialization emits this). */
+  subject_key: string;
+  /** The run's human key — the run's public id on the wire (serialization emits this). */
+  run_key: string;
+  /** The owning benchmark's id (run.benchmark_id) — used to resolve LIVE derived metrics per row
+   *  (loadLiveDerivedByBenchmark), which supersede the stored measurement_schema.derived snapshot. */
+  benchmark_id: string;
+  created_at: number;
+  metrics: string | null;
+  meta: string | null;
+  measurement_schema: string;
+  run_started_at: number | null;
+  run_ended_at: number | null;
+}
+
+export interface MeasurementScope {
+  run?: string;
+  subject?: string;
+  benchmark?: string;
+  /** For a subject scope with an uncovered caller: restrict to the subject's PUBLISHED/WITHDRAWN
+   *  benchmarks, so a private sibling benchmark's measurements never leak (a subject is shared). */
+  subjectPublicOnly?: boolean;
+}
+
+export interface ListMeasurementsInput {
+  scope: MeasurementScope;
+  range?: DateRange;
+  sort: Sort;
+  limit: number;
+  offset: number;
+  includeTotal: boolean;
+}
+
+// A measurement names both its run and its subject directly; the benchmark hangs off the run
+// (run.benchmark_id). The subject scope filters measurement.subject_id; the subject JOIN also carries
+// subject.key so serialization can emit the subject's public key rather than its internal UUID.
+const JOINS =
+  "FROM measurement" +
+  " JOIN run ON run.id = measurement.run_id" +
+  " JOIN benchmark ON benchmark.id = run.benchmark_id" +
+  " JOIN subject ON subject.id = measurement.subject_id";
+
+const MEASUREMENT_COLUMNS: Record<string, string> = {
+  created_at: "measurement.created_at",
+};
+
+function buildScopeWhere(scope: MeasurementScope, range?: DateRange): { sql: string; binds: unknown[] } {
+  const clauses: string[] = [];
+  const binds: unknown[] = [];
+
+  if (range) {
+    const pred = dateRangePredicate("measurement.created_at", range);
+    if (pred.sql) {
+      clauses.push(pred.sql);
+      binds.push(...pred.binds);
+    }
+  }
+
+  if (scope.run !== undefined) {
+    clauses.push("measurement.run_id = ?");
+    binds.push(scope.run);
+  } else if (scope.subject !== undefined) {
+    clauses.push("measurement.subject_id = ?");
+    binds.push(scope.subject);
+    // A subject spans benchmarks; an uncovered caller only sees measurements under its public ones.
+    if (scope.subjectPublicOnly) {
+      clauses.push("benchmark.status IN ('PUBLISHED','WITHDRAWN')");
+    }
+  } else if (scope.benchmark !== undefined) {
+    clauses.push("benchmark.id = ?");
+    binds.push(scope.benchmark);
+  }
+
+  return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", binds };
+}
+
+export async function listMeasurements(
+  db: D1Database,
+  input: ListMeasurementsInput,
+): Promise<{ rows: MeasurementListRow[]; total?: number }> {
+  const where = buildScopeWhere(input.scope, input.range);
+  const order = orderByClause(input.sort, (f) => MEASUREMENT_COLUMNS[f], "measurement.id");
+  const rows = (
+    await db
+      .prepare(
+        `SELECT measurement.id AS id, measurement.run_id AS run_id, measurement.subject_id AS subject_id,` +
+          ` subject.key AS subject_key, run.key AS run_key, run.benchmark_id AS benchmark_id,` +
+          ` measurement.created_at AS created_at, measurement.metrics AS metrics, measurement.meta AS meta,` +
+          ` benchmark.measurement_schema AS measurement_schema,` +
+          ` run.started_at AS run_started_at, run.ended_at AS run_ended_at` +
+          ` ${JOINS} ${where.sql} ${order} LIMIT ? OFFSET ?`,
+      )
+      .bind(...where.binds, input.limit, input.offset)
+      .all<MeasurementListRow>()
+  ).results;
+
+  let total: number | undefined;
+  if (input.includeTotal) {
+    const r = await db
+      .prepare(`SELECT COUNT(*) AS n ${JOINS} ${where.sql}`)
+      .bind(...where.binds)
+      .first<{ n: number }>();
+    total = r?.n ?? 0;
+  }
+  return { rows, total };
+}
+
+/**
+ * Per-subject measurement counts for the scope (+ optional timeframe) — a native SQL aggregate, so
+ * it is exact at any collection size with no rows fetched (the subject-rail badges must never depend
+ * on pulling the full set into memory). Keyed by the subject's public key.
+ */
+export async function countMeasurementsBySubject(
+  db: D1Database,
+  input: { scope: MeasurementScope; range?: DateRange },
+): Promise<{ subject: string; count: number }[]> {
+  const where = buildScopeWhere(input.scope, input.range);
+  const rows = (
+    await db
+      .prepare(
+        `SELECT subject.key AS subject_key, COUNT(*) AS n ${JOINS} ${where.sql}` +
+          " GROUP BY measurement.subject_id ORDER BY subject.key",
+      )
+      .bind(...where.binds)
+      .all<{ subject_key: string; n: number }>()
+  ).results;
+  return rows.map((r) => ({ subject: r.subject_key, count: r.n }));
+}
+
+/**
+ * A lean measurement projection for aggregate statistics: just what's needed to compute the merged
+ * (stored + derived) metric bag per row and group by subject. No id/meta/client_ip — those never
+ * enter a summary.
+ */
+export interface AggMeasurementRow {
+  /** The subject's public key — the grouping dimension (matches a measurement's `subject` field). */
+  subject_key: string;
+  /** The owning benchmark's id (run.benchmark_id) — used to resolve LIVE derived metrics per row
+   *  (loadLiveDerivedByBenchmark), which supersede the stored measurement_schema.derived snapshot. */
+  benchmark_id: string;
+  created_at: number;
+  metrics: string | null;
+  measurement_schema: string;
+  run_started_at: number | null;
+  run_ended_at: number | null;
+}
+
+export interface AggregateMeasurementsInput {
+  scope: MeasurementScope;
+  range?: DateRange;
+  /** Row-scan ceiling. Beyond this the result is flagged `truncated` and holds the NEWEST `cap` rows.
+   *  A run-scoped call never truncates when cap ≥ LIMITS.measurementsPerRun (the ingest quota bounds
+   *  the set); benchmark/subject scopes span runs and can exceed it. */
+  cap: number;
+  /** Rows fetched per D1 query (default 10,000). Overridable so tests can exercise the chunk walk
+   *  without seeding five-figure datasets. */
+  chunk?: number;
+}
+
+const AGG_CHUNK = 10_000;
+
+/**
+ * Pull every measurement matching the scope (+ optional timeframe) for a statistics summary — the full
+ * filtered set, NOT a page. Reads in bounded chunks (keyset-paged on (created_at, id) descending, so a
+ * concurrent ingest can't skip or duplicate rows mid-walk) rather than one unbounded query: memory
+ * holds at most `cap` lean rows and each D1 query returns at most `chunk`. Newest-first, so when the
+ * cap bites the retained subset is the most recent `cap` measurements, not an arbitrary slice.
+ */
+export async function aggregateMeasurements(
+  db: D1Database,
+  input: AggregateMeasurementsInput,
+): Promise<{ rows: AggMeasurementRow[]; truncated: boolean }> {
+  const chunk = input.chunk ?? AGG_CHUNK;
+  const where = buildScopeWhere(input.scope, input.range);
+  const select =
+    `SELECT measurement.id AS id, subject.key AS subject_key, run.benchmark_id AS benchmark_id,` +
+    ` measurement.created_at AS created_at, measurement.metrics AS metrics,` +
+    ` benchmark.measurement_schema AS measurement_schema,` +
+    ` run.started_at AS run_started_at, run.ended_at AS run_ended_at ${JOINS}`;
+  const order = " ORDER BY measurement.created_at DESC, measurement.id DESC LIMIT ?";
+
+  const rows: (AggMeasurementRow & { id: number })[] = [];
+  let cursor: { created_at: number; id: number } | null = null;
+  let truncated = false;
+  for (;;) {
+    // On the final chunk before the cap, over-fetch by one row to detect truncation without a COUNT.
+    const remaining = input.cap - rows.length;
+    const limit = Math.min(chunk, remaining + 1);
+    const cursorSql = cursor === null ? "" : ` ${where.sql ? "AND" : "WHERE"} (measurement.created_at, measurement.id) < (?, ?)`;
+    const binds = cursor === null ? [...where.binds, limit] : [...where.binds, cursor.created_at, cursor.id, limit];
+    const batch = (
+      await db
+        .prepare(select + " " + where.sql + cursorSql + order)
+        .bind(...binds)
+        .all<AggMeasurementRow & { id: number }>()
+    ).results;
+
+    if (batch.length > remaining) {
+      truncated = true;
+      rows.push(...batch.slice(0, remaining));
+      break;
+    }
+    rows.push(...batch);
+    if (batch.length < limit) break; // short chunk ⇒ the set is exhausted
+    const last = rows[rows.length - 1];
+    cursor = { created_at: last.created_at, id: last.id };
+  }
+  return { rows, truncated };
+}

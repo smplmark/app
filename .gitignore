@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+dist/
+coverage/
+*.log
+.dev.vars
+.DS_Store
+.idea/
+ingestion/archive/
+ingestion/build/
+
