@@ -157,10 +157,14 @@
   // Reload the benchmark then re-render (after a lifecycle action or a child link/unlink). Metric
   // link/unlink rewrites measurement_schema server-side, so BM must be re-fetched after them — a stale
   // copy would omit a just-linked metric from the Add-measurement form (and misrepresent the schema
-  // anywhere else BM is read).
-  async function refresh() {
+  // anywhere else BM is read). The unlink paths use refreshBM + a targeted table reload instead of the
+  // full re-render, so a delete doesn't bounce a paged table back to page 1.
+  async function refreshBM() {
     const doc = await apiFetch("/api/v1/benchmarks/" + encodeURIComponent(ID));
     BM = (doc && doc.data) || BM;
+  }
+  async function refresh() {
+    await refreshBM();
     render();
   }
 
@@ -248,6 +252,7 @@
 
   function renderTab() {
     currentRenderedTab = activeTab();
+    SUBJECTS_TABLE = null; METRICS_TABLE = null; // drop handles into the outgoing tab's DOM
     const panel = $("tab-panel");
     const actions = $("tab-actions");
     actions.innerHTML = "";
@@ -467,6 +472,8 @@
     return out || "subject";
   }
 
+  let SUBJECTS_TABLE = null; // live pagedTable handle while the Subjects tab is mounted
+
   async function renderSubjects(panel, actions) {
     const a = BM.attributes || {};
     // Removing a subject deletes its measurements in this benchmark (published ones included), so it's
@@ -486,10 +493,17 @@
     ];
     if (canRemove) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn remove-subject" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).name || (t.attributes || {}).key || "") + '" title="Remove subject" aria-label="Remove subject">' + SM.icon("trash", 15) + "</button>" });
-    const table = SM.pagedTable($("subjects-table"), {
+    SUBJECTS_TABLE = SM.pagedTable($("subjects-table"), {
       columns: cols, rows: [], sort: { key: "key", dir: "asc" }, emptyText: "No subjects linked yet.",
       onRender: canRemove ? (c) => c.querySelectorAll(".remove-subject").forEach((el) => el.addEventListener("click", () => unlinkSubject(el.dataset.link, el.dataset.name))) : undefined,
     });
+    await loadSubjects();
+  }
+
+  // (Re)fetch the linked subjects into the mounted table. Pass keepPage after an unlink so the user
+  // stays on the page they were working on (setRows clamps if the last page just emptied).
+  async function loadSubjects(keepPage) {
+    if (!SUBJECTS_TABLE) return;
     try {
       const [linkedDoc, linksDoc] = await Promise.all([
         apiFetchAll("/api/v1/subjects?filter[benchmark]=" + encodeURIComponent(ID)),
@@ -499,7 +513,7 @@
       const linkIdBySubject = {};
       ((linksDoc && linksDoc.data) || []).forEach((l) => { linkIdBySubject[(l.attributes || {}).subject] = l.id; });
       linked.forEach((t) => { t.__linkId = linkIdBySubject[t.id] || ""; });
-      table.setRows(linked);
+      SUBJECTS_TABLE.setRows(linked, keepPage ? "keep" : undefined);
       setCount("subjects", linked.length);
     } catch (err) {
       $("subjects-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
@@ -637,7 +651,8 @@
     const url = "/api/v1/benchmark_subjects/" + encodeURIComponent(linkId);
     try {
       await apiFetch(url, { method: "DELETE" });
-      await refresh();
+      await refreshBM();
+      await loadSubjects(true); // reload in place, keeping the current table page
       SM.toast("Subject removed", { kind: "success" });
     } catch (err) {
       if (err && err.status === 409) {
@@ -649,7 +664,8 @@
         if (!ok) return;
         try {
           await apiFetch(url + "?delete_measurements=true", { method: "DELETE" });
-          await refresh();
+          await refreshBM();
+          await loadSubjects(true);
           SM.toast("Subject and its measurements removed", { kind: "success" });
         } catch (e2) { setMsg(e2.message, "error"); }
       } else {
@@ -662,6 +678,8 @@
   // Metrics are an account-owned library; linking one snapshots its definition into this benchmark's
   // measurement schema. The table is driven by the link rows joined to the account library (which
   // supplies each metric's name/label/type); unlink removes the snapshot (draft benchmarks only).
+  let METRICS_TABLE = null; // live pagedTable handle while the Metrics tab is mounted
+
   async function renderMetrics(panel, actions) {
     const a = BM.attributes || {};
     // Linking and unlinking are allowed even when published (recorded in the history as a
@@ -678,11 +696,18 @@
     ];
     if (CAN_WRITE) cols.push({ key: "actions", label: "", sortable: false, thClass: "actions", tdClass: "actions", render: (t) =>
       '<button type="button" class="iconBtn unlink-metric" data-link="' + esc(t.__linkId || "") + '" data-name="' + esc((t.attributes || {}).label || (t.attributes || {}).name || "") + '" title="Unlink metric" aria-label="Unlink metric">' + SM.icon("trash", 15) + "</button>" });
-    const table = SM.pagedTable($("metrics-table"), {
+    METRICS_TABLE = SM.pagedTable($("metrics-table"), {
       columns: cols, rows: [], sort: { key: "name", dir: "asc" }, emptyText: "No metrics linked yet.",
       onRowClick: (t) => { location.href = "/account/metrics/detail?id=" + encodeURIComponent(t.id); },
       onRender: CAN_WRITE ? (c) => c.querySelectorAll(".unlink-metric").forEach((el) => el.addEventListener("click", (ev) => { ev.stopPropagation(); unlinkMetric(el.dataset.link, el.dataset.name); })) : undefined,
     });
+    await loadMetrics();
+  }
+
+  // (Re)fetch the linked metrics into the mounted table. Pass keepPage after an unlink so the user
+  // stays on the page they were working on.
+  async function loadMetrics(keepPage) {
+    if (!METRICS_TABLE) return;
     try {
       const [linksDoc, libDoc] = await Promise.all([
         apiFetchAll("/api/v1/benchmark_metrics?filter[benchmark]=" + encodeURIComponent(ID)),
@@ -695,7 +720,7 @@
         const m = byId[(l.attributes || {}).metric];
         if (m) rows.push(Object.assign({}, m, { __linkId: l.id }));
       });
-      table.setRows(rows);
+      METRICS_TABLE.setRows(rows, keepPage ? "keep" : undefined);
       setCount("metrics", rows.length);
     } catch (err) {
       $("metrics-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
@@ -783,7 +808,8 @@
     setMsg("");
     try {
       await apiFetch("/api/v1/benchmark_metrics/" + encodeURIComponent(linkId), { method: "DELETE" });
-      await refresh();
+      await refreshBM(); // measurement_schema changed server-side — BM must be re-fetched
+      await loadMetrics(true); // reload in place, keeping the current table page
     } catch (err) { setMsg(err.message, "error"); }
   }
 

@@ -125,6 +125,7 @@
 
   function renderTab() {
     currentRenderedTab = activeTab();
+    FIELDS_TABLE = null; // drop the handle into the outgoing tab's DOM
     const panel = $("tab-panel");
     $("tab-actions").innerHTML = "";
     if (currentRenderedTab === "details") renderDetails(panel, $("tab-actions"));
@@ -182,13 +183,15 @@
 
   // ── Fields tab (an independent field manager: "Add field" + a table of clickable rows that persist
   //    each add/edit/remove immediately) ──
+  let FIELDS_TABLE = null; // live pagedTable handle while the Fields tab is mounted
+
   function renderFields(panel, actions) {
     if (CAN_WRITE) {
       actions.innerHTML = '<button type="button" class="button buttonPrimary buttonSmall" id="t-add-field">' + SM.icon("plus", 14) + " Add field</button>";
       $("t-add-field").addEventListener("click", () => openFieldEditor(null));
     }
     panel.innerHTML = '<div id="fields-table"></div>';
-    SM.pagedTable($("fields-table"), {
+    FIELDS_TABLE = SM.pagedTable($("fields-table"), {
       columns: SMSubjectTypeForm.fieldColumns({ editable: CAN_WRITE }),
       rows: fields(),
       sort: { key: "name", dir: "asc" },
@@ -226,7 +229,11 @@
     setMsg("");
     try {
       await persistFields(fields().filter((x) => x !== field));
-      render();
+      // Update the table in place (keeping the current page — a full render() would bounce a paged
+      // table back to page 1) and refresh the field-count badge on the tab.
+      if (FIELDS_TABLE) FIELDS_TABLE.setRows(fields(), "keep");
+      const badge = document.querySelector('.modalTabBtn[data-tab="fields"] .tabBadge');
+      if (badge) badge.textContent = String(fields().length);
       SM.toast("Field removed.", { kind: "success" });
     } catch (err) { setMsg(err.message, "error"); }
   }

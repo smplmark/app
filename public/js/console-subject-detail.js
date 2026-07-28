@@ -168,6 +168,7 @@
 
   function renderTab() {
     currentRenderedTab = activeTab();
+    BM_TABLE = null; // drop the handle into the outgoing tab's DOM
     const panel = $("tab-panel");
     $("tab-actions").innerHTML = "";
     if (currentRenderedTab === "details") renderDetails(panel, $("tab-actions"));
@@ -296,6 +297,8 @@
   // ── Benchmarks tab (where this subject is linked) ──
   function linkBench(lnk) { return lnk.__bench; }
   function linkStatus(lnk) { const b = linkBench(lnk); return String(((b && b.attributes) || {}).status || "").toUpperCase(); }
+  let BM_TABLE = null; // live pagedTable handle while the Benchmarks tab is mounted
+
   async function renderBenchmarks(panel) {
     panel.innerHTML = '<div id="bm-table"></div>';
     const cols = [
@@ -309,11 +312,18 @@
       if (linkStatus(lnk) !== "PRIVATE") return "";
       const ba = ((linkBench(lnk) || {}).attributes) || {};
       return '<button type="button" class="button buttonDanger buttonSmall unlink" data-id="' + esc(lnk.id) + '" data-name="' + esc(ba.name || ba.key || "") + '">Unlink</button>'; } });
-    const table = SM.pagedTable($("bm-table"), {
+    BM_TABLE = SM.pagedTable($("bm-table"), {
       columns: cols, rows: [], sort: { key: "benchmark", dir: "asc" },
       emptyText: "Not linked to any benchmark yet. Add it from a benchmark’s Subjects tab.",
       onRender: CAN_WRITE ? (c) => c.querySelectorAll(".unlink").forEach((el) => el.addEventListener("click", () => unlink(el.dataset.id, el.dataset.name))) : undefined,
     });
+    await loadBenchmarkLinks();
+  }
+
+  // (Re)fetch the benchmark links into the mounted table. Pass keepPage after an unlink so the user
+  // stays on the page they were working on (setRows clamps if the last page just emptied).
+  async function loadBenchmarkLinks(keepPage) {
+    if (!BM_TABLE) return;
     try {
       const [linksDoc, benchDoc] = await Promise.all([
         apiFetchAll("/api/v1/benchmark_subjects?filter[subject]=" + encodeURIComponent(ID)),
@@ -323,7 +333,7 @@
       const byId = {};
       ((benchDoc && benchDoc.data) || []).forEach((b) => { byId[b.id] = b; });
       links.forEach((lnk) => { lnk.__bench = byId[(lnk.attributes || {}).benchmark]; });
-      table.setRows(links);
+      BM_TABLE.setRows(links, keepPage ? "keep" : undefined);
     } catch (err) {
       $("bm-table").innerHTML = '<div class="errorBanner"><p>' + esc(err.message) + "</p></div>";
     }
@@ -335,7 +345,7 @@
     setMsg("");
     try {
       await apiFetch("/api/v1/benchmark_subjects/" + encodeURIComponent(linkId), { method: "DELETE" });
-      renderBenchmarks($("tab-panel"));
+      await loadBenchmarkLinks(true); // reload in place, keeping the current table page
     } catch (err) { setMsg(err.message, "error"); }
   }
 })();
