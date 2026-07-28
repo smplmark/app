@@ -442,7 +442,9 @@
   }
 
   // Re-derive the visible rows from the master list under the current subject + time-window filters.
-  function applyMeasFilters() {
+  // A filter change resets to page 1; pass keepPage when the row set changed in place (delete/undo)
+  // so the user stays on the page they were working on.
+  function applyMeasFilters(keepPage) {
     if (!MEAS_TABLE) return;
     const rangeSec = (MEAS_RANGES.find((r) => r.key === MEAS_RANGE) || {}).seconds;
     const minTs = rangeSec ? Date.now() - rangeSec * 1000 : null;
@@ -453,7 +455,7 @@
       if (minTs !== null) { const t = new Date(a.created_at).getTime(); if (!isFinite(t) || t < minTs) return false; }
       return true;
     });
-    MEAS_TABLE.setRows(rows);
+    MEAS_TABLE.setRows(rows, keepPage ? "keep" : undefined);
   }
 
   // ── Subject filter rail — one checkbox per subject (all checked by default), each with a hover
@@ -517,12 +519,12 @@
     if (idx < 0) return;
     const removed = MEAS_ALL[idx];
     MEAS_ALL.splice(idx, 1); // optimistic remove — the table re-sorts, so exact position is cosmetic
-    applyMeasFilters();
+    applyMeasFilters(true); // keep the current page — the next row backfills from the following page
     renderSubjectFilter(); // the removed subject's badge count drops with the row
     SM.toast("Measurement deleted", {
       kind: "info",
       duration: 5000,
-      action: { label: "Undo", onClick: () => { MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed); applyMeasFilters(); renderSubjectFilter(); } },
+      action: { label: "Undo", onClick: () => { MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed); applyMeasFilters(true); renderSubjectFilter(); } },
       onDismiss: () => commitMeasurementDelete(measId, removed, idx),
     });
   }
@@ -532,7 +534,7 @@
     } catch (err) {
       // The delete didn't happen — put the row back (if it isn't already) and surface the failure.
       if (!MEAS_ALL.some((m) => String(m.id) === String(measId))) MEAS_ALL.splice(Math.min(idx, MEAS_ALL.length), 0, removed);
-      applyMeasFilters();
+      applyMeasFilters(true);
       renderSubjectFilter();
       SM.toast(err.message || "Couldn’t delete the measurement.", { kind: "error" });
     }

@@ -872,9 +872,14 @@
     }
     render();
     return {
-      setRows: function (rows, toLast) {
+      // page: undefined → jump to page 1 (filter/search changed — old position is meaningless);
+      //       "keep" → stay on the current page (row removed/restored in place — render() clamps
+      //       into range, so deleting the last row of the last page lands on the new last page);
+      //       "last" → jump to the last page (a row was appended).
+      setRows: function (rows, page) {
         state.rows = rows || [];
-        state.page = toLast ? Math.max(1, Math.ceil(state.rows.length / pageSize)) : 1;
+        if (page === "last") state.page = Math.max(1, Math.ceil(state.rows.length / pageSize));
+        else if (page !== "keep") state.page = 1;
         render();
       },
       rerender: render,
